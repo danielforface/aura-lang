@@ -199,7 +199,62 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 
 ---
 
-## 0.4 — Interop (FFI automation at scale)
+## 0.3 — Incremental Proof + Memory Model (In Development)
+
+### Proof Streaming & Caching (Pillar 2 continuation)
+- [x] Merkle-style project-wide cache (file + function + direct-deps keying)
+- [x] Proof summaries at module boundaries (function contracts extraction)
+- [x] Module-level dependency tracking for cross-module proof reuse
+- [x] Incremental invalidation (transitive caller tracking)
+
+### Memory Model (Pillar 3 continuation)
+- [x] Region-aware collections schema (`std::collections_region.aura`)
+  - [x] Region-allocated Vec and HashMap with Z3 contracts
+  - [x] Bounds-checking and capacity guarantees verified
+- [x] Optional GC allocator mode (generational Mark-Sweep proof-of-concept)
+  - [x] Configurable heap threshold triggering collection
+  - [x] Root tracking for conservative collection
+  - [x] Thread-local allocation statistics
+- [x] GC design exploration document (`docs/gc-design.md`)
+
+### Sentinel IDE Enhancements
+- [x] Fast startup with lazy file loading
+  - [x] Initial load only visible files (not whole project)
+  - [x] Incremental re-indexing on file change
+  - [x] Merkle-hash-based change detection
+- [x] Project indexing progress indicator
+  - [x] Progress bar (top of editor)
+  - [x] Status messages during indexing
+  - [x] Event-driven updates to indexer state
+
+### Backend Improvements
+- [x] Advanced pattern matching compiler
+  - [x] Decision tree compilation for enum/constructor patterns
+  - [x] Exhaustiveness checking for all pattern types
+  - [x] Nested pattern-matrix compilation support
+- [x] DWARF debug information emission
+  - [x] Line number mapping (LLVM IR → source)
+  - [x] Function debug metadata (params, locals, return type)
+  - [x] Type definitions for debugger symbols
+- [x] GDB/LLDB integration framework
+  - [x] Breakpoint management (set/remove/list)
+  - [x] Machine Interface (MI) protocol support
+  - [x] Stop/resume execution control
+- [x] Jump-table lowering for dense matches
+  - [x] Density detection (patterns / value range)
+  - [x] Cost estimation (jump table vs cascade)
+  - [x] Switch statement generation for O(1) dispatch
+
+### Memory Model Design & Exploration
+- [x] Ownership/borrowing alternatives document (`docs/ownership-option-a.md`)
+  - [x] Rust-like borrow checker option analysis
+  - [x] Feasibility assessment (13-19 weeks)
+  - [x] Comparison vs Option B (linear + manual) and GC
+  - [x] Recommendation: defer to v0.5+ (maintain Option B for now)
+
+---
+
+## 0.2 — Stability + UX (first "solid daily driver")
 
 ### FFI Automation & ecosystem interop
 - [x] Aura-Bindgen (automated binding generator)
@@ -287,11 +342,11 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] LSP request: `aura/proofCacheClear`
   - [x] Sentinel command: “Proofs: Clear Cache”
 - [x] Cached-proof indicator (telemetry surfaced in Sentinel)
-- [ ] Project-wide Merkle cache (function + direct-deps keyed; stable across files)
+- [x] Project-wide Merkle cache (function + direct-deps keyed; stable across files)
 - [x] Z3 state management: incremental solving (push/pop or check-sat-assuming)
   - [x] `aura-verify`: optional warm solver with `push/pop` + `check-sat-assuming` (`AURA_Z3_INCREMENTAL=1`)
   - [x] LSP-level long-lived solver sessions (persist across verify requests)
-- [ ] Module-level decomposition: proof summaries at module boundary
+- [x] Module-level decomposition: proof summaries at module boundary
 
 #### Pillar 2 — Settings / toggles (daily-driver ergonomics)
 - [x] `AURA_PROOF_CACHE_DISABLE` (turn off all proof caching)
@@ -309,7 +364,8 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 - [~] Verified core (stdlib)
   - [x] Verified core subset exists (`sdk/std/verified_core.aura`)
   - [x] Region allocator mode exists (env-controlled arena)
-  - [ ] Refactor `std.collections` to region allocation + Z3-gated contracts per operation
+  - [x] Region-aware collections schema + Z3 contracts per operation
+    - [x] `sdk/std/collections_region.aura`: region-allocated Vec/HashMap with contracts
 - [~] Explicit trust boundaries
   - [x] Trusted boundary reports (FFI/bindgen surfaced in tooling)
   - [x] CI “Trusted Core Report” audit policy (fail builds on unreviewed trusted expansions)
@@ -360,23 +416,27 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Compile-time evaluation (CTFE MVP for const u64 shape expressions; gated by `ctfe`)
 - [~] Advanced pattern matching compilation
   - [x] Balanced decision tree for integer-literal matches
-  - [ ] Constructor/enum patterns lowering
-  - [ ] Nested pattern-matrix compilation (binders/guards)
-  - [ ] Jump-table/switch lowering when dense
+  - [x] Constructor/enum patterns lowering (decision tree with exhaustiveness)
+  - [x] Nested pattern-matrix compilation (binders/guards)
+  - [x] Jump-table/switch lowering when dense (O(1) dispatch)
 
 ### Runtime
 - [x] Optional GC or region allocator modes
   - [x] Env-controlled region arena for tensor allocation (`AURA_ALLOC_MODE=region`, `AURA_ARENA_BYTES`)
-  - [ ] Optional GC mode (if pursued)
+  - [x] Optional GC mode (generational Mark-Sweep, documented in `docs/gc-design.md`)
+    - [x] GC allocator module with mark/sweep cycles
+    - [x] Root tracking and object lifecycle management
+    - [x] Collection statistics and threshold-based triggering
 - [x] Verified subsets of stdlib
   - [x] Z3-gated verified core subset (`sdk/std/verified_core.aura`)
+  - [x] Region-aware collections (`sdk/std/collections_region.aura`)
 
 ---
 
 ## Sentinel IDE (Desktop)
 
 ### Core editor experience
-- [ ] Fast startup and project indexing
+- [x] Fast startup and project indexing
 - [x] Robust file watching + dependency graphs
 - [x] Diagnostics timeline (see when/why proofs changed)
 

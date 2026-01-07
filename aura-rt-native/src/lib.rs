@@ -2,6 +2,8 @@
 
 use std::sync::mpsc;
 
+pub mod allocator;
+
 /// Minimal native runtime facade for `~>`.
 ///
 /// Phase 3 goal: provide a stable ABI surface for the compiler backend.

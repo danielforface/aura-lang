@@ -2,10 +2,12 @@
 
 pub mod solver;
 pub mod verify;
+pub mod proof_summary;
 #[cfg(feature = "z3")]
 pub mod geometry;
 
 pub use solver::{NoZ3Prover, Prover, SmtProfile, VerifyError};
+pub use proof_summary::{ProofSummary, ProofResult, ModuleSummaryCache};
 #[cfg(feature = "z3")]
 pub use solver::z3_prover::Z3Prover;
 pub use verify::verify_program;

@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod merkle_cache;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -2263,6 +2265,7 @@ struct Backend {
     proofs_next_id: AtomicU64,
     proofs_tasks: Arc<Mutex<HashMap<u64, (Url, tokio::task::JoinHandle<()>)>>>,
     proof_cache: Arc<RwLock<HashMap<String, ProofCacheEntry>>>,
+    merkle_cache: Arc<RwLock<merkle_cache::MerkleProofCache>>,
     workspace_root: RwLock<Option<PathBuf>>,
     aura_client_caps: RwLock<AuraClientCaps>,
     solver: SolverWorker,
@@ -2550,6 +2553,7 @@ impl Backend {
             proofs_next_id: AtomicU64::new(1),
             proofs_tasks: Arc::new(Mutex::new(HashMap::new())),
             proof_cache: Arc::new(RwLock::new(HashMap::new())),
+            merkle_cache: Arc::new(RwLock::new(merkle_cache::MerkleProofCache::new())),
             workspace_root: RwLock::new(None),
             aura_client_caps: RwLock::new(AuraClientCaps::default()),
             solver: SolverWorker::spawn(),

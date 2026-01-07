@@ -5,6 +5,8 @@ import { readDir, readTextFile, watch, writeTextFile } from "@tauri-apps/plugin-
 import * as path from "@tauri-apps/api/path";
 import { listen } from "@tauri-apps/api/event";
 
+import IncrementalProjectIndexer from "./indexer";
+
 import { basicSetup } from "codemirror";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import {
@@ -147,6 +149,8 @@ type DocState = {
 
 let docs: DocState[] = [];
 let activeDocId: string | undefined;
+
+let projectIndexer: IncrementalProjectIndexer | undefined;
 
 let renamingDocId: string | undefined;
 let renamingTabValue = "";

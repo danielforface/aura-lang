@@ -3,6 +3,7 @@
 mod error;
 mod fmt;
 mod parser;
+pub mod pattern_compiler;
 
 use aura_lex::Lexer;
 use miette::IntoDiagnostic;
