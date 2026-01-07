@@ -1,0 +1,55 @@
+{
+  "tests": [
+    {
+      "name": "simple_add",
+      "source_file": "tests/programs/simple_add.c",
+      "breakpoint": "main",
+      "commands": [
+        "print x",
+        "print y",
+        "print sum"
+      ],
+      "expected_variables": {
+        "x": "10",
+        "y": "20",
+        "sum": "30"
+      },
+      "expected_output": "x = 10\ny = 20\nsum = 30"
+    },
+    {
+      "name": "string_test",
+      "source_file": "tests/programs/string_test.c",
+      "breakpoint": "main",
+      "commands": [
+        "print buffer",
+        "print length",
+        "print flag"
+      ],
+      "expected_variables": {
+        "length": "13",
+        "flag": "1"
+      },
+      "expected_output": "Buffer: Hello, World!\nLength: 13\nFlag: 1"
+    },
+    {
+      "name": "pointer_test",
+      "source_file": "tests/programs/pointer_test.c",
+      "breakpoint": "main",
+      "commands": [
+        "print value",
+        "print *ptr",
+        "print **ptr_ptr"
+      ],
+      "expected_variables": {
+        "value": "42"
+      },
+      "expected_output": "Value: 42\nPointer value: 42\nDouble pointer value: 42"
+    }
+  ],
+  "ci_gate_config": {
+    "min_passing_tests": 3,
+    "allow_warnings": false,
+    "backends": ["gdb", "lldb"],
+    "timeout_seconds": 60
+  }
+}

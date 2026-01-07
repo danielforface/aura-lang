@@ -74,9 +74,9 @@ pub struct RepairHintData {
 /// Convert verification counterexample to LSP diagnostic data
 pub fn counterexample_to_lsp_diagnostic_data(
     cx: &VerificationCounterexample,
-    file: &str,
-    line: usize,
-    column: usize,
+    _file: &str,
+    _line: usize,
+    _column: usize,
 ) -> CounterexampleV2 {
     let repair_hints = generate_repair_hints(cx);
     let failure_explanation = explain_failure(cx);

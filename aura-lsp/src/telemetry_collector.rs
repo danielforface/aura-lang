@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+// Time tracking handled internally
 
 /// Telemetry event from verifier
 #[derive(Debug, Clone, Serialize, Deserialize)]

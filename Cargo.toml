@@ -38,7 +38,10 @@ clap = { version = "4.5", features = ["derive"] }
 rayon = "1.10"
 
 # Async runtime (native runtime / compiler parallelism)
-tokio = { version = "1.43", features = ["rt-multi-thread", "macros"], default-features = false }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "time"], default-features = false }
+
+# Async traits
+async-trait = "0.1"
 
 # Cross-compilation target model
 target-lexicon = "0.13"

@@ -26,3 +26,10 @@ hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+[[bin]]
+name = "aura-ci-gate"
+path = "src/bin/aura-ci-gate.rs"
+
+[[bin]]
+name = "differential-test-runner"
+path = "src/bin/differential-test-runner.rs"

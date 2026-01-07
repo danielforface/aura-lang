@@ -442,6 +442,78 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Run golden test suite on each backend
   - [x] Fail if discrepancy detected
   - [x] Regression fixture auto-save
+- [x] **Phase 2 Week 4: Differential Testing Integration & Debugger Hardening** (✅ COMPLETE — Jan 2026, P0)
+  - [x] `aura-lsp/src/gdb_mi_protocol.rs`: GDB MI protocol hardening (450+ LOC, 5 unit tests)
+    - [x] MICommand builder with fluent API and escape value handling
+    - [x] MIValue enum system (String, Integer, Tuple, List)
+    - [x] Token-based response parsing and tracking
+    - [x] Recursive tuple/list parsing with depth tracking
+    - [x] Protocol validation and error detection
+  - [x] `aura-lsp/src/lldb_mi_protocol.rs`: LLDB MI compatibility layer (350+ LOC, 7 tests)
+    - [x] LLDBMIProtocol wrapper for unified interface
+    - [x] Command translation mapping (LLDB → GDB MI)
+    - [x] Response normalization and format conversion
+    - [x] Feature capability detection and reporting
+  - [x] `editors/aura-vscode/src/panels/VariableInspector.tsx`: Variable inspector UI (400+ LOC)
+    - [x] Recursive variable expansion with type-based coloring
+    - [x] Scope filtering (all/local/global/parameter)
+    - [x] Search filtering with stats badge
+    - [x] Inline variable editing on double-click
+    - [x] VSCode theme compliance
+  - [x] `editors/aura-vscode/src/panels/StackNavigator.tsx`: Stack frame navigation (350+ LOC)
+    - [x] Frame filtering (all/aura/system)
+    - [x] Expandable arguments and locals sections
+    - [x] Click-to-jump source navigation
+    - [x] Frame and stats indicators
+  - [x] `aura-lsp/src/lsp_ci_gate_integration.rs`: LSP CI gate integration (350+ LOC, 4 async tests)
+    - [x] ProofVerificationResult struct with proof data
+    - [x] GateStatus enum (Passed/Failed/Pending/Blocked)
+    - [x] LSPCIGateManager with proof caching and differential testing
+    - [x] Diagnostic data generation for VSCode
+    - [x] Release eligibility gating logic
+  - [x] `aura-lsp/src/proof_result_extractor.rs`: Proof result extraction (300+ LOC, 4 tests)
+    - [x] RawProofResult and verification outcome parsing
+    - [x] WitnessData and constraint extraction
+    - [x] Test case mapping to debugger operations
+    - [x] ValidationSuite and differential pair generation
+  - [x] `aura-lsp/src/debugger_command_interface.rs`: Unified debugger interface (400+ LOC, 3 tests)
+    - [x] DebuggerBackend trait abstraction
+    - [x] GDBDebuggerBackend implementation
+    - [x] LLDBDebuggerBackend implementation
+    - [x] Unified command execution model
+    - [x] Breakpoint, execution control, variable, and frame operations
+  - [x] `aura-lsp/src/debugger_error_recovery.rs`: Error recovery and timeouts (350+ LOC, 6 tests)
+    - [x] ErrorRecoveryPolicy enum (Immediate, ExponentialBackoff, LinearBackoff, CircuitBreaker)
+    - [x] TimeoutConfig with granular timeout control
+    - [x] ErrorRecoveryManager with retry logic and circuit breaker
+    - [x] ConnectionPool for managing multiple connections
+    - [x] HealthMonitor for system health assessment
+  - [x] `tests/debugger_integration_tests.rs`: Comprehensive integration tests (400+ LOC, 25+ test scenarios)
+    - [x] MockDebugger for testing harness
+    - [x] Basic and multi-breakpoint workflows
+    - [x] Execution control flow testing
+    - [x] Variable operations (set/get)
+    - [x] Differential testing parity (GDB vs LLDB)
+    - [x] Command sequence validation
+    - [x] State consistency verification
+    - [x] Concurrent operations
+    - [x] Protocol message sequencing
+    - [x] Gate integration scenarios
+    - [x] Variable inspector integration
+    - [x] Stack navigator integration
+  - [x] `aura-lsp/src/performance_cache.rs`: Performance optimization (300+ LOC, 8 tests)
+    - [x] ResponseCache with TTL and LRU eviction
+    - [x] OperationProfiler with metrics collection
+    - [x] PerformanceReport generation
+    - [x] ValuePool for memory pooling and reuse
+    - [x] LazyMIParser for deferred parsing
+    - [x] OptimizationConfig with sensible defaults
+    - [x] Cache statistics and utilization tracking
+  - **Deliverables Summary:**
+    - **Code:** 3,500+ lines of production Rust and TypeScript
+    - **Tests:** 35+ unit/async/integration tests
+    - **Coverage:** MI protocols, UI components, LSP integration, error handling, performance optimization
+    - **Files:** 10 new modules across LSP, VS Code extension, and test suites
 
 ### Compatibility / stability guarantees
 - [x] Stable syntax and semantics
