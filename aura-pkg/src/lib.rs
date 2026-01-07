@@ -11,6 +11,13 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+// Public module exports for metadata and signing
+pub mod metadata;
+pub mod signing;
+
+pub use metadata::PackageMetadata;
+pub use signing::{PackageSigningKey, PackageVerifyingKey, PackageSignature};
+
 pub type PkgError = Report;
 
 fn pkg_msg(message: impl Into<String>) -> PkgError {
