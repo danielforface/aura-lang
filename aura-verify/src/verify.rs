@@ -6,7 +6,7 @@ use aura_ast::{CallArg, Expr, ExprKind, Program, Stmt, StrandDef, TypeAlias, Typ
 
 use aura_parse::format_expr;
 
-use crate::solver::{DiagnosticMetadata, Prover, RelatedInfo, SmtProfile, VerifyError};
+use crate::solver::{DiagnosticMetadata, Prover, RelatedInfo, SmtProfile, TypedBinding, VerifyError};
 
 #[derive(Clone, Copy, Debug)]
 struct RangeTy {
@@ -39,7 +39,7 @@ use std::collections::BTreeSet;
 #[cfg(feature = "z3")]
 use z3::{
     ast::{Ast, Bool, Dynamic, Int},
-    Params, SatResult, Solver,
+    Model, Params, SatResult, Solver,
 };
 
 #[cfg(feature = "z3")]
@@ -66,6 +66,66 @@ fn extract_bindings_from_model_text(model: &str) -> Vec<(String, String)> {
         })
         .collect()
     }
+
+#[cfg(feature = "z3")]
+fn typed_bindings_from_model(st: &SymState<'static>, model: &Model<'static>) -> Vec<TypedBinding> {
+    let mut names = st.sorts.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+
+    let mut out: Vec<TypedBinding> = Vec::new();
+    for name in names {
+        let sort = match st.sorts.get(&name) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        match sort {
+            Sort::Int => {
+                let Some(v) = st.ints.get(&name) else { continue };
+                let val = model.eval(v, true);
+                let value = val
+                    .as_ref()
+                    .and_then(|x| x.as_u64())
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| {
+                        val.map(|x| x.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    });
+
+                let aura_type = if let Some((lo, hi)) = st.ranges.get(&name).copied() {
+                    format!("u32[{lo}..{hi}]")
+                } else {
+                    "u32".to_string()
+                };
+
+                out.push(TypedBinding {
+                    name,
+                    aura_type,
+                    value,
+                });
+            }
+            Sort::Bool => {
+                let Some(v) = st.bools.get(&name) else { continue };
+                let val = model.eval(v, true);
+                let value = val
+                    .as_ref()
+                    .and_then(|x| x.as_bool())
+                    .map(|b| b.to_string())
+                    .unwrap_or_else(|| {
+                        val.map(|x| x.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    });
+
+                out.push(TypedBinding {
+                    name,
+                    aura_type: "bool".to_string(),
+                    value,
+                });
+            }
+        }
+    }
+    out
+}
 
 
 #[cfg(feature = "z3")]
@@ -607,6 +667,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             meta: Some(DiagnosticMetadata {
                 model: None,
                 bindings: Vec::new(),
+                typed_bindings: Vec::new(),
                 related: Vec::new(),
                 unsat_core: Vec::new(),
                 hints: vec![
@@ -851,10 +912,22 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             SatResult::Sat => {
                 let model = solver.get_model();
                 let model_text = model.as_ref().map(|m| m.to_string());
-                let bindings = model_text
-                    .as_deref()
-                    .map(extract_bindings_from_model_text)
-                    .unwrap_or_default();
+                let typed_bindings = match (st, model.as_ref()) {
+                    (Some(st), Some(m)) => typed_bindings_from_model(st, m),
+                    _ => Vec::new(),
+                };
+
+                let bindings = if !typed_bindings.is_empty() {
+                    typed_bindings
+                        .iter()
+                        .map(|b| (b.name.clone(), b.value.clone()))
+                        .collect::<Vec<_>>()
+                } else {
+                    model_text
+                        .as_deref()
+                        .map(extract_bindings_from_model_text)
+                        .unwrap_or_default()
+                };
 
                 let mut related: Vec<RelatedInfo> = Vec::new();
                 if let Some(st) = st {
@@ -911,6 +984,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     meta: Some(DiagnosticMetadata {
                         model: model_text,
                         bindings,
+                        typed_bindings,
                         related,
                         unsat_core: Vec::new(),
                         hints,
@@ -994,6 +1068,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         let mut meta = DiagnosticMetadata {
             model: None,
             bindings: Vec::new(),
+            typed_bindings: Vec::new(),
             related: Vec::new(),
             unsat_core: Vec::new(),
             hints: Vec::new(),
@@ -1035,6 +1110,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             meta: Some(DiagnosticMetadata {
                 model: d.model,
                 bindings: Vec::new(),
+                typed_bindings: Vec::new(),
                 related,
                 unsat_core: Vec::new(),
                 hints: Vec::new(),
@@ -1937,6 +2013,50 @@ impl<'ctx> SymState<'ctx> {
         self.constraints.push(len._eq(&p));
     }
 
+}
+
+#[cfg(all(test, feature = "z3"))]
+mod typed_binding_tests {
+    use super::*;
+
+    #[test]
+    fn typed_bindings_extract_u32_ranges_and_bools() {
+        let mut cfg = z3::Config::new();
+        cfg.set_model_generation(true);
+        let ctx: &'static z3::Context = Box::leak(Box::new(z3::Context::new(&cfg)));
+
+        let mut st = SymState::new(ctx);
+
+        let x = Int::new_const(ctx, "x");
+        st.sorts.insert("x".to_string(), Sort::Int);
+        st.ints.insert("x".to_string(), x.clone());
+        st.ranges.insert("x".to_string(), (0, 10));
+
+        let b = Bool::new_const(ctx, "b");
+        st.sorts.insert("b".to_string(), Sort::Bool);
+        st.bools.insert("b".to_string(), b.clone());
+
+        let solver = Solver::new(ctx);
+        solver.assert(&x._eq(&Int::from_u64(ctx, 7)));
+        solver.assert(&b._eq(&Bool::from_bool(ctx, true)));
+
+        assert_eq!(solver.check(), SatResult::Sat);
+        let model = solver.get_model().expect("model");
+
+        let typed = typed_bindings_from_model(&st, &model);
+        let mut by_name = std::collections::HashMap::<String, TypedBinding>::new();
+        for t in typed {
+            by_name.insert(t.name.clone(), t);
+        }
+
+        let tx = by_name.get("x").expect("x");
+        assert_eq!(tx.aura_type, "u32[0..10]");
+        assert_eq!(tx.value, "7");
+
+        let tb = by_name.get("b").expect("b");
+        assert_eq!(tb.aura_type, "bool");
+        assert_eq!(tb.value, "true");
+    }
 }
 
 #[cfg(feature = "z3")]

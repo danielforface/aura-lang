@@ -413,6 +413,7 @@ pub fn verify_lumina_geometry(
                 meta: Some(DiagnosticMetadata {
                     model: None,
                     bindings: Vec::new(),
+                    typed_bindings: Vec::new(),
                     related: vec![RelatedInfo {
                         span,
                         message: why,
@@ -441,6 +442,7 @@ pub fn verify_lumina_geometry(
                     meta: Some(DiagnosticMetadata {
                         model: None,
                         bindings: Vec::new(),
+                        typed_bindings: Vec::new(),
                         related: vec![RelatedInfo {
                             span: root.span,
                             message: "UI layout may overflow the screen".to_string(),
@@ -488,6 +490,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
                 meta: Some(DiagnosticMetadata {
                     model: None,
                     bindings: Vec::new(),
+                    typed_bindings: Vec::new(),
                     related: vec![RelatedInfo {
                         span: sp,
                         message: "radius out of bounds".to_string(),
@@ -514,6 +517,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
                 meta: Some(DiagnosticMetadata {
                     model: None,
                     bindings: Vec::new(),
+                    typed_bindings: Vec::new(),
                     related: vec![RelatedInfo {
                         span: sp,
                         message: "padding out of bounds".to_string(),
@@ -560,6 +564,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
                     meta: Some(DiagnosticMetadata {
                         model: None,
                         bindings: Vec::new(),
+                        typed_bindings: Vec::new(),
                         related: vec![RelatedInfo {
                             span: fg_sp,
                             message: "increase contrast between text and background".to_string(),

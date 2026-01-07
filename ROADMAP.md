@@ -217,7 +217,7 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 - [~] Structured Counterexample Mapping
   - [x] Versioned payload: `Diagnostic.data.counterexample.schema == aura.counterexample.v1`
   - [x] Best-effort name/value mapping + source-range anchoring
-  - [ ] Typed mapping from Z3 model → Aura AST types (records/enums/collections) + pretty-printer
+  - [~] Typed mapping from Z3 model → Aura AST types (records/enums/collections) + pretty-printer
 - [~] “Explain” Engine (unsat core → minimal binding set / variable trace)
   - [x] UNSAT core evidence captured for successful proofs (best-effort)
   - [x] Core items map back to spans for `requires`/`assume` and the proved goal (assert/ensures)

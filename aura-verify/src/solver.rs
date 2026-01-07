@@ -14,10 +14,21 @@ pub struct RelatedInfo {
 pub struct DiagnosticMetadata {
     pub model: Option<String>,
     pub bindings: Vec<(String, String)>,
+    /// Typed bindings (best-effort). This is intended for editor UX and may be partial.
+    pub typed_bindings: Vec<TypedBinding>,
     pub related: Vec<RelatedInfo>,
     pub unsat_core: Vec<String>,
     pub hints: Vec<String>,
     pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedBinding {
+    pub name: String,
+    /// Aura type display, best-effort (e.g. `u32`, `u32[0..255]`, `bool`).
+    pub aura_type: String,
+    /// Pretty-printed value, best-effort.
+    pub value: String,
 }
 
 #[derive(Debug, Error, Diagnostic)]

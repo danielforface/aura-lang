@@ -24,6 +24,8 @@ struct CounterexampleBindingV1 {
     value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     value_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aura_type: Option<String>,
     relevant: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     best_range: Option<Range>,
@@ -1240,6 +1242,17 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
         .map(|m| m.bindings.clone())
         .unwrap_or_default();
 
+    let typed_bindings_by_name: HashMap<String, (String, String)> = err
+        .meta
+        .as_ref()
+        .map(|m| {
+            m.typed_bindings
+                .iter()
+                .map(|b| (b.name.clone(), (b.value.clone(), b.aura_type.clone())))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+
     let related_msgs: Vec<String> = err
         .meta
         .as_ref()
@@ -1285,14 +1298,20 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
 
     let mut injections: Vec<CounterexampleInjectionV1> = Vec::new();
     for (name, value, relevant) in mapping_iter {
+        let (value_s, aura_ty) = typed_bindings_by_name
+            .get(name)
+            .map(|(v, t)| (v.as_str(), Some(t.clone())))
+            .unwrap_or((value.as_str(), None));
+
         let occ = find_ident_occurrences(text, name);
         let best_range = pick_best_occurrence(&occ, err_off, err_end);
-        let kind = infer_value_kind(value);
+        let kind = aura_ty.clone().or_else(|| infer_value_kind(value_s));
 
         mapped_bindings.push(CounterexampleBindingV1 {
             name: name.clone(),
-            value: value.clone(),
+            value: value_s.to_string(),
             value_kind: kind,
+            aura_type: aura_ty,
             relevant,
             best_range: best_range.clone(),
         });
@@ -1301,7 +1320,7 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             if let Some(r) = best_range {
                 injections.push(CounterexampleInjectionV1 {
                     range: r,
-                    text: format!(" /* {} = {} */", name, value),
+                    text: format!(" /* {} = {} */", name, value_s),
                     name: Some(name.clone()),
                 });
             }
@@ -1351,6 +1370,11 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             "meta": err.meta.as_ref().map(|m| json!({
                 "bindings": bindings_for_data,
                 "relevantBindings": relevant_bindings,
+                "typedBindings": m.typed_bindings.iter().map(|b| json!({
+                    "name": b.name,
+                    "auraType": b.aura_type,
+                    "value": b.value,
+                })).collect::<Vec<_>>(),
                 "related": m.related.iter().map(|ri| json!({
                     "message": ri.message,
                     "span": {"offset": ri.span.offset(), "len": ri.span.len()},
