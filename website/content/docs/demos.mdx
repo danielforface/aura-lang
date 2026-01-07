@@ -1,0 +1,31 @@
+---
+title: Demos
+description: End-to-end examples that exercise verification, plugins, and tooling.
+---
+
+## IoT: bitmask-safe MMIO
+
+Demo: `examples/aura-iot-safe`
+
+- Uses `aura-iot` and a `hardware.registers` manifest in `aura.toml`.
+- Verifies that `hw.write_u32` stays within the declared register bitmask.
+
+Run:
+
+```sh
+cd examples/aura-iot-safe
+cargo run -p aura --features z3 -- build iot_safe.aura --mode avm --backend c
+```
+
+## AI: shape-safe inference
+
+Demo: `examples/aura-vision-safe`
+
+- Uses ONNX Runtime bridge + `aura-ai` plugin.
+- Proves tensor shapes match the model contract.
+
+Run:
+
+```sh
+cargo run -p aura --features z3 -- build examples/aura-vision-safe/vision_safe.aura --mode avm --backend c
+```

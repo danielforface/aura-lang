@@ -1,0 +1,10 @@
+[package]
+name = "aura-rt"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"
+

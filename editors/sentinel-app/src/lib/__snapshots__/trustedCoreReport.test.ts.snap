@@ -1,0 +1,20 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`trusted core report > renders HTML deterministically (snapshot) 1`] = `
+"<!doctype html>
+  <html><head><meta charset="utf-8"/>
+  <title>Trusted-core report</title>
+  <style>body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px} code,pre{background:#f4f4f4;padding:8px;border-radius:8px;display:block;overflow:auto} .meta{opacity:.75}</style>
+  </head><body>
+    <h1>Trusted-core report</h1>
+    <div class="meta">Generated: 2026-01-01T00:00:00.000Z</div>
+    <div class="meta">URI: file:///C:/tmp/main.aura</div>
+    <div class="meta">Project root: C:\\tmp</div>
+    <h2>Settings</h2>
+    <pre>{<br/>  "theme": "oneDark",<br/>  "formatOnSave": false,<br/>  "proofMode": "auto",<br/>  "proofDebounceMs": 450<br/>}</pre>
+    <h2>Timeline delta</h2>
+    <pre>{<br/>  "added": 1,<br/>  "removed": 0,<br/>  "changed": 0<br/>}</pre>
+    <h2>Diagnostics</h2>
+    <div style="margin:8px 0;"><div><b>aura proof</b> <span style="opacity:.75;">1:1</span></div><div>boom</div></div>
+  </body></html>"
+`;

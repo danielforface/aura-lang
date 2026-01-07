@@ -1,0 +1,16 @@
+[package]
+name = "aura-plugin-ai"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+aura-bridge = { path = "../aura-bridge" }
+aura-nexus = { path = "../aura-nexus", default-features = false }
+miette = { workspace = true }
+thiserror = { workspace = true }
+z3 = { version = "0.12", optional = true }
+
+[features]
+default = []
+z3 = ["aura-nexus/z3", "dep:z3"]

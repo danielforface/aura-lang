@@ -1,0 +1,95 @@
+{
+  "name": "aura-vscode",
+  "displayName": "Aura Sentinel",
+  "description": "Aura Sentinel: Aura language support with live Z3 diagnostics via aura-lsp.",
+  "version": "0.0.1",
+  "publisher": "aura",
+  "activationEvents": [
+    "onLanguage:aura",
+    "onCommand:aura.runActiveFile",
+    "onCommand:aura.openRepl",
+    "onCommand:aura.showProofs"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "aura",
+        "aliases": ["Aura", "aura"],
+        "extensions": [".aura"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "aura",
+        "scopeName": "source.aura",
+        "path": "./syntaxes/aura.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "aura",
+        "path": "./snippets/aura.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "aura.runActiveFile",
+        "title": "Aura: Run Active File"
+      },
+      {
+        "command": "aura.openRepl",
+        "title": "Aura Sentinel: Open REPL"
+      },
+      {
+        "command": "aura.showProofs",
+        "title": "Aura Sentinel: Show Proofs"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "auraNexusPlugins",
+          "name": "Nexus Plugins"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Aura Sentinel",
+      "properties": {
+        "aura.cargoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to cargo executable (e.g. C:/Users/<you>/.cargo/bin/cargo.exe). If empty, the extension will try to auto-detect."
+        },
+        "aura.auraPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to aura compiler executable. If empty, the extension will try to run via cargo."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "package:vsix": "npm run build && npx --yes @vscode/vsce package --allow-missing-repository --skip-license -o ../../dist/aura-sentinel.vsix",
+    "watch": "tsc -p . -w",
+    "lint": "node -e \"console.log('no lint configured')\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.0.0",
+    "vscode": "^1.1.37"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "cell_main": {
+    "prefix": "cell_main",
+    "body": [
+      "cell main() -> u32:",
+      "  $0",
+      "  yield 0"
+    ],
+    "description": "Main entry cell"
+  },
+  "while_invariant": {
+    "prefix": "while_invariant",
+    "body": [
+      "while ${1:cond} invariant (${2:inv}):",
+      "  $0"
+    ],
+    "description": "While loop with invariant"
+  },
+  "import_raylib": {
+    "prefix": "import_raylib",
+    "body": [
+      "import raylib",
+      "$0"
+    ],
+    "description": "Import raylib module"
+  }
+}

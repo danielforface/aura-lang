@@ -1,0 +1,35 @@
+---
+title: Aura AI Plugin
+description: Tensor and ONNX shape checks (model contracts, safe inference).
+---
+
+## Enable
+
+Add this to your `aura.toml`:
+
+```toml
+plugins = [
+  { name = "aura-ai", trusted = true },
+]
+```
+
+## What it verifies
+
+- Emits informational proof diagnostics when shapes are proven compatible.
+- In VS Code, these appear as plugin-attributed verified overlays.
+
+## Example
+
+```aura
+import aura::tensor
+import onnxruntime
+
+cell main() ->:
+    val model: Model = ai.load_model("identity_u32_2x2x3.onnx")
+    val input: Tensor<u32, [2, 2, 3]> = tensor::new<u32>(12)
+    val out: Tensor<u32, [2, 2, 3]> = model.infer(input)
+```
+
+## Editor feedback
+
+When verification succeeds, the LSP publishes informational diagnostics tagged with the plugin id (`aura-ai`). Aura Sentinel uses these to render gutter icons, hovers, and inlay hints.

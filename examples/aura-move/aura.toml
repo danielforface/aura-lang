@@ -1,0 +1,6 @@
+plugins = [
+  { name = "aura-lumina", capabilities = ["UiRuntime", "Z3Theories"], trusted = true },
+]
+
+[project]
+name = "aura-move"

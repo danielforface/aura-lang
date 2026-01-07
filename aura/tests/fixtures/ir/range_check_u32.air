@@ -1,0 +1,5 @@
+# RangeCheckU32
+block 0:
+  %0 = bind_strand x const_u32 1
+  range_check_u32 %0 0 10
+  ret

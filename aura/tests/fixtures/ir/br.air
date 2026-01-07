@@ -1,0 +1,5 @@
+# Br
+block 0:
+  br 1
+block 1:
+  ret

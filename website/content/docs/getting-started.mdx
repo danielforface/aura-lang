@@ -1,0 +1,38 @@
+---
+title: Getting Started
+description: Build Aura from this repo and run your first verified program.
+---
+
+## Prerequisites
+
+- Rust toolchain (stable)
+- Z3 (if you want verification enabled)
+
+## First run
+
+Create a file:
+
+```aura
+cell main() -> u32:
+  val x: u32 = 42
+  yield x
+```
+
+Then run:
+
+```sh
+cargo run -p aura --features z3 -- build main.aura --mode avm --backend c
+```
+
+If Z3 is enabled, verification is a hard gate.
+
+## Projects and `aura.toml`
+
+Aura looks for an `aura.toml` by searching upward from the source file. This is where you enable Nexus plugins:
+
+```toml
+plugins = [
+  { name = "aura-ai", trusted = true },
+  { name = "aura-iot", trusted = true },
+]
+```

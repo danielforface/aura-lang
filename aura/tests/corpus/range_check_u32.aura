@@ -1,0 +1,9 @@
+import aura::io
+
+cell main() ->:
+    # Should stay within range; exercises verifier-inserted checks indirectly.
+    val x: u32 = 5
+    if x < 10:
+        io::println("ok")
+    else:
+        io::println("bad")

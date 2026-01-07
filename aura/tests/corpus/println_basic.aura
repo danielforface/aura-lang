@@ -1,0 +1,5 @@
+import aura::io
+
+cell main() ->:
+    val x: u32 = 2 + 3
+    io::println("x = {x}")

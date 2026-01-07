@@ -1,0 +1,9 @@
+[package]
+name = "aura-ir"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+miette = { workspace = true }
+

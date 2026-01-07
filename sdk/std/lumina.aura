@@ -1,0 +1,8 @@
+# AuraSDK stdlib: aura::lumina
+# Minimal shims and style helpers for Lumina UI.
+
+cell PixarModern():
+    Style { bg: "Black", fg: "White", radius: 18, padding: 14 }
+
+cell log(msg: String):
+    io.println(msg)

@@ -1,0 +1,29 @@
+---
+title: Why Aura?
+description: In 2026, memory safety is not enough — we need logical safety for AI.
+---
+
+## The claim
+
+In 2026, *memory safety is not enough*.
+
+Memory safety helps prevent classes of crashes and exploits, but AI systems fail in ways that are logically valid from the CPU’s perspective:
+
+- Silent shape mismatches
+- Invariant violations that only manifest under rare inputs
+- “Works on my machine” dependencies that subtly change behavior
+
+Aura’s thesis is simple:
+
+> If a property matters, you should be able to prove it.
+
+## What Aura adds
+
+- **Logical safety**: Z3-backed proofs for invariants and contracts.
+- **AI-native semantics**: tensor types with shape, verified at compile time where possible.
+- **LLVM backend**: fast codegen with optimization hooks (including AI inference tagging).
+- **Universal Bridge + ACPM**: native dependencies auto-install with transparency.
+
+## Practical outcome
+
+You spend less time discovering failures at runtime and more time shipping code that is correct by construction.

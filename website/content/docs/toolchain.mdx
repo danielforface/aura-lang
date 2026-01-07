@@ -1,0 +1,58 @@
+---
+title: Toolchain & Project Layout
+description: How Aura projects are structured and how the compiler toolchain fits together.
+---
+
+## Workspace overview
+
+Aura is a Rust workspace composed of multiple crates that together form the language and its tooling:
+
+- **Compiler CLI**: `aura` (build/run/pkg)
+- **Parser**: `aura-lex`, `aura-parse`, `aura-ast`
+- **Semantic checker**: `aura-core`
+- **Verifier**: `aura-verify` (Z3-backed)
+- **Plugin system**: `aura-nexus` + plugins like `aura-plugin-ai`, `aura-plugin-iot`
+- **Interpreter**: `aura-interpret` (AVM)
+- **Language Server**: `aura-lsp`
+- **VS Code extension**: Aura Sentinel (`editors/vscode`)
+
+## Build modes and features
+
+Aura uses Cargo features to enable heavier components:
+
+- `z3`: enables verification using Z3 (hard safety gate)
+- `llvm`: enables LLVM backend (when present)
+
+Common patterns:
+
+```sh
+# Verify + build (no LLVM needed)
+cargo run -p aura --features z3 -- build path/to/file.aura --mode avm --backend c
+
+# Run (when configured)
+cargo run -p aura --features z3 -- run path/to/file.aura
+```
+
+## Project configuration: `aura.toml`
+
+Aura looks for an `aura.toml` by searching upward from the source file directory.
+
+Typical sections:
+
+- `project`: human-readable project metadata
+- `plugins`: Nexus plugin enablement (and trust gating)
+- `hardware`: IoT register manifest (used by `aura-iot`)
+- `bridge` / `linking`: native integration via the Universal Bridge
+
+Example plugin enablement:
+
+```toml
+plugins = [
+  { name = "aura-iot", trusted = true },
+  { name = "aura-ai", trusted = true },
+]
+```
+
+## Z3 installation notes
+
+Verification requires Z3 to be available to the verifier (the exact method depends on your OS/toolchain). If Z3 is missing or disabled, Aura can still type-check and run in development mode, but verification-backed features won’t be available.

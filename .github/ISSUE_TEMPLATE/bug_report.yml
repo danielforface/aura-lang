@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a defect in Aura/Sentinel/LSP
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please include enough detail to reproduce.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - language/compiler
+        - verifier (Z3 Gate)
+        - aura CLI
+        - aura-lsp
+        - Sentinel IDE
+        - Android tooling
+        - docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste terminal output, Sentinel console output, or screenshots.
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        OS:
+        Aura version/commit:
+        Sentinel version:
+        Z3 version (if relevant):

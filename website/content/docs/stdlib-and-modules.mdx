@@ -1,0 +1,42 @@
+---
+title: Stdlib, Modules, and Imports
+description: How Aura uses imports and module namespaces in the current prototype.
+---
+
+## Imports as module placeholders
+
+Today, Aura uses `import` primarily to register well-known module namespaces.
+
+When installed as the AuraSDK, Aura also uses `import aura::...` as a trigger to
+auto-inject the corresponding stdlib module from `AURA_HOME/std` (or, in the dev
+repo, `sdk/std`). This keeps beginner workflows simple while preserving stable
+diagnostic spans.
+
+Examples:
+
+```aura
+import aura::io
+import aura::tensor
+import aura::hw
+```
+
+This enables expressions like:
+
+- `io.display(x)`
+- `tensor::new<u32>(n)`
+- `hw.open("SPI_CTRL")`
+
+## Known namespaces
+
+Common built-ins:
+
+- `io`: printing/display
+- `tensor`: tensor construction and element ops
+- `ai`: model loading and inference (usually via the `aura-ai` plugin)
+- `hw`: hardware/capability operations (via the `aura-iot` plugin)
+
+## Bridge modules
+
+When using the Universal Bridge, you may import modules that are backed by native headers/libraries declared in `aura.toml`.
+
+See “The Universal Bridge” for how headers and linking are configured.

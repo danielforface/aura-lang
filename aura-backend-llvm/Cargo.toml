@@ -1,0 +1,14 @@
+[package]
+name = "aura-backend-llvm"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ir = { path = "../aura-ir" }
+miette = { workspace = true }
+thiserror = { workspace = true }
+target-lexicon = { workspace = true }
+
+[features]
+default = []
+llvm = []

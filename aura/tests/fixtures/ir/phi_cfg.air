@@ -1,0 +1,13 @@
+# Phi + CondBr + Br
+block 0:
+  %0 = bind_strand c const_bool true
+  condbr %0 1 2
+block 1:
+  %1 = bind_strand t const_u32 10
+  br 3
+block 2:
+  %2 = bind_strand f const_u32 20
+  br 3
+block 3:
+  %3 = phi (1 %1), (2 %2)
+  ret

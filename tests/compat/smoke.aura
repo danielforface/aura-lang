@@ -1,0 +1,6 @@
+import aura::io
+
+# Minimal compat fixture: should parse + typecheck + build in AVM mode.
+
+cell main() ->:
+    io::println("compat: smoke")

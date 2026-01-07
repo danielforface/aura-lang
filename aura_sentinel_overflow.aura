@@ -1,0 +1,15 @@
+#aura_sentinel_overflow.aura
+#Expected: Lumina geometry verifier rejects (button width exceeds screen).
+import aura::lumina
+import aura::iot
+
+cell main():
+    render:
+        VStack(spacing: 10) {
+            render: Button(label: "Too Wide", width: 1900, height: 50) {
+                on_click: ~> {
+                    val io = "io"
+                    io.println("clicked")
+                }
+            }
+        }

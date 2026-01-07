@@ -1,0 +1,5 @@
+# ComputeKernel (no dest)
+block 0:
+  %0 = bind_strand x const_u32 1
+  compute_kernel compute_gradient (%0)
+  ret

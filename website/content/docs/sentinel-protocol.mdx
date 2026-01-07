@@ -1,0 +1,76 @@
+---
+title: Aura Sentinel Protocol (LSP Extensions)
+description: Custom JSON-RPC methods used by Aura Sentinel for deterministic, proof-backed UX.
+---
+
+Aura Sentinel uses standard LSP for editing features and adds a small set of **custom JSON-RPC methods** (served by `aura-lsp`) for proof-driven UX.
+
+Design goals:
+
+- **Deterministic**: responses are derived from parser/sema/verifier/AVM trace, not heuristics.
+- **Span-accurate**: every item is anchored to source ranges.
+- **Forward-compatible**: methods and payloads are versioned conservatively.
+
+## Transport
+
+- Protocol: LSP over stdio (VS Code) with JSON-RPC 2.0.
+- Custom methods are invoked via the client’s `sendRequest(method, params)`.
+
+## Method: `aura/proofs`
+
+Returns the current proof/diagnostic set for a single document. This is the backing API for the “Aura Sentinel: Show Proofs” panel.
+
+### Params
+
+```json
+{
+  "uri": "file:///C:/path/to/project/main.aura"
+}
+```
+
+### Result
+
+```json
+{
+  "uri": "file:///C:/path/to/project/main.aura",
+  "diagnostics": [
+    {
+      "range": {
+        "start": { "line": 0, "character": 0 },
+        "end": { "line": 0, "character": 10 }
+      },
+      "severity": 1,
+      "code": "aura::parse",
+      "source": "aura",
+      "message": "parse error: expected Newline"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `diagnostics` uses standard LSP `Diagnostic` objects.
+- It may include:
+  - parse errors (`code: aura::parse`)
+  - semantic errors (`code: aura::sema`)
+  - verification failures (`code: aura::verify`)
+  - proof notes emitted by Nexus plugins (`source: aura-nexus`, informational severity)
+
+### Determinism & caching
+
+- The server prefers **in-memory** document content when the file is open, otherwise it falls back to reading from disk.
+- Clients may call this method on save or on demand; responses are safe to cache by `(uri, documentVersion)`.
+
+## Compatibility
+
+- Current stability level: **experimental**.
+- Breaking changes should bump the method name (e.g. `aura/proofsV2`) or add fields without removing existing ones.
+
+## Roadmap: structured obligations
+
+The long-term target is a richer payload that separates proofs from editor diagnostics, for example:
+
+- `obligations[]`: `{ id, kind, status, span, dependsOn[], counterexample? }`
+- `counterexample`: model values + minimal failing path
+- `pluginAttribution`: structured `plugin`, `mask`, `range`, `smt` fields

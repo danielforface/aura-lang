@@ -1,0 +1,14 @@
+---
+title: The Universal Bridge
+description: How Aura swallows C/C++ libraries via generated extern shims.
+---
+
+## Bridging
+
+Aura can generate extern shims from C headers.
+
+- Declare the header(s) in `aura.toml`
+- Aura generates a bridge module during build
+- The linker pulls only the requested artifacts
+
+This keeps the project “git clone → aura run” self-healing.

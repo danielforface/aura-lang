@@ -1,0 +1,4 @@
+# Return with value
+block 0:
+  %0 = bind_strand x const_u32 7
+  ret %0

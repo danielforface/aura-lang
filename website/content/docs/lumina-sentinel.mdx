@@ -1,0 +1,122 @@
+---
+title: Lumina Sentinel (Proof → Pixels)
+description: Geometry verification + Raylib rendering + click callbacks, all gated by Z3.
+---
+
+## What you get
+
+Lumina Sentinel connects three layers into one tight loop:
+
+1. **Proof first**: Z3 proves the UI layout cannot overflow the screen.
+2. **Pixels second**: a Raylib-backed runtime renders the verified UI tree.
+3. **Interaction**: clicking a button triggers a callback, the AVM updates state, and the UI re-renders.
+
+This page documents the B.2/B.2.5 milestone: **verified layout → live window → clickable callbacks**, plus the diagnostic accuracy required for real editor UX.
+
+## Architecture overview
+
+At a high level:
+
+- **Parser/AST** (`aura-parse`, `aura-ast`) recognize `layout:` and `render:` blocks.
+- **AVM** (`aura-interpret`) evaluates layout/render blocks into a shared `UiNode` tree.
+- **Nexus UI runtime dispatch** (`aura-nexus`) calls into a UI runtime plugin (Lumina).
+- **Verifier** (`aura-verify`) runs Z3 and (when Lumina is imported) activates geometry constraints.
+- **Lumina plugin** (`aura-plugin-lumina`) renders the tree:
+  - default: fallback printer (no window)
+  - feature `raylib`: opens a real window and draws pixels
+
+## The safety contract (geometry)
+
+**Screen is fixed to 1920×1080** for the sentinel proof. The verifier treats UI nodes as rectangles and proves constraints like:
+
+- non-negative position and size: `x >= 0`, `y >= 0`, `w >= 0`, `h >= 0`
+- screen bounds: `x + w <= 1920`, `y + h <= 1080`
+- containment: children must fit within parents
+- stacking rules:
+  - `VStack`: children are stacked vertically with spacing
+  - `HStack`: children are stacked horizontally with spacing
+
+If any constraint is violated, execution is blocked by the **Z3 gate**.
+
+## Why Span accuracy matters
+
+A professional verifier must be actionable:
+
+- failing with just “gate rejected execution” is not enough
+- failing with **the exact source span** means:
+  - CLI prints a label on the right line/column
+  - VS Code / LSP can highlight the exact property (`width: 2000`) in red
+
+In B.2.5 we thread:
+
+- `VerifyError.span` (a `miette::SourceSpan`)
+- through the AVM gate outcome
+- into a labeled miette report in the CLI
+
+Result: overflow reports point directly at the failing node/property.
+
+## Raylib rendering (Visual Awakening)
+
+When built with `--features lumina-raylib`, the Lumina plugin:
+
+- initializes a window: `1920×1080` titled **"Aura Lumina Sentinel"**
+- traverses the `UiNode` tree
+- draws:
+  - `Text`: `DrawText`
+  - `Button`: `DrawRectangle` + label text
+
+### Hit testing and callbacks
+
+Buttons carry an `on_click` prop which the AVM encodes as a callback id like `cb:42`.
+
+In the Raylib plugin:
+
+- each frame checks the mouse position and click
+- when a click intersects the button rectangle, it sets `clicked_callback_id`
+- the AVM receives that feedback, executes the stored callback block, updates state, and re-renders
+
+## Running the final demo
+
+A canonical demo lives at the repo root:
+
+- `sentinel_final.aura`
+
+Run it (Windows):
+
+```bash
+cargo run -p aura --features z3,lumina-raylib -- run sentinel_final.aura --mode avm
+```
+
+Expected behavior:
+
+- a window opens
+- clicking "Pulse" increments `clicks`
+- the interpolated text `Clicks: {clicks}` updates live
+
+## Windows setup notes
+
+Raylib needs a native build toolchain. On Windows we require:
+
+- **CMake** (Kitware)
+- a working C toolchain in PATH (as required by raylib-sys)
+
+If CMake is installed but not visible in your current terminal session, restart the terminal or add it temporarily:
+
+```powershell
+$env:Path = $env:Path + ";C:\Program Files\CMake\bin"
+```
+
+## Troubleshooting
+
+- **Window closes immediately**: ensure the Raylib runtime is enabled (`--features lumina-raylib`), and close with the window X button.
+- **Raylib build fails**: confirm CMake is installed and available in PATH.
+- **Z3 gate fails**: read the labeled span in the error output; it will point at the exact failing UI node/property.
+
+## Roadmap
+
+Next steps after B.2.5:
+
+- proper font metrics in Raylib (instead of width estimates)
+- richer widgets + layout primitives (padding/margins/baselines)
+- optional runtime-provided screen sizes (prove against a parameter)
+- standalone top-level `invariant` statements (currently invariants are attached to `while`)

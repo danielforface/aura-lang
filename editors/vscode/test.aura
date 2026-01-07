@@ -1,0 +1,70 @@
+import aura::tensor
+import raylib
+
+cell main() ->:
+    raylib_init_window(800, 600, "Aura Kinetic Engine")
+    raylib_set_target_fps(60)
+
+    val count: u32 = 5000
+    val pos_x = tensor::new<u32>(count)
+    val pos_y = tensor::new<u32>(count)
+    val vel_x = tensor::new<u32>(count)
+    val vel_y = tensor::new<u32>(count)
+
+    # Initialize particles deterministically.
+    val mut k: u32[0..5000] = 0
+    while k < count invariant k <= count:
+        val seed: u32 = k * 37 + 11
+        # x in [0..800], y in [0..600]
+        val x0_raw: u32 = seed
+        val y0_raw: u32 = seed * 3 + 7
+        val x0: u32[0..800] = x0_raw - (x0_raw / 801) * 801
+        val y0: u32[0..600] = y0_raw - (y0_raw / 601) * 601
+
+        # small velocities in [0..5]
+        val vx0_raw: u32 = seed / 3
+        val vy0_raw: u32 = seed / 7
+        val vx0: u32[0..5] = vx0_raw - (vx0_raw / 6) * 6
+        val vy0: u32[0..5] = vy0_raw - (vy0_raw / 6) * 6
+
+        pos_x ~> tensor::set(k, x0)
+        pos_y ~> tensor::set(k, y0)
+        vel_x ~> tensor::set(k, vx0)
+        vel_y ~> tensor::set(k, vy0)
+
+        k = k + 1
+
+    # Main loop: proven-safe physics + rendering.
+    while raylib_window_should_close() == 0 invariant 0 == 0:
+        raylib_begin_drawing()
+        raylib_clear_background_rgba(16, 16, 24, 255)
+
+        val mut i: u32[0..5000] = 0
+        while i < count invariant i <= count:
+            val x: u32 = tensor::get(pos_x, i)
+            val y: u32 = tensor::get(pos_y, i)
+            val vx: u32 = tensor::get(vel_x, i)
+            val vy: u32 = tensor::get(vel_y, i)
+
+            # Update position with modulo wrap, staying in-bounds by construction.
+            val x1_raw: u32 = x + vx
+            val y1_raw: u32 = y + vy
+            val x1: u32[0..800] = x1_raw - (x1_raw / 801) * 801
+            val y1: u32[0..600] = y1_raw - (y1_raw / 601) * 601
+
+            pos_x ~> tensor::set(i, x1)
+            pos_y ~> tensor::set(i, y1)
+
+            # Color based on speed (integer-only): intensity in [0..255] via modulo.
+            val speed2: u32 = vx * vx + vy * vy
+            val t_raw: u32 = speed2 * 40
+            val t: u32[0..255] = t_raw - (t_raw / 256) * 256
+
+            raylib_draw_pixel_rgba(x1, y1, 255, t, 255 - t, 255)
+
+            i = i + 1
+
+        raylib_draw_text_rgba("MEMORY: MATHEMATICALLY PROVEN SAFE", 10, 10, 20, 255, 255, 255, 255)
+        raylib_end_drawing()
+
+    raylib_close_window()

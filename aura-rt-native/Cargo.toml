@@ -1,0 +1,12 @@
+[package]
+name = "aura-rt-native"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+default = []
+tokio = ["dep:tokio"]

@@ -1,0 +1,49 @@
+---
+title: Nexus Plugin Architecture
+description: How Aura keeps domain semantics (IoT, AI) out of the verifier core.
+---
+
+## Why plugins?
+
+Aura’s verifier is intentionally small and generic. Domain-specific meaning (like MMIO rules or tensor shape contracts) is implemented in **Nexus plugins**, not hard-coded into the verifier.
+
+This makes the system:
+
+- easier to extend
+- easier to audit
+- safer to gate (trust)
+
+## Built-in plugins
+
+This repository includes two built-ins:
+
+- `aura-iot`: hardware/MMIO safety (caps, offsets, masks)
+- `aura-ai`: tensor/ONNX shape checks
+
+Plugin docs:
+
+- `/docs/plugins/aura-iot`
+- `/docs/plugins/aura-ai`
+
+## Enabling plugins (`aura.toml`)
+
+Plugins are enabled via `aura.toml` and are **trust-gated**:
+
+```toml
+plugins = [
+  { name = "aura-iot", trusted = true },
+  { name = "aura-ai", trusted = true },
+]
+```
+
+If a plugin is listed but not trusted, the LSP/CLI will refuse to run it.
+
+## Proof notes → editor feedback
+
+Plugins can record **successful proof facts** (not only failures). The verifier returns them in a verification report, and the LSP publishes them as informational diagnostics.
+
+Aura Sentinel uses this metadata to show:
+
+- gutter icons per plugin
+- hovers with mask/range and the SMT formula (when available)
+- inlay hints for inferred ranges

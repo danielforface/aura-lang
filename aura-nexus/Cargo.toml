@@ -1,0 +1,17 @@
+[package]
+name = "aura-nexus"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+miette = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = { workspace = true }
+
+# Optional Z3 hook surface.
+z3 = { version = "0.12", optional = true }
+
+[features]
+default = []
+z3 = ["dep:z3"]

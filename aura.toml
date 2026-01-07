@@ -1,0 +1,27 @@
+[bridge]
+headers = [
+    "tools/raylib_bridge.h",
+    "tools/onnxruntime_bridge.h",
+]
+
+plugins = [
+    { name = "aura-ai", capabilities = ["Z3Theories", "LlvmIntrinsics"], trusted = true },
+    { name = "aura-iot", capabilities = ["Z3Theories"], trusted = true },
+]
+
+[linking]
+lib_dirs = [
+    "./deps",
+    "./tools",
+]
+libs = [
+    "raylib.lib",
+    "user32.lib",
+    "gdi32.lib",
+    "winmm.lib",
+    "shell32.lib",
+    "onnxruntime.lib",
+]
+
+[project]
+name = "AuraKinetic"

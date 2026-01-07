@@ -1,0 +1,26 @@
+#dashboard.aura - Phase A.5 mock Lumina tree demo
+#Uses named args, trailing { ... } blocks, prop statements, and callbacks.
+
+cell main():
+    render:
+        App(title: "Dashboard") {
+            VStack(padding: 16, spacing: 12) {
+                Text(content: "Welcome to Aura-Lumina")
+
+                HStack(spacing: 8) {
+                    Button(label: "Refresh") {
+                        on_click: ~> {
+                            val io = "io"
+                            io.println("Refresh clicked")
+                        }
+                    }
+
+                    Button(label: "Quit") {
+                        on_click: ~> {
+                            val io = "io"
+                            io.println("Quit clicked")
+                        }
+                    }
+                }
+            }
+        }

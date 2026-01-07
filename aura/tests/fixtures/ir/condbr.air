@@ -1,0 +1,8 @@
+# CondBr
+block 0:
+  %0 = bind_strand c const_bool true
+  condbr %0 1 2
+block 1:
+  ret
+block 2:
+  ret

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aura Sentinel",
+  "version": "0.1.0",
+  "identifier": "com.aura.sentinel",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "externalBin": ["bin/aura-lsp"],
+    "resources": ["bin/*"],
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "wix": {
+        "upgradeCode": "c4d6c2e8-8b59-4dfe-a4d3-04a9dc9bf2e4"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Aura Sentinel",
+        "width": 1400,
+        "height": 900
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

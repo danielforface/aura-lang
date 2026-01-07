@@ -1,0 +1,7 @@
+// Aura sample bundled into the APK assets.
+
+def main() {
+  // This is intentionally tiny; it's here to prove packaging.
+  let msg = "Hello from Aura assets!";
+  msg
+}

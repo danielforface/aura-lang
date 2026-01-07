@@ -1,0 +1,105 @@
+---
+title: Language Reference
+description: The core syntax and semantics of Aura (current prototype).
+---
+
+<KeywordTable />
+
+<OperatorTable />
+
+## Program structure
+
+An Aura program is a list of top-level statements. The most common entry point is a <K>cell</K>.
+
+<Syntax title="Entry point">
+
+<Op>cell</Op> <Lit>name</Lit>() <Op>-></Op> <Ty>Type</Ty><Op>:</Op>
+  <Lit>statements...</Lit>
+
+</Syntax>
+
+<Semantics title="Why cells?">
+Cells are a unit of execution and verification: the compiler checks types, the verifier proves safety obligations, and the runtime evaluates the body.
+</Semantics>
+
+```aura
+cell main() -> u32:
+  val x: u32 = 42
+  yield x
+```
+
+## Statements
+
+<Syntax title="Common statement forms">
+
+- <K>val</K> name<Op>:</Op> <Ty>Type</Ty> <Op>=</Op> expr
+- <K>mut</K> name<Op>:</Op> <Ty>Type</Ty> <Op>=</Op> expr
+- name <Op>=</Op> expr
+- <K>if</K> cond<Op>:</Op> ... <K>else</K><Op>:</Op> ...
+- <K>while</K> cond <K>invariant</K> (expr)<Op>:</Op> ...
+- <K>yield</K> expr
+
+</Syntax>
+
+<Semantics title="Yield and blocks">
+<K>yield</K> returns a value from a block (and must be the last statement in that block).
+</Semantics>
+
+## Expressions
+
+Aura supports integer and string literals, identifiers, unary/binary operators, and calls.
+
+Member calls like `model.infer(x)` are lowered by the checker/verifier into well-known calls (e.g. `ai.infer(model, x)`), enabling proof rules.
+
+<Semantics title="Lowering (important for plugins)">
+When syntax looks like a member call, the compiler can lower it into a canonical function call so the verifier/plugin system can attach rules to a single name.
+</Semantics>
+
+## Flow operators
+
+Aura includes a flow operator family used to model capability transfer and sequencing:
+
+- <Op>-></Op> (sync flow)
+- <Op>~></Op> (async flow)
+
+They behave like “do left, then right”, and the verifier uses them to enforce capability rules (e.g. no unsafe reuse).
+
+<Example title="Flow sequencing">
+
+```aura
+cell main() -> u32:
+  val a: u32 = 1
+  val b: u32 = 2
+  val out: u32 = a -> b
+  yield out
+```
+
+</Example>
+
+## Types (prototype)
+
+You’ll see these commonly:
+
+- <Ty>u32</Ty>, <Ty>bool</Ty>, <Ty>string</Ty>, <Ty>()</Ty>
+- Tensor types like <Ty>Tensor&lt;u32, [2, 2, 3]&gt;</Ty>
+
+Type aliases are supported:
+
+```aura
+type Pixels = Tensor<u32, [2,2,3]>
+```
+
+## Imports
+
+Imports are currently used as **module placeholders** (they tell the checker/verifier which namespaces are in scope):
+
+```aura
+import aura::tensor
+import aura::io
+```
+
+See the “Stdlib, Modules, and Imports” doc for details.
+
+<Note>
+In the current prototype, <K>import</K> is also used by tooling (including the Nexus/plugin pipeline) to decide which domains are active.
+</Note>

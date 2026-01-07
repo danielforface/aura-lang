@@ -1,0 +1,24 @@
+---
+title: The Proof System
+description: A deep dive into Z3, invariants, and what “Proven” means.
+---
+
+## Z3 and `invariant`
+
+Aura’s verification pipeline treats proofs as a first-class stage.
+
+A loop without an explicit invariant can still verify in some cases, but the safest pattern is to write an invariant.
+
+```aura
+cell sum_to(n: u32) -> u32:
+  mut i: u32 = 0
+  mut acc: u32 = 0
+
+  while i < n invariant (acc >= 0):
+    acc = acc + i
+    i = i + 1
+
+  yield acc
+```
+
+When the solver finds a counterexample, the editor/CLI should surface the mathematical reason.

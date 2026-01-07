@@ -1,0 +1,4 @@
+# AllocCapability
+block 0:
+  %0 = alloc_capability cap
+  ret

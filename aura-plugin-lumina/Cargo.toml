@@ -1,0 +1,12 @@
+[package]
+name = "aura-plugin-lumina"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+raylib = ["dep:raylib"]
+
+[dependencies]
+aura-nexus = { path = "../aura-nexus" }
+raylib = { version = "5.5.1", optional = true }

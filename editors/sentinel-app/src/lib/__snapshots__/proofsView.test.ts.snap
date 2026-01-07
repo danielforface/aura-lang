@@ -1,0 +1,30 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`proofs view > renders grouped proofs (snapshot) 1`] = `
+"
+    <div class="proofHeader">
+      <div class="proofActions">
+        <button class="miniBtn" type="button" data-export="json">Export JSON</button>
+        <button class="miniBtn" type="button" data-export="html">Export HTML</button>
+      </div>
+      <div class="meta">Timeline (since last proof run): +1 −0 ~0</div>
+    </div>
+  
+        <div class="diagSection">
+          <div class="diagSectionTitle">foo (1)</div>
+          
+            <div class="diag" data-range="%7B%22start%22%3A%7B%22line%22%3A1%2C%22character%22%3A0%7D%2C%22end%22%3A%7B%22line%22%3A1%2C%22character%22%3A1%7D%7D" data-diag-id="1%3A0-1%3A1%7C1%7Cproof%7Caura%7Cfailed%20obligation">
+              <div><span class="badge">Error</span> <span class="meta">aura proof</span></div>
+              <div class="meta">2:1</div>
+              <div>failed obligation</div>
+              <div class="diagActions"><button class="miniBtn" data-qf="1">Quick Fix</button></div>
+            </div>
+          
+        </div>
+      
+    <div class="diagSection">
+      <div class="diagSectionTitle">Explain</div>
+      <div class="meta">Select a proof obligation to see details.</div>
+    </div>
+  "
+`;

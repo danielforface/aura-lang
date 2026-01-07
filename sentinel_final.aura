@@ -1,0 +1,24 @@
+import aura::lumina
+
+cell main():
+    val mut clicks: u32 = 0
+    val mut sys_msg: String = "System Secured"
+
+    layout:
+        VStack(spacing: 20, alignment: "center") {
+            render: Text(text: "Aura Sentinel OS", color: "Gold")
+            render: Text(text: "Clicks: {clicks}", color: "White")
+
+            render: Button(label: "Pulse", width: 300, height: 60) {
+                on_click: ~> {
+                    clicks = clicks + 1
+                    if clicks > 3:
+                        sys_msg = "Warning: High Activity"
+                }
+            }
+
+            render: Text(text: sys_msg, color: "Red")
+        }
+
+    // NOTE: standalone `invariant <expr>` is not implemented yet;
+    // loop invariants are supported on `while`.

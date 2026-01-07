@@ -1,0 +1,43 @@
+---
+title: AI & Tensors
+description: ONNX Runtime integration and shape-safe inference.
+---
+
+## Shape-safe tensors
+
+Aura supports tensor types that carry shape information.
+
+<Example title="A tensor with a static shape">
+
+```aura
+import aura::tensor
+
+val input: Tensor<u32, [2, 2, 3]> = tensor::new<u32>(12)
+```
+
+</Example>
+
+<Semantics title="What gets proven">
+The checker treats <Ty>Tensor&lt;T, [d1, d2, ...]&gt;</Ty> as a value whose shape is part of the type. Verification can then prove that reshape / inference calls never mismatch shapes.
+</Semantics>
+
+## ONNX inference
+
+Load a model and infer:
+
+<Example title="Inference with a shape-safe output">
+
+```aura
+import onnxruntime
+
+val model: Model = ai.load_model("identity_u32_2x2x3.onnx")
+val out: Tensor<u32, [2, 2, 3]> = model.infer(input)
+```
+
+</Example>
+
+The verifier checks that the model’s expected input shape matches the provided tensor shape.
+
+<Note>
+This page describes the high-level surface syntax. The plugin-aware verifier emits informational diagnostics like “verified by aura-ai” in the editor (Aura Sentinel).
+</Note>

@@ -1,0 +1,11 @@
+import aura::io
+
+cell main() ->:
+  val x: u32 = 2
+  match x:
+    1:
+      io::println("one")
+    2:
+      io::println("two")
+    _:
+      io::println("other")

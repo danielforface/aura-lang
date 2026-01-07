@@ -1,0 +1,16 @@
+[package]
+name = "aura-ai-opt"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+miette = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "aura-ai-opt"
+path = "src/main.rs"

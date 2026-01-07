@@ -1,0 +1,5 @@
+# AuraSDK stdlib: std::collections
+# Prototype placeholder: real collections require runtime representation.
+
+# In the current MVP, collections are not implemented at the language level.
+# Keep this file so `import std::collections` works and can be expanded later.

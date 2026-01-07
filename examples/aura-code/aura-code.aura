@@ -1,0 +1,83 @@
+# aura-code.aura
+# A tiny interactive "mini game" demo using Aura + Lumina (raylib).
+# Run:
+#   cargo run -p aura --features z3,lumina-raylib -- run examples/aura-code/aura-code.aura --mode avm
+
+import aura::iot
+cell main():
+    val mut score: u32 = 0
+    val mut misses: u32 = 0
+    val mut lane: u32 = 0
+    val mut lane_label: String = "LEFT"
+
+    layout:
+        VStack(padding: 24, spacing: 16, alignment: "center") {
+            render: Text(text: "AURA CODE: MINI TARGET", style: Style { fg: "Gold", size: 40 })
+            render: Text(text: "Score: {score}    Misses: {misses}", style: Style { fg: "White", size: 22 })
+            render: Text(text: "Target lane: {lane_label}", style: Style { fg: "White", size: 22 })
+
+            render: HStack(spacing: 14, padding: 0) {
+                render: Button(label: "LEFT", style: Style { bg: "Black", fg: "White", radius: 22, width: 220, height: 70 }) {
+                    on_click: ~> {
+                        if lane == 0:
+                            score = score + 1
+                        else:
+                            misses = misses + 1
+
+                        lane = lane + 1
+                        if lane > 2:
+                            lane = 0
+
+                        if lane == 0:
+                            lane_label = "LEFT"
+                        else:
+                            if lane == 1:
+                                lane_label = "MID"
+                            else:
+                                lane_label = "RIGHT"
+                    }
+                }
+                render: Button(label: "MID", style: Style { bg: "Black", fg: "White", radius: 22, width: 220, height: 70 }) {
+                    on_click: ~> {
+                        if lane == 1:
+                            score = score + 1
+                        else:
+                            misses = misses + 1
+
+                        lane = lane + 1
+                        if lane > 2:
+                            lane = 0
+
+                        if lane == 0:
+                            lane_label = "LEFT"
+                        else:
+                            if lane == 1:
+                                lane_label = "MID"
+                            else:
+                                lane_label = "RIGHT"
+                    }
+                }
+                render: Button(label: "RIGHT", style: Style { bg: "Black", fg: "White", radius: 22, width: 220, height: 70 }) {
+                    on_click: ~> {
+                        if lane == 2:
+                            score = score + 1
+                        else:
+                            misses = misses + 1
+
+                        lane = lane + 1
+                        if lane > 2:
+                            lane = 0
+
+                        if lane == 0:
+                            lane_label = "LEFT"
+                        else:
+                            if lane == 1:
+                                lane_label = "MID"
+                            else:
+                                lane_label = "RIGHT"
+                    }
+                }
+            }
+
+            render: Text(text: "Click the button matching the target lane.", style: Style { fg: "White", size: 18 })
+        }

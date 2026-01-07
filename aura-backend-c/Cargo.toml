@@ -1,0 +1,11 @@
+[package]
+name = "aura-backend-c"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+aura-ir = { path = "../aura-ir" }
+miette = { workspace = true }
+thiserror = { workspace = true }
+

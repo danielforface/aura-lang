@@ -1,0 +1,11 @@
+[package]
+name = "aura-parse"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+aura-lex = { path = "../aura-lex" }
+miette = { workspace = true }
+thiserror = { workspace = true }
+

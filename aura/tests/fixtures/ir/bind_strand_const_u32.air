@@ -1,0 +1,4 @@
+# BindStrand (ConstU32)
+block 0:
+  %0 = bind_strand x const_u32 5
+  ret

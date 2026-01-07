@@ -1,0 +1,5 @@
+# Call (no dest)
+block 0:
+  %0 = bind_strand s const_string "hello"
+  call io.println (%0)
+  ret

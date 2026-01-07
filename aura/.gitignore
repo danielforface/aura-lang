@@ -1,0 +1,17 @@
+
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# VS Code
+.vscode/
+
+# Local build/output folders
+/build/
+/.aura/
+

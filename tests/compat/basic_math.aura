@@ -1,0 +1,9 @@
+# Minimal arithmetic + val bindings.
+
+import aura::io
+
+cell main() ->:
+    val x: u32 = 40
+    val y: u32 = 2
+    val z: u32 = x + y
+    io::println("z = {z}")

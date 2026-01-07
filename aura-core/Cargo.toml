@@ -1,0 +1,15 @@
+[package]
+name = "aura-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+aura-ir = { path = "../aura-ir" }
+miette = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+aura-parse = { path = "../aura-parse" }
+

@@ -1,0 +1,5 @@
+# Binary
+block 0:
+  %0 = bind_strand x const_u32 5
+  %1 = binary add %0 %0
+  ret

@@ -1,0 +1,21 @@
+# AuraSDK: verified stdlib subset (prototype)
+#
+# This module exists to give us a concrete, CI-checked slice of the stdlib that
+# is fully exercised by the verifier.
+#
+# Scope (intentionally small): u32 arithmetic, simple loops, and contracts.
+
+cell inc_bounded(x: u32) ->:
+    requires x <= 9
+    val y: u32 = x + 1
+    ensures y <= 10
+    yield y
+
+cell sum_to(n: u32) ->:
+    requires n <= 10
+    val i: u32 = 0
+    val acc: u32 = 0
+    while i < n invariant i <= n decreases n - i:
+        acc = acc + i
+        i = i + 1
+    yield acc

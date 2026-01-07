@@ -1,0 +1,33 @@
+---
+title: Aura IoT Plugin
+description: Hardware/MMIO safety checks (capabilities, offsets, bitmasks).
+---
+
+## Enable
+
+Add this to your `aura.toml`:
+
+```toml
+plugins = [
+  { name = "aura-iot", trusted = true },
+]
+```
+
+## What it verifies
+
+- Emits informational proof diagnostics for verified bitmask/offset facts.
+- Uses the nearest aura.toml [hardware] manifest to learn register masks.
+
+## Example
+
+```aura
+import aura::hw
+
+cell main() ->:
+    val cap = hw.open("SPI_CTRL")
+    val _ = hw.write_u32(cap, 0, 0x3FF)
+```
+
+## Editor feedback
+
+When verification succeeds, the LSP publishes informational diagnostics tagged with the plugin id (`aura-iot`). Aura Sentinel uses these to render gutter icons, hovers, and inlay hints.

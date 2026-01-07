@@ -1,0 +1,26 @@
+---
+title: REPL + AVM Interpreter
+description: The Aura Virtual Machine and the Z3 safety gate.
+---
+
+## AVM
+
+`aura-interpret` provides a lightweight execution engine (AVM) for rapid iteration.
+
+It supports:
+
+- evaluating Aura source from stdin
+- returning a JSON result for editor integration
+
+## Z3 safety gate
+
+By default, the interpreter uses a Z3-backed verification step as a hard gate: if the program doesn’t verify, it won’t execute.
+
+## Dynamic plugin loading
+
+The interpreter can enable plugins dynamically based on imports in the source:
+
+- `import aura-ai` enables the AI plugin checks
+- `import aura-iot` enables the IoT plugin checks
+
+If no plugin imports are present, the interpreter defaults to running with both built-in plugins.

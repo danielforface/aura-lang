@@ -1,0 +1,4 @@
+import onnxruntime
+
+cell main() ->:
+    onnxruntime_available()

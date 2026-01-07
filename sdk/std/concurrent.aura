@@ -1,0 +1,6 @@
+# AuraSDK stdlib: std::concurrent
+# Aligned with current safety story:
+# - Async lambdas may NOT capture mutable outer bindings (enforced in sema).
+# - Real threads/channels are not exposed in the MVP runtime.
+
+# Placeholder to make `import std::concurrent` meaningful.

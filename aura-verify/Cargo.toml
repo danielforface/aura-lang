@@ -1,0 +1,23 @@
+[package]
+name = "aura-verify"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+aura-ast = { path = "../aura-ast" }
+aura-bridge = { path = "../aura-bridge" }
+aura-ir = { path = "../aura-ir" }
+aura-parse = { path = "../aura-parse" }
+aura-nexus = { path = "../aura-nexus", default-features = false }
+miette = { workspace = true }
+thiserror = { workspace = true }
+
+# Real SMT solver (requires libz3 installed)
+z3 = { version = "0.12", optional = true }
+
+[features]
+default = []
+z3 = ["dep:z3", "aura-nexus/z3"]
+
+[dev-dependencies]
+
