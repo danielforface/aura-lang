@@ -312,6 +312,12 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 
 This section is tracked by strategic pillars (v1.0 daily-driver focus).
 
+**See detailed implementation plan:** [docs/v1.0-implementation-plan.md](docs/v1.0-implementation-plan.md)
+
+**Target:** July 31, 2026 | **Current Phase:** Strategic Planning (v0.3 → v1.0)
+
+---
+
 ### Pillar 1 — Explainable Verification UX
 - [x] Sentinel “Proven glow” + dimming for unknown/untrusted
 - [x] Inline Value Injection (ghost text) on proof failures
@@ -320,13 +326,20 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 - [~] Structured Counterexample Mapping
   - [x] Versioned payload: `Diagnostic.data.counterexample.schema == aura.counterexample.v2`
   - [x] Best-effort name/value mapping + source-range anchoring
-  - [~] Typed mapping from Z3 model → Aura AST types (records/enums/collections) + pretty-printer
-    - [x] Typed primitives include structured `valueJson` (u32/bool)
-- [~] “Explain” Engine (unsat core → minimal binding set / variable trace)
+  - [ ] **Typed mapping from Z3 model → Aura AST types** (v1.0 — Week 1–3, P0)
+    - [ ] `aura-verify/src/counterexample_mapper.rs`: Z3 Model → TypedValue
+    - [ ] Support primitives, records, enums, collections
+    - [ ] 4+ unit tests per type case
+  - [x] Typed primitives include structured `valueJson` (u32/bool)
+- [~] "Explain" Engine (unsat core → minimal binding set / variable trace)
   - [x] UNSAT core evidence captured for successful proofs (best-effort)
   - [x] Core items map back to spans for `requires`/`assume` and the proved goal (assert/ensures)
   - [x] LSP + Sentinel surface UNSAT core as a span-linked logic trace (click-to-jump)
   - [x] Variable trace + invariant repair suggestions (end-to-end)
+  - [ ] **Sentinel Explain panel rewrite** (v1.0 — Week 3–4, P0)
+    - [ ] Render typed counterexamples as expandable tree
+    - [ ] Highlight UNSAT core variables
+    - [ ] Suggest repair hints for failing assertions
 
 ### Pillar 2 — High-Speed Incremental Proof Streaming
 - [x] Dependency-aware proof caching (file hash + solver config)
@@ -348,6 +361,15 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] LSP-level long-lived solver sessions (persist across verify requests)
 - [x] Module-level decomposition: proof summaries at module boundary
 
+#### Performance Tuning (v1.0 Pillar 2 Acceleration)
+- [ ] **Achieve <200ms latency for 1,000-line file** (Week 2–4, Priority: P0)
+  - [ ] Profiling infrastructure: telemetry dashboard in Sentinel
+  - [ ] Z3 incremental solver tuning: profile `push/pop` vs `check-sat-assuming`
+  - [ ] Cache threshold auto-tuning based on project size
+  - [ ] Solver symbol pre-population (avoid repeated introductions)
+  - [ ] Parallel verification for independent functions (rayon)
+  - [ ] Performance regression test suite: maintain <200ms (p95)
+
 #### Pillar 2 — Settings / toggles (daily-driver ergonomics)
 - [x] `AURA_PROOF_CACHE_DISABLE` (turn off all proof caching)
 - [x] `AURA_PROOF_CACHE_PERSIST_DISABLE` (disable on-disk persistence)
@@ -356,6 +378,12 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 
 ### Pillar 3 — Region-Based Memory Model (Option B)
 - [x] Decision recorded: region-based allocation + linear capabilities
+- [ ] **Linear Type Enforcement in Type-Checker** (v1.0 — Week 3–6, Priority: P1)
+  - [ ] Add `Ownership` metadata to type system (Owned, Borrowed, BorrowedMut, Moved)
+  - [ ] Enforce: no use after move (type-checker rejects)
+  - [ ] Track function-local ownership flow
+  - [ ] Diagnostics: point to move site, suggest new binding
+  - [ ] Integration tests: 5+ mutation patterns verified
 - [~] Linear capability enforcement
   - [x] Initial non-Z3 verifier pass for aliasing/range checks
   - [~] Full type-checker enforcement (consume/close, no alias, no use-after-move)
@@ -366,6 +394,12 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Region allocator mode exists (env-controlled arena)
   - [x] Region-aware collections schema + Z3 contracts per operation
     - [x] `sdk/std/collections_region.aura`: region-allocated Vec/HashMap with contracts
+  - [ ] **Region-Based Stdlib Hardening** (v1.0 — Week 4–8, Priority: P1)
+    - [ ] Implement verified `Vec<T>` with length/capacity invariants
+    - [ ] Implement verified `HashMap<K,V>` with collision-free invariants
+    - [ ] Z3 contract enforcement: no out-of-bounds access
+    - [ ] Fuzzing: 10k random operations, 0 violations
+    - [ ] All operations proved (Z3 passing)
 - [~] Explicit trust boundaries
   - [x] Trusted boundary reports (FFI/bindgen surfaced in tooling)
   - [x] CI “Trusted Core Report” audit policy (fail builds on unreviewed trusted expansions)
@@ -379,6 +413,16 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Fuzzing + discrepancy detection
   - [x] Automated minimizer to stored MRE regression fixtures
   - [x] CI gate for supported features
+- [ ] **Sentinel Debugger Integration** (v1.0 — Week 1–3, Priority: P0)
+  - [ ] `editors/sentinel-app/src/debugger.ts`: native debugger panel
+  - [ ] Launch, set breakpoints, step, watch expressions
+  - [ ] Integration with DWARF debug info from v0.3
+  - [ ] Integration test: hello_world breakpoint + step
+- [ ] **Differential Testing CI Gate** (v1.0 — Week 2–4, Priority: P1)
+  - [ ] `ci/differential_test.yml`: build with Dev-VM, C, LLVM backends
+  - [ ] Run golden test suite on each
+  - [ ] Fail if discrepancy detected
+  - [ ] Regression fixture auto-save
 
 ### Compatibility / stability guarantees
 - [x] Stable syntax and semantics
@@ -388,6 +432,22 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 - [x] Verifier determinism profile for CI
 - [x] Versioned LSP stability contract
 - [x] Supply chain hardening (signing support + reproducibility options)
+
+### Pillar 5 — Ecosystem & Standard Library (Priority: P1–P2)
+- [ ] **aura pkg — Package Manager** (v1.0 — Week 17–19, Priority: P1)
+  - [ ] Lockfile format (deterministic)
+  - [ ] Signature verification (ed25519)
+  - [ ] Trusted-boundary report per dependency
+  - [ ] Publish to `pkg.auralang.org`
+- [ ] **Audited std.net & std.concurrent** (v1.0 — Week 19–22, Priority: P1)
+  - [ ] Cryptographic review of socket code
+  - [ ] Concurrent data structure proofs (lock-free where possible)
+  - [ ] Code review + threat modeling for security-sensitive paths
+- [ ] **Documentation & Examples** (v1.0 — Week 22–24, Priority: P1)
+  - [ ] Rewrite "Aura Book" Chapter 10 (Verification)
+  - [ ] Add "Debug Guide" chapter
+  - [ ] Add "Package Management" guide
+  - [ ] Recipes: "Build a TCP server," "Verify concurrent queue"
 
 ---
 
