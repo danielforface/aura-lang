@@ -715,6 +715,7 @@ impl<'a> Parser<'a> {
         Ok(PropStmt { span, name, expr })
     }
 
+    #[allow(dead_code)]
     fn parse_type_alias(&mut self) -> Result<TypeAlias, ParseError> {
         let start = self.expect(TokenKind::KwType)?;
         let name = self.expect_ident()?;
@@ -2239,6 +2240,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn expect_newline_or_eof(&mut self) -> Result<(), ParseError> {
         if self.at(TokenKind::Newline) {
             self.next();

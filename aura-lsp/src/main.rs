@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod merkle_cache;
+mod profiling;
 
 use std::collections::HashMap;
 use std::fs;
@@ -2761,8 +2762,8 @@ impl Backend {
             };
 
             let t_start = std::time::Instant::now();
-            let mut t_parse_ms: Option<u128> = None;
-            let mut t_sema_ms: Option<u128> = None;
+            let t_parse_ms: Option<u128>;
+            let t_sema_ms: Option<u128>;
             let mut t_normalize_ms: Option<u128> = None;
             let mut t_z3_ms: Option<u128> = None;
 

@@ -471,6 +471,7 @@ enum Prec {
     Mul,
     Unary,
     Postfix,
+    #[allow(dead_code)]
     Primary,
 }
 

@@ -1144,6 +1144,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         self.eval_any_with_mode(expr, st, nexus, EvalMode::Runtime)
     }
 
+    #[allow(dead_code)]
     fn eval_any_spec(
         &mut self,
         expr: &Expr,

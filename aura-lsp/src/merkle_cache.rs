@@ -8,8 +8,7 @@
 /// The cache provides stable keys across file edits and enables fine-grained invalidation:
 /// only functions whose direct deps changed need re-proof.
 
-use std::collections::{BTreeMap, HashMap, BTreeSet};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MerkleProofEntry {

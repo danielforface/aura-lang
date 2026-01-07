@@ -135,7 +135,7 @@ impl PatternMatrix {
                 // Wildcard matches everything; continue to next column
                 self._compile_inner(rows, actions, col + 1)
             }
-            Pattern::Literal(val) => {
+            Pattern::Literal(_val) => {
                 // Build decision tree based on literal values
                 let mut branches: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                 for (idx, row) in rows.iter().enumerate() {
@@ -186,8 +186,8 @@ impl PatternMatrix {
             }
             Pattern::Variant {
                 enum_name,
-                variant_name,
-                arg_patterns,
+                variant_name: _,
+                arg_patterns: _,
             } => {
                 // Build decision tree based on enum variant
                 let mut branches: BTreeMap<String, Vec<usize>> = BTreeMap::new();
