@@ -3,11 +3,52 @@
 **/target/
 **/*.rs.bk
 
+# Rust / Cargo (alternate build dirs)
+/target-alt/
+**/target-alt/
+
 # Local build outputs
 /build/
 **/build/
 /.aura/
 **/.aura/
+
+# LSP tests output
+/target-lsp-tests/
+**/target-lsp-tests/
+/target-lsp-test/
+**/target-lsp-test/
+
+# Repo-root build output
+/dist/
+
+# Large release artifacts / binary blobs (keep sources; rebuild/download these)
+/vendor.zip
+/deps/
+**/deps/
+
+/tools/z3/dist/
+/tools/z3/*.zip
+
+/website/public/downloads/
+/website/website.zip
+
+/editors/sentinel-app/src-tauri/bin/
+/editors/vscode/*.exe
+/editors/vscode/*.vsix
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/.vercel/
 
 # Editor
 .vscode/

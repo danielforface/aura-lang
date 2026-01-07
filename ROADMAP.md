@@ -46,6 +46,7 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 - [x] VSIX packaging
 - [x] Sentinel installer packaging (MSI + NSIS)
 - [x] Website download staging via release script
+- [x] Repo hygiene: `.gitignore` excludes build outputs and large generated artifacts
 
 ---
 
