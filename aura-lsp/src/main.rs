@@ -2,6 +2,7 @@
 
 mod merkle_cache;
 mod profiling;
+mod performance_tuning;
 
 use std::collections::HashMap;
 use std::fs;
