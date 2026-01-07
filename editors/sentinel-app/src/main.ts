@@ -384,6 +384,60 @@ function findDeepestSymbolNameForRange(doc: DocState, range: LspRange): string {
   return best?.[best.length - 1]?.name ?? "(global)";
 }
 
+function formatCounterexampleValue(v: any): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function prettyProofData(data: any): string {
+  try {
+    const cx = data?.counterexample;
+    const mapped = cx?.mapped;
+    const schema = String(cx?.schema ?? mapped?.schema ?? "").trim();
+
+    if (mapped && Array.isArray(mapped.bindings)) {
+      const lines: string[] = [];
+      if (schema) lines.push(`counterexample.schema: ${schema}`);
+
+      const bindings = mapped.bindings as any[];
+      lines.push("bindings:");
+      for (const b of bindings.slice(0, 40)) {
+        const name = String(b?.name ?? "").trim();
+        if (!name) continue;
+        const ty = String(b?.aura_type ?? b?.auraType ?? "").trim();
+        const value = formatCounterexampleValue(b?.value);
+        lines.push(`  ${name}${ty ? `: ${ty}` : ""} = ${value}`);
+      }
+
+      const injections = Array.isArray(mapped.injections) ? (mapped.injections as any[]) : [];
+      if (injections.length) {
+        lines.push("injections:");
+        for (const inj of injections.slice(0, 20)) {
+          const text = String(inj?.text ?? "").trim();
+          if (!text) continue;
+          lines.push(`  ${text}`);
+        }
+      }
+
+      return lines.join("\n");
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch {
+    return String(data);
+  }
+}
+
 function renderExplainPanel(doc: DocState, diag: Diagnostic | undefined) {
   if (!diag) return `<div class="meta">Select a proof obligation to see details.</div>`;
 
@@ -400,7 +454,7 @@ function renderExplainPanel(doc: DocState, diag: Diagnostic | undefined) {
   if (data !== undefined) {
     try {
       extra = `<div class="meta" style="margin-top:8px;">Data / Counterexample (if provided)</div><pre class="proofPre">${escapeHtml(
-        JSON.stringify(data, null, 2)
+        prettyProofData(data)
       )}</pre>`;
     } catch {
       // ignore

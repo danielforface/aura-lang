@@ -77,7 +77,7 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
   - [x] Highlight bindings relevant to failing assertion
 - [~] One-click “explain” for models/counterexamples
   - [x] Explain panel shows model slice + relevant bindings
-  - [x] Counterexample mapping schema `aura.counterexample.v1` (mapped bindings + inline injections)
+  - [x] Counterexample mapping schema `aura.counterexample.v2` (mapped bindings + inline injections)
   - [ ] Unsat-core-driven “Explain” engine (minimal binding set / variable trace)
 
 ### Sentinel (IDE)
@@ -212,10 +212,10 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 ### Pillar 1 — Explainable Verification UX
 - [x] Sentinel “Proven glow” + dimming for unknown/untrusted
 - [x] Inline Value Injection (ghost text) on proof failures
-  - [x] LSP emits counterexample injections (`aura.counterexample.v1`)
+  - [x] LSP emits counterexample injections (`aura.counterexample.v2`)
   - [x] Sentinel renders inline injected values
 - [~] Structured Counterexample Mapping
-  - [x] Versioned payload: `Diagnostic.data.counterexample.schema == aura.counterexample.v1`
+  - [x] Versioned payload: `Diagnostic.data.counterexample.schema == aura.counterexample.v2`
   - [x] Best-effort name/value mapping + source-range anchoring
   - [~] Typed mapping from Z3 model → Aura AST types (records/enums/collections) + pretty-printer
 - [~] “Explain” Engine (unsat core → minimal binding set / variable trace)
@@ -345,7 +345,7 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Structured data plumbed via `Diagnostic.data`
   - [x] Rich value rendering + navigation
   - [x] Trace highlights in code
-  - [x] Inline value injections (ghost text) from `aura.counterexample.v1`
+  - [x] Inline value injections (ghost text) from `aura.counterexample.v2`
   - [ ] Typed counterexample mapping (AST-shaped values, not just strings)
 - [~] Proven path rendering
   - [x] “Proven glow” decoration exists

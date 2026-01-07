@@ -62,22 +62,27 @@ Proof notes and verification errors attach machine-parsable data:
   - `data.meta.bindings`: best-effort extracted model bindings (array of `{name,value,relevant}`)
   - `data.meta.relevantBindings`: subset of bindings that appear relevant to the failing assertion
 
-### Counterexample Mapping (v1)
+### Counterexample Mapping (v2)
 
 When available, verification errors also include a best-effort mapping from model bindings back into the source:
 
-- `data.counterexample.schema == "aura.counterexample.v1"`
+- `data.counterexample.schema == "aura.counterexample.v2"`
 - `data.counterexample.mapped`:
   - `schema`: string
   - `bindings`: array of:
     - `name`: string
     - `value`: string
     - `value_kind` (optional): string (e.g. `bool|int|string|bitvec`)
+    - `aura_type` (optional): string (e.g. `u32[0..10]`, `bool`)
     - `relevant`: boolean
     - `best_range` (optional): LSP `Range` where this binding name appears in the source
   - `injections`: array of:
     - `range`: LSP `Range` anchoring the injection
     - `text`: string to render as ghost-text in the editor
     - `name` (optional): binding name
+
+Notes:
+- v2 is a compatible evolution of the earlier v1 shape; consumers should ignore unknown fields.
+- The long-term goal is for `value` to reflect Aura-typed structures (records/enums/vectors) rather than raw SMT strings.
 
 Sentinel renders this via the Proofs panel “Data / Counterexample” section.

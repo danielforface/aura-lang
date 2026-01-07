@@ -1303,6 +1303,11 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             .map(|(v, t)| (v.as_str(), Some(t.clone())))
             .unwrap_or((value.as_str(), None));
 
+        let type_prefix = aura_ty
+            .as_deref()
+            .map(|t| format!("{}: ", t))
+            .unwrap_or_default();
+
         let occ = find_ident_occurrences(text, name);
         let best_range = pick_best_occurrence(&occ, err_off, err_end);
         let kind = aura_ty.clone().or_else(|| infer_value_kind(value_s));
@@ -1311,7 +1316,7 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             name: name.clone(),
             value: value_s.to_string(),
             value_kind: kind,
-            aura_type: aura_ty,
+            aura_type: aura_ty.clone(),
             relevant,
             best_range: best_range.clone(),
         });
@@ -1320,16 +1325,18 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             if let Some(r) = best_range {
                 injections.push(CounterexampleInjectionV1 {
                     range: r,
-                    text: format!(" /* {} = {} */", name, value_s),
+                    text: format!(" /* {}{} = {} */", type_prefix, name, value_s),
                     name: Some(name.clone()),
                 });
             }
         }
     }
 
+    // Schema v2: same shape as v1 today, but bindings may include richer typed/structured data
+    // in the future.
     let counterexample_v1 = if !mapped_bindings.is_empty() {
         Some(CounterexampleV1 {
-            schema: "aura.counterexample.v1",
+            schema: "aura.counterexample.v2",
             bindings: mapped_bindings,
             injections,
         })
