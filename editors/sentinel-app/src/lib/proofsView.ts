@@ -156,6 +156,27 @@ export function renderExplainPanel(diag: DiagnosticLike | undefined): string {
       const interpolant = typeof (data as any)?.interpolant === "string" ? (data as any).interpolant : undefined;
       const reasoningTrace = (() => {
         const parts: string[] = [];
+
+        const rel = (diag as any).relatedInformation;
+        const traceRel = Array.isArray(rel)
+          ? rel.filter((ri: any) => String(ri?.message ?? "").startsWith("UNSAT core step "))
+          : [];
+
+        if (traceRel.length) {
+          const lines = traceRel
+            .slice(0, 50)
+            .map((ri: any) => {
+              const m = escapeHtml(String(ri?.message ?? ""));
+              const r = ri?.location?.range;
+              const where = r ? `${Number(r.start?.line ?? 0) + 1}:${Number(r.start?.character ?? 0) + 1}` : "";
+              const rangeJson = r ? encodeURIComponent(JSON.stringify(r)) : "";
+              const dataAttr = r ? ` data-jump-range="${rangeJson}" title="Jump to location"` : "";
+              return `<div class="meta"${dataAttr}>${escapeHtml(where)} ${m}</div>`;
+            })
+            .join("\n");
+          parts.push(`<div class="meta" style="margin-top:8px;">Logic trace (UNSAT core)</div><div class="proofRelated">${lines}</div>`);
+        }
+
         if (Array.isArray(unsatCore) && unsatCore.length) {
           const lines = unsatCore
             .slice(0, 50)

@@ -221,6 +221,7 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
 - [~] “Explain” Engine (unsat core → minimal binding set / variable trace)
   - [x] UNSAT core evidence captured for successful proofs (best-effort)
   - [x] Core items map back to spans for `requires`/`assume` and the proved goal (assert/ensures)
+  - [x] LSP + Sentinel surface UNSAT core as a span-linked logic trace (click-to-jump)
   - [ ] Variable trace + invariant repair suggestions (end-to-end)
 
 ### Pillar 2 — High-Speed Incremental Proof Streaming

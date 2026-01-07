@@ -927,20 +927,34 @@ fn diagnostic_from_proof_note(
         });
     }
 
+    // If this proof note includes an UNSAT core, prefer emitting the span-linked
+    // logic trace first. Many clients (and Sentinel) only display a limited number
+    // of related entries, so raw SMT lines can otherwise drown out the trace.
     if !p.unsat_core.is_empty() {
-        // Keep the reasoning trace scannable: add one related entry per core element.
-        // (Some clients truncate very long diagnostic lines.)
-        for (i, smt) in p.unsat_core.iter().take(50).enumerate() {
+        if !p.related.is_empty() {
             related.push(DiagnosticRelatedInformation {
                 location: Location {
                     uri: uri.clone(),
                     range,
                 },
                 message: format!(
-                    "UNSAT core {}/{}: {}",
+                    "Logic trace (UNSAT core): {} step(s)",
+                    p.related.len()
+                ),
+            });
+        }
+
+        for (i, ri) in p.related.iter().take(50).enumerate() {
+            related.push(DiagnosticRelatedInformation {
+                location: Location {
+                    uri: uri.clone(),
+                    range: range_from_source_span(text, ri.span),
+                },
+                message: format!(
+                    "UNSAT core step {}/{}: {}",
                     i + 1,
-                    p.unsat_core.len(),
-                    smt
+                    p.related.len(),
+                    ri.message
                 ),
             });
         }
@@ -962,14 +976,17 @@ fn diagnostic_from_proof_note(
         }
     }
 
-    for ri in &p.related {
-        related.push(DiagnosticRelatedInformation {
-            location: Location {
-                uri: uri.clone(),
-                range: range_from_source_span(text, ri.span),
-            },
-            message: ri.message.clone(),
-        });
+    // For non-UNSAT notes, keep all related information as-is.
+    if p.unsat_core.is_empty() {
+        for ri in &p.related {
+            related.push(DiagnosticRelatedInformation {
+                location: Location {
+                    uri: uri.clone(),
+                    range: range_from_source_span(text, ri.span),
+                },
+                message: ri.message.clone(),
+            });
+        }
     }
 
     let code = {
