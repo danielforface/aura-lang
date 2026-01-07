@@ -2,7 +2,7 @@
   "name": "aura-vscode",
   "displayName": "Aura Sentinel",
   "description": "Aura Sentinel: Aura language support with live Z3 diagnostics via aura-lsp.",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "publisher": "aura",
   "activationEvents": [
     "onLanguage:aura",

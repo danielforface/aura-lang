@@ -115,7 +115,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "aura"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ai-opt",
  "aura-ast",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "aura-ai-opt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "miette",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "aura-backend-c"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-ir",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "aura-backend-llvm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ir",
  "miette",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "aura-interpret"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-core",
@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "aura-ir"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "miette",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "aura-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-core",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "aura-nexus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "miette",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "aura-plugin-ai"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-bridge",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "aura-plugin-iot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-nexus",
@@ -339,11 +339,11 @@ dependencies = [
 
 [[package]]
 name = "aura-rt"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "aura-rt-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "tokio",
@@ -355,11 +355,11 @@ version = "0.1.0"
 
 [[package]]
 name = "aura-stdlib"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "aura-verify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aura-ast",
  "aura-bridge",
