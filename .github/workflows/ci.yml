@@ -19,3 +19,6 @@ jobs:
 
       - name: Compat suite (Aura CLI)
         run: bash tools/compat/run.sh
+
+      - name: Trusted core audit (baseline diff)
+        run: bash tools/trusted-core/check.sh

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use aura_ast::{ExternCell, Program, Span, Stmt, UnsafeBlock};
 use miette::IntoDiagnostic;
@@ -137,7 +137,7 @@ pub fn write_verify_report(
 ) -> miette::Result<()> {
     let report = TrustedCoreReport {
         schema: "aura.trusted-core.v1",
-        input: display_path(path).to_string_lossy().to_string(),
+        input: display_path(path),
         ok,
         error,
         trusted: program
@@ -289,18 +289,29 @@ fn summarize_proofs(proofs: &[aura_nexus::ProofNote]) -> ProofSummary {
     }
 }
 
-fn display_path(path: &Path) -> PathBuf {
+fn display_path(path: &Path) -> String {
     // Keep output stable and mostly relative for CI artifacts.
     // If canonicalization fails (e.g. missing file), fall back to the given path.
-    match path.canonicalize() {
-        Ok(p) => {
-            if let Ok(cwd) = std::env::current_dir() {
-                if let Ok(rel) = p.strip_prefix(&cwd) {
-                    return rel.to_path_buf();
-                }
-            }
-            p
-        }
-        Err(_) => path.to_path_buf(),
+    let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    let mut s = p.to_string_lossy().to_string();
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        s = rest.to_string();
     }
+    s = s.replace('\\', "/");
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut cwd_s = cwd.to_string_lossy().to_string();
+        if let Some(rest) = cwd_s.strip_prefix("\\\\?\\") {
+            cwd_s = rest.to_string();
+        }
+        cwd_s = cwd_s.replace('\\', "/");
+
+        let prefix = format!("{cwd_s}/");
+        if s.starts_with(&prefix) {
+            return s[prefix.len()..].to_string();
+        }
+    }
+
+    s
 }

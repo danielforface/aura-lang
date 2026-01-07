@@ -1,0 +1,10 @@
+{
+  "schema": "aura.trusted-core.v1",
+  "input": "tests/compat/smoke.aura",
+  "ok": true,
+  "trusted": {
+    "unsafe_blocks": [],
+    "extern_cells_trusted": [],
+    "extern_cells_untrusted": []
+  }
+}

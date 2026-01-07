@@ -22,6 +22,8 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 struct CounterexampleBindingV1 {
     name: String,
     value: String,
+    #[serde(rename = "valueJson", skip_serializing_if = "Option::is_none")]
+    value_json: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1197,6 +1199,43 @@ fn position_from_offset(text: &str, offset: usize) -> Position {
 fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diagnostic {
     let range = range_from_source_span(text, err.span);
 
+    fn clamp_char_boundary(s: &str, mut idx: usize, backwards: bool) -> usize {
+        if idx > s.len() {
+            idx = s.len();
+        }
+        if backwards {
+            while idx > 0 && !s.is_char_boundary(idx) {
+                idx -= 1;
+            }
+        } else {
+            while idx < s.len() && !s.is_char_boundary(idx) {
+                idx += 1;
+            }
+        }
+        idx
+    }
+
+    fn contains_ident(snippet: &str, name: &str) -> bool {
+        // Best-effort token check: split on non-ident characters.
+        // (Avoids many false positives vs `contains`.)
+        snippet
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .any(|tok| tok == name)
+    }
+
+    fn typed_value_json(aura_ty: Option<&str>, value: &str) -> Option<serde_json::Value> {
+        let ty = aura_ty?.trim();
+        if ty.starts_with("u32") {
+            let n = value.trim().parse::<u64>().ok()?;
+            return Some(serde_json::Value::Number(n.into()));
+        }
+        if ty == "bool" {
+            let b = value.trim().parse::<bool>().ok()?;
+            return Some(serde_json::Value::Bool(b));
+        }
+        None
+    }
+
     let related_information = err.meta.as_ref().and_then(|meta| {
         let mut out: Vec<DiagnosticRelatedInformation> = Vec::new();
 
@@ -1231,13 +1270,15 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
         }
 
         if !meta.unsat_core.is_empty() {
-            out.push(DiagnosticRelatedInformation {
-                location: Location {
-                    uri: uri.clone(),
-                    range,
-                },
-                message: format!("UNSAT core ({}): {}", meta.unsat_core.len(), meta.unsat_core.join(" AND ")),
-            });
+            for (i, smt) in meta.unsat_core.iter().take(50).enumerate() {
+                out.push(DiagnosticRelatedInformation {
+                    location: Location {
+                        uri: uri.clone(),
+                        range,
+                    },
+                    message: format!("UNSAT core {}/{}: {}", i + 1, meta.unsat_core.len(), smt),
+                });
+            }
         }
 
         if out.is_empty() { None } else { Some(out) }
@@ -1278,8 +1319,17 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
 
     let mut bindings_for_data: Vec<serde_json::Value> = Vec::new();
     let mut relevant_bindings: Vec<serde_json::Value> = Vec::new();
+
+    let err_off: usize = err.span.offset().into();
+    let err_end: usize = err_off.saturating_add(err.span.len().into());
+    let window_start = clamp_char_boundary(text, err_off.saturating_sub(600), true);
+    let window_end = clamp_char_boundary(text, err_end.saturating_add(600), false);
+    let near_snippet = &text[window_start..window_end];
+
     for (name, value) in bindings.iter().take(50) {
-        let relevant = message_text.contains(name) || related_msgs.iter().any(|m| m.contains(name));
+        let relevant = message_text.contains(name)
+            || related_msgs.iter().any(|m| m.contains(name))
+            || contains_ident(near_snippet, name);
         let entry = json!({
             "name": name,
             "value": value,
@@ -1293,15 +1343,16 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
 
     // Counterexample mapping layer (best-effort): map binding names back to identifier occurrences
     // in the source, and compute inline injection suggestions.
-    let err_off: usize = err.span.offset().into();
-    let err_end: usize = err_off.saturating_add(err.span.len().into());
-
     let mut mapped_bindings: Vec<CounterexampleBindingV1> = Vec::new();
     // Prefer relevant bindings for mapping; fall back to all.
     let mapping_iter: Vec<(&String, &String, bool)> = if !relevant_bindings.is_empty() {
         bindings
             .iter()
-            .filter(|(n, _)| message_text.contains(n) || related_msgs.iter().any(|m| m.contains(n)))
+            .filter(|(n, _)| {
+                message_text.contains(n)
+                    || related_msgs.iter().any(|m| m.contains(n))
+                    || contains_ident(near_snippet, n)
+            })
             .take(24)
             .map(|(n, v)| (n, v, true))
             .collect()
@@ -1320,6 +1371,8 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
             .map(|(v, t)| (v.as_str(), Some(t.clone())))
             .unwrap_or((value.as_str(), None));
 
+        let value_json = typed_value_json(aura_ty.as_deref(), value_s);
+
         let type_prefix = aura_ty
             .as_deref()
             .map(|t| format!("{}: ", t))
@@ -1332,6 +1385,7 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
         mapped_bindings.push(CounterexampleBindingV1 {
             name: name.clone(),
             value: value_s.to_string(),
+            value_json,
             value_kind: kind,
             aura_type: aura_ty.clone(),
             relevant,
@@ -1367,6 +1421,42 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
     } else {
         bindings_for_data.iter().take(8).cloned().collect::<Vec<_>>()
     };
+
+    // Variable trace: group best-effort definition/assignment locations for relevant bindings.
+    let variable_trace = err.meta.as_ref().map(|m| {
+        let mut out: Vec<serde_json::Value> = Vec::new();
+
+        for (name, value) in bindings.iter().take(50) {
+            let is_relevant = message_text.contains(name)
+                || related_msgs.iter().any(|msg| msg.contains(name))
+                || contains_ident(near_snippet, name);
+            if !is_relevant {
+                continue;
+            }
+
+            let mut defined_at: Option<Range> = None;
+            let mut last_assigned_at: Option<Range> = None;
+            for ri in &m.related {
+                if ri.message.starts_with(&format!("{name} defined here")) {
+                    defined_at = Some(range_from_source_span(text, ri.span));
+                }
+                if ri.message.starts_with(&format!("{name} last assigned here")) {
+                    last_assigned_at = Some(range_from_source_span(text, ri.span));
+                }
+            }
+
+            let aura_type = typed_bindings_by_name.get(name).map(|(_, t)| t.clone());
+            out.push(json!({
+                "name": name,
+                "value": value,
+                "auraType": aura_type,
+                "definedAt": defined_at,
+                "lastAssignedAt": last_assigned_at,
+            }));
+        }
+
+        out
+    });
 
     let diag_message = match model_text.as_deref() {
         Some(model) => format!("{}\n\nModel:\n{}", err.message, model),
@@ -1406,6 +1496,7 @@ fn diagnostic_from_verify_error(uri: &Url, text: &str, err: VerifyError) -> Diag
                 "unsatCore": m.unsat_core.clone(),
                 "hints": m.hints.clone(),
                 "suggestions": m.suggestions.clone(),
+                "variableTrace": variable_trace.clone().unwrap_or_default(),
             })),
         })),
     }

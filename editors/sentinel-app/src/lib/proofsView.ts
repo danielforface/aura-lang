@@ -102,7 +102,7 @@ export function renderExplainPanel(diag: DiagnosticLike | undefined): string {
       .map((b: any) => {
         const nameRaw = String(b?.name ?? "");
         const name = escapeHtml(nameRaw);
-        const value = renderValue(b?.value);
+        const value = renderValue(b?.valueJson ?? b?.value);
         const rel = b?.relevant ? `<span class="badge">relevant</span>` : "";
         const q = encodeURIComponent(nameRaw);
         const clickable = nameRaw.trim().length
@@ -154,6 +154,47 @@ export function renderExplainPanel(diag: DiagnosticLike | undefined): string {
 
       const unsatCore = Array.isArray((data as any)?.unsat_core) ? (data as any).unsat_core : undefined;
       const interpolant = typeof (data as any)?.interpolant === "string" ? (data as any).interpolant : undefined;
+
+      const metaHints = Array.isArray(data?.meta?.hints) ? data.meta.hints : undefined;
+      const metaSuggestions = Array.isArray(data?.meta?.suggestions) ? data.meta.suggestions : undefined;
+      const metaVariableTrace = Array.isArray(data?.meta?.variableTrace) ? data.meta.variableTrace : undefined;
+
+      const renderHintSuggestion = (titleText: string, items: any[] | undefined): string => {
+        if (!Array.isArray(items) || !items.length) return "";
+        const lines = items
+          .slice(0, 20)
+          .map((s: any) => `<div class="meta">${escapeHtml(String(s))}</div>`)
+          .join("\n");
+        return `<div class="meta" style="margin-top:8px;">${escapeHtml(titleText)}</div><div class="proofRelated">${lines}</div>`;
+      };
+
+      const renderVariableTrace = (items: any[] | undefined): string => {
+        if (!Array.isArray(items) || !items.length) return "";
+        const rows = items
+          .slice(0, 50)
+          .map((it: any) => {
+            const name = escapeHtml(String(it?.name ?? ""));
+            const ty = it?.auraType ? `: ${escapeHtml(String(it.auraType))}` : "";
+            const value = renderValue(it?.value);
+
+            const definedAt = it?.definedAt;
+            const assignedAt = it?.lastAssignedAt;
+
+            const mkJump = (label: string, r: any): string => {
+              if (!r) return "";
+              const where = `${Number(r.start?.line ?? 0) + 1}:${Number(r.start?.character ?? 0) + 1}`;
+              const rangeJson = encodeURIComponent(JSON.stringify(r));
+              return `<span class="proofLink" data-jump-range="${rangeJson}" title="Jump to location">${escapeHtml(label)} ${escapeHtml(where)}</span>`;
+            };
+
+            const jumps = [mkJump("defined", definedAt), mkJump("last assigned", assignedAt)].filter(Boolean).join(" · ");
+
+            return `<div class="meta"><b>${name}</b>${ty} = ${value}${jumps ? ` <span class="meta">(${jumps})</span>` : ""}</div>`;
+          })
+          .join("\n");
+
+        return `<div class="meta" style="margin-top:8px;">Variable trace</div><div class="proofRelated">${rows}</div>`;
+      };
       const reasoningTrace = (() => {
         const parts: string[] = [];
 
@@ -190,8 +231,12 @@ export function renderExplainPanel(diag: DiagnosticLike | undefined): string {
         return parts.join("");
       })();
 
+      const hintsHtml = renderHintSuggestion("Hints", metaHints);
+      const suggestionsHtml = renderHintSuggestion("Suggestions", metaSuggestions);
+      const traceHtml = renderVariableTrace(metaVariableTrace);
+
       extra = structured.trim().length
-        ? `${structured}${reasoningTrace}`
+        ? `${structured}${traceHtml}${hintsHtml}${suggestionsHtml}${reasoningTrace}`
         : `<div class="meta" style="margin-top:8px;">Data / Counterexample (if provided)</div><pre class="proofPre">${escapeHtml(
             JSON.stringify(data, null, 2)
           )}</pre>`;

@@ -78,7 +78,10 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 - [~] One-click “explain” for models/counterexamples
   - [x] Explain panel shows model slice + relevant bindings
   - [x] Counterexample mapping schema `aura.counterexample.v2` (mapped bindings + inline injections)
-  - [ ] Unsat-core-driven “Explain” engine (minimal binding set / variable trace)
+  - [~] Unsat-core-driven “Explain” engine (minimal binding set / variable trace)
+    - [x] Relevant binding detection uses source-snippet identifier tokens (not just error text)
+    - [x] Structured `variableTrace` emitted (best-effort def/assign locations)
+    - [x] Sentinel surfaces variable trace + hints + suggestions
 
 ### Sentinel (IDE)
 - [x] Proofs panel UX (streaming + cancellation is done; polish still planned)
@@ -218,11 +221,12 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Versioned payload: `Diagnostic.data.counterexample.schema == aura.counterexample.v2`
   - [x] Best-effort name/value mapping + source-range anchoring
   - [~] Typed mapping from Z3 model → Aura AST types (records/enums/collections) + pretty-printer
+    - [x] Typed primitives include structured `valueJson` (u32/bool)
 - [~] “Explain” Engine (unsat core → minimal binding set / variable trace)
   - [x] UNSAT core evidence captured for successful proofs (best-effort)
   - [x] Core items map back to spans for `requires`/`assume` and the proved goal (assert/ensures)
   - [x] LSP + Sentinel surface UNSAT core as a span-linked logic trace (click-to-jump)
-  - [ ] Variable trace + invariant repair suggestions (end-to-end)
+  - [x] Variable trace + invariant repair suggestions (end-to-end)
 
 ### Pillar 2 — High-Speed Incremental Proof Streaming
 - [x] Dependency-aware proof caching (file hash + solver config)
@@ -263,7 +267,10 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [ ] Refactor `std.collections` to region allocation + Z3-gated contracts per operation
 - [~] Explicit trust boundaries
   - [x] Trusted boundary reports (FFI/bindgen surfaced in tooling)
-  - [ ] CI “Trusted Core Report” audit policy (fail builds on unreviewed trusted expansions)
+  - [x] CI “Trusted Core Report” audit policy (fail builds on unreviewed trusted expansions)
+    - [x] Baseline report committed (compat fixture)
+    - [x] CI regenerates + diffs baseline
+    - [x] Report paths normalized for cross-platform diffs
 
 ### Pillar 4 — Differential Backend Testing (Trust Gate)
 - [x] Differential testing harness (Dev-VM vs C vs LLVM)
@@ -347,7 +354,8 @@ This section is tracked by strategic pillars (v1.0 daily-driver focus).
   - [x] Rich value rendering + navigation
   - [x] Trace highlights in code
   - [x] Inline value injections (ghost text) from `aura.counterexample.v2`
-  - [ ] Typed counterexample mapping (AST-shaped values, not just strings)
+  - [~] Typed counterexample mapping (AST-shaped values, not just strings)
+    - [x] Primitives rendered as structured values when available (`valueJson`)
 - [~] Proven path rendering
   - [x] “Proven glow” decoration exists
   - [x] Dimming for untrusted/unknown regions

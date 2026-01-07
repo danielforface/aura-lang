@@ -2474,5 +2474,29 @@ fn wasm_name(input: &Path) -> String {
 }
 
 fn display_path(p: &Path) -> String {
-    p.to_string_lossy().to_string()
+    // Prefer workspace-relative paths so reports and diagnostics are stable across machines.
+    // This is especially important for CI artifacts like the Trusted Core Report baseline.
+    //
+    // Note: on Windows, some paths may arrive in extended-length form ("\\?\C:\...")
+    // which doesn't `strip_prefix` cleanly against `current_dir()`. We normalize via strings.
+    let mut s = p.to_string_lossy().to_string();
+    if let Some(rest) = s.strip_prefix("\\\\?\\") {
+        s = rest.to_string();
+    }
+    s = s.replace('\\', "/");
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut cwd_s = cwd.to_string_lossy().to_string();
+        if let Some(rest) = cwd_s.strip_prefix("\\\\?\\") {
+            cwd_s = rest.to_string();
+        }
+        cwd_s = cwd_s.replace('\\', "/");
+
+        let prefix = format!("{cwd_s}/");
+        if s.starts_with(&prefix) {
+            return s[prefix.len()..].to_string();
+        }
+    }
+
+    s
 }
