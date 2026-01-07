@@ -449,6 +449,10 @@ enum Cmd {
         /// Disable caching of bindgen outputs
         #[arg(long, default_value_t = false)]
         no_cache: bool,
+
+        /// Enable best-effort refined type mapping in the generated shim (ranges/nullability)
+        #[arg(long, default_value_t = false)]
+        refine_types: bool,
     },
 }
 
@@ -833,7 +837,16 @@ fn main() -> miette::Result<()> {
             link_dirs,
             link_libs,
             no_cache,
-        } => bindgen(&headers, &out, &include_dirs, &link_dirs, &link_libs, !no_cache),
+            refine_types,
+        } => bindgen(
+            &headers,
+            &out,
+            &include_dirs,
+            &link_dirs,
+            &link_libs,
+            !no_cache,
+            refine_types,
+        ),
     }
 }
 
@@ -869,6 +882,7 @@ fn bindgen(
     link_dirs: &[PathBuf],
     link_libs: &[String],
     enable_cache: bool,
+    refine_types: bool,
 ) -> miette::Result<()> {
     let _ = include_dirs; // reserved
 
@@ -886,6 +900,7 @@ fn bindgen(
     for l in link_libs {
         hasher.update(l.as_bytes());
     }
+    hasher.update(if refine_types { b"refine_types=1" } else { b"refine_types=0" });
     let key = hex::encode(hasher.finalize());
 
     let shim_name = "bridge.aura";
@@ -914,6 +929,7 @@ fn bindgen(
             include_dirs: include_dirs.to_vec(),
             lib_dirs: link_dirs.to_vec(),
             libs: link_libs.to_vec(),
+            refine_types,
         },
         out_dir,
     )?;
@@ -956,10 +972,19 @@ fn bindgen(
                 ret: f.ret.clone(),
             })
             .collect(),
-        notes: vec![
-            "All symbols discovered from C headers are treated as an FFI trust boundary.".to_string(),
-            "The generated shim is heuristic (regex-based header parsing) in this phase.".to_string(),
-        ],
+        notes: {
+            let mut notes = vec![
+                "All symbols discovered from C headers are treated as an FFI trust boundary.".to_string(),
+                "The generated shim is heuristic (regex-based header parsing) in this phase.".to_string(),
+            ];
+            if refine_types {
+                notes.push(
+                    "Refined type mapping enabled: shim may use range constraints and Option<T> for pointers (best-effort)."
+                        .to_string(),
+                );
+            }
+            notes
+        },
     };
     let report_path = out_dir.join(report_name);
     fs::write(&report_path, serde_json::to_string_pretty(&report).into_diagnostic()?)
@@ -1737,6 +1762,7 @@ fn build(
                 include_dirs: vec![],
                 lib_dirs: link_dirs.to_vec(),
                 libs: link_libs.to_vec(),
+                refine_types: false,
             },
             &bridge_dir,
         )?;

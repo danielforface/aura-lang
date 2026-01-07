@@ -157,7 +157,7 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 - [x] Aura-Bindgen (automated binding generator)
   - [x] Parse C headers (`.h`) and generate Aura externs + shim module
   - [x] Type mapping with best-effort safety (pointers → opaque handles/capabilities where possible)
-  - [ ] Optional refined-type mapping via annotations (e.g., ranges, nullability)
+  - [x] Optional refined-type mapping via annotations (e.g., ranges, nullability)
   - [x] Emits an explicit “trusted boundary” report (what must be trusted vs proven)
   - [x] Deterministic output + caching (stable diffs in CI)
 
