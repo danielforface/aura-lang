@@ -15,6 +15,36 @@ use crate::verifier::{DummySolver, Verifier};
 
 const U32_MAX: u64 = 0xFFFF_FFFF;
 
+/// Ownership state tracking for linear type enforcement.
+/// 
+/// This enum tracks the lifecycle state of each variable to enforce
+/// move semantics and prevent use-after-move errors.
+///
+/// Example progression:
+/// ```
+/// let model = ai.load();        // Owned
+/// ai.infer(model, data);        // Consumed (moved into function)
+/// ai.infer(model, data);        // ERROR: Consumed already
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]  // Borrowed and Returned variants used in future phases
+enum OwnershipState {
+    /// Value is owned and can be moved, borrowed, or used
+    Owned,
+    
+    /// Value has been consumed via move or used in linear context.
+    /// Subsequent uses are not permitted (unless type is Copy).
+    Consumed,
+    
+    /// Value is borrowed (immutable reference exists).
+    /// May be used for reads, but not moved.
+    Borrowed,
+    
+    /// Value has been returned or transferred to caller.
+    /// Ownership moved to calling scope.
+    Returned,
+}
+
 fn base_type(ty: &Type) -> &Type {
     match ty {
         Type::ConstrainedRange { base, .. } => base_type(base),
@@ -130,6 +160,9 @@ pub struct Checker {
     // value scopes
     scopes: Vec<HashMap<String, Type>>,
     mut_scopes: Vec<HashSet<String>>,
+    
+    // Linear type enforcement: track ownership state of each variable
+    ownership_states: Vec<HashMap<String, OwnershipState>>,
 
     // If true, accept assignments into constrained ranges without proving them here.
     // This is intended for the LLVM pipeline where `aura-verify` (Z3) is a hard gate.
@@ -161,6 +194,7 @@ impl Checker {
             extern_cells: HashMap::new(),
             scopes: vec![HashMap::new()],
             mut_scopes: vec![HashSet::new()],
+            ownership_states: vec![HashMap::new()],
             defer_range_proofs: false,
 
             cap: CapabilityGraph::default(),
@@ -1349,12 +1383,20 @@ impl Checker {
             }
             ExprKind::Ident(id) => {
                 self.check_async_capture(&id.node, id.span)?;
-                // Global liveness check for the Flow/linear capability model.
-                let _ = self.cap.ensure_alive(&id.node, id.span)?;
-                self.lookup_val(&id.node).ok_or_else(|| SemanticError {
+                
+                // Look up the type first
+                let ty = self.lookup_val(&id.node).ok_or_else(|| SemanticError {
                     message: format!("unknown identifier '{}'", id.node),
                     span: id.span,
-                })
+                })?;
+                
+                // Enforce linear type ownership constraints
+                self.enforce_linear_use(&id.node, &ty, id.span)?;
+                
+                // Global liveness check for the Flow/linear capability model.
+                let _ = self.cap.ensure_alive(&id.node, id.span)?;
+                
+                Ok(ty)
             }
             ExprKind::Unary { op, expr: inner } => {
                 let t = self.infer_expr(inner)?;
@@ -2310,11 +2352,16 @@ impl Checker {
                 span: name.span,
             });
         }
-        scope.insert(name.node.clone(), ty);
+        scope.insert(name.node.clone(), ty.clone());
 
         if mutable {
             let m = self.mut_scopes.last_mut().expect("mut scope stack");
             m.insert(name.node.clone());
+        }
+
+        // Initialize ownership state (all new bindings start as Owned)
+        if let Some(own_scope) = self.ownership_states.last_mut() {
+            own_scope.insert(name.node.clone(), OwnershipState::Owned);
         }
 
         // Capability root.
@@ -2400,6 +2447,17 @@ impl Checker {
     }
 
     fn consume_move_from_value(&mut self, value_name: &str, span: Span) -> Result<(), SemanticError> {
+        // Check linear ownership constraints first
+        if let Some(ty) = self.lookup_val(value_name) {
+            self.check_not_consumed(value_name, span)?;
+            
+            // Only mark as consumed if non-copy type
+            if self.is_non_copy_type(&ty) {
+                self.mark_consumed(value_name, span)?;
+            }
+        }
+
+        // Also update capability graph
         let from = self.cap.ensure_alive(value_name, span)?;
         let to = self.fresh_cap(span);
         self.cap.consume_move(from, to, span);
@@ -2409,11 +2467,13 @@ impl Checker {
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.mut_scopes.push(HashSet::new());
+        self.ownership_states.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         let _ = self.scopes.pop();
         let _ = self.mut_scopes.pop();
+        let _ = self.ownership_states.pop();
     }
 
     fn instantiate_type_alias(
@@ -2479,6 +2539,84 @@ impl Checker {
         // This enables constructor names like `Option::Some(...)` to type-check as member/call
         // expressions without requiring a separate namespace system.
         self.define_module_placeholder(name)
+    }
+
+    // ========== Linear Type Ownership Tracking ==========
+    
+    /// Get the current ownership state of a variable.
+    /// Returns Owned if not yet tracked (first use).
+    fn get_ownership(&self, name: &str) -> OwnershipState {
+        for scope in self.ownership_states.iter().rev() {
+            if let Some(&state) = scope.get(name) {
+                return state;
+            }
+        }
+        // Default to Owned if not tracked (shouldn't happen in normal flow)
+        OwnershipState::Owned
+    }
+
+    /// Set the ownership state of a variable in the current scope.
+    fn set_ownership(&mut self, name: &str, state: OwnershipState) {
+        if let Some(scope) = self.ownership_states.last_mut() {
+            scope.insert(name.to_string(), state);
+        }
+    }
+
+    /// Mark a variable as consumed (moved) and check it wasn't already consumed.
+    /// Only enforces for non-copy types.
+    fn mark_consumed(&mut self, name: &str, span: Span) -> Result<(), SemanticError> {
+        let current_state = self.get_ownership(name);
+        
+        // Consumed values cannot be used again (unless type is copy)
+        if current_state == OwnershipState::Consumed {
+            return Err(SemanticError {
+                message: format!("value '{}' used after move (was consumed by previous use)", name),
+                span,
+            });
+        }
+
+        self.set_ownership(name, OwnershipState::Consumed);
+        Ok(())
+    }
+
+    /// Check that a non-copy value hasn't been consumed yet.
+    /// Called before reading/using a value.
+    fn check_not_consumed(&self, name: &str, span: Span) -> Result<(), SemanticError> {
+        let current_state = self.get_ownership(name);
+        
+        if current_state == OwnershipState::Consumed {
+            return Err(SemanticError {
+                message: format!("value '{}' used after move", name),
+                span,
+            });
+        }
+
+        if current_state == OwnershipState::Returned {
+            return Err(SemanticError {
+                message: format!("value '{}' used after return", name),
+                span,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Enforce linear type rules when using an identifier.
+    /// 
+    /// For non-copy types, track the use and potentially mark as consumed.
+    /// For copy types, allow unrestricted reuse.
+    fn enforce_linear_use(&mut self, name: &str, ty: &Type, span: Span) -> Result<(), SemanticError> {
+        // Skip enforcement for copy types (u32, bool, etc.)
+        if !self.is_non_copy_type(ty) {
+            return Ok(());
+        }
+
+        // Check value is still usable
+        self.check_not_consumed(name, span)?;
+
+        // Track this use for future consumption checks
+        // Note: Actual consumption happens in specific contexts (function args, moves, etc.)
+        Ok(())
     }
 
     pub fn enum_variant_info(&self, ty_name: &str, variant: &str) -> Option<(u32, usize)> {

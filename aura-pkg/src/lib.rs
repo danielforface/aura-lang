@@ -14,9 +14,11 @@ use sha2::{Digest, Sha256};
 // Public module exports for metadata and signing
 pub mod metadata;
 pub mod signing;
+pub mod resolver;
 
 pub use metadata::PackageMetadata;
 pub use signing::{PackageSigningKey, PackageVerifyingKey, PackageSignature};
+pub use resolver::{DependencyResolver, PackageRegistry, ResolvedDependencies};
 
 pub type PkgError = Report;
 
