@@ -454,3 +454,240 @@
 .profiling-dashboard::-webkit-scrollbar-thumb:hover {
   background: var(--vscode-scrollbarSlider-hoverBackground, #90909050);
 }
+/* ========== PHASE 2 WEEK 2 ENHANCEMENTS ========== */
+
+/* Recent Verifications Table */
+.recent-verifications {
+  overflow-x: auto;
+}
+
+.verification-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+}
+
+.verification-table thead {
+  background-color: var(--vscode-editorWidget-background);
+  border-bottom: 2px solid var(--vscode-editorWidget-border);
+}
+
+.verification-table th {
+  padding: 6px;
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-right: 1px solid var(--vscode-editorWidget-border);
+}
+
+.verification-table tbody tr {
+  border-bottom: 1px solid var(--vscode-editorWidget-border);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.verification-table tbody tr:hover {
+  background-color: var(--vscode-editor-hoverHighlightBackground);
+}
+
+.verification-table td {
+  padding: 6px;
+  border-right: 1px solid var(--vscode-editorWidget-border);
+}
+
+.file-cell {
+  color: var(--vscode-symbolIcon-fileForeground);
+}
+
+.result-cell.result-proved {
+  color: #4ec9b0;
+  font-weight: 600;
+}
+
+.result-cell.result-unproved {
+  color: #f44747;
+  font-weight: 600;
+}
+
+.cache-cell {
+  text-align: center;
+}
+
+/* Trend Chart */
+.trend-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background-color: var(--vscode-editorWidget-background);
+  border-radius: 3px;
+  border: 1px solid var(--vscode-editorWidget-border);
+}
+
+.trend-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
+.trend-sparkline {
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: #4ec9b0;
+  text-align: center;
+  padding: 6px;
+  background-color: var(--vscode-editor-background);
+  border-radius: 2px;
+  border: 1px solid var(--vscode-editorWidget-border);
+}
+
+.trend-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Recommendations Cards */
+.recommendations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.recommendation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-left: 3px solid var(--vscode-editorWidget-border);
+  border-radius: 3px;
+}
+
+.recommendation-card.severity-critical {
+  border-left-color: #f44747;
+  background-color: rgba(244, 71, 71, 0.1);
+}
+
+.recommendation-card.severity-warning {
+  border-left-color: #dcdcaa;
+  background-color: rgba(220, 220, 170, 0.1);
+}
+
+.recommendation-card.severity-info {
+  border-left-color: #4ec9b0;
+}
+
+.rec-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.severity-icon {
+  font-size: 14px;
+}
+
+.rec-title {
+  flex: 1;
+  font-size: 12px;
+}
+
+.confidence {
+  padding: 2px 6px;
+  background-color: var(--vscode-editorWidget-background);
+  border-radius: 2px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.rec-description {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.rec-action {
+  padding: 6px;
+  background-color: var(--vscode-editorWidget-background);
+  border-radius: 2px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  border-left: 2px solid #4ec9b0;
+}
+
+.rec-speedup {
+  font-size: 10px;
+  color: #4ec9b0;
+  font-weight: 600;
+}
+
+.apply-rec-button {
+  padding: 6px 10px;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.apply-rec-button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+/* Phase Details */
+.phase-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background-color: var(--vscode-editorWidget-background);
+  border-radius: 3px;
+  border: 1px solid var(--vscode-editorWidget-border);
+}
+
+.phase-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.phase-detail code {
+  font-family: 'Courier New', monospace;
+  color: #4ec9b0;
+  padding: 2px 4px;
+  background-color: var(--vscode-editor-background);
+  border-radius: 2px;
+}
+
+/* Empty State */
+.empty-state {
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  padding: 20px;
+}
+
+.no-recommendations {
+  padding: 12px;
+  background-color: rgba(78, 201, 176, 0.1);
+  color: #4ec9b0;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(78, 201, 176, 0.3);
+}
