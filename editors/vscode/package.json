@@ -51,6 +51,22 @@
       {
         "command": "aura.showProofs",
         "title": "Aura Sentinel: Show Proofs"
+      },
+      {
+        "command": "aura.exportProofs",
+        "title": "Aura Sentinel: Export Proofs (JSON)"
+      },
+      {
+        "command": "aura.restartLSP",
+        "title": "Aura Sentinel: Restart Language Server"
+      },
+      {
+        "command": "aura.clearProofCache",
+        "title": "Aura Sentinel: Clear Proof Cache"
+      },
+      {
+        "command": "aura.toggleProofDebug",
+        "title": "Aura Sentinel: Toggle Debug Output"
       }
     ],
     "views": {
@@ -72,8 +88,27 @@
         "aura.auraPath": {
           "type": "string",
           "default": "",
-          "description": "Optional path to aura compiler executable. If empty, the extension will try to run via cargo."
-        }
+          "description": "Optional path to aura compiler executable. If empty, the extension will try to run via cargo."        },
+        "aura.proofDebounce": {
+          "type": "number",
+          "default": 500,
+          "description": "Milliseconds to wait before re-running proofs on file change (improves responsiveness)."
+        },
+        "aura.proofProfile": {
+          "type": "string",
+          "enum": ["fast", "thorough"],
+          "default": "fast",
+          "description": "Proof profile: 'fast' for interactive loops, 'thorough' for deep verification."
+        },
+        "aura.enableDebugOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose debug output for LSP communication and proof runs."
+        },
+        "aura.trustCoreReport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include trusted core report in diagnostics (shows module verification scope)."        }
       }
     }
   },

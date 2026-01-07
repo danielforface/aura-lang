@@ -19,9 +19,10 @@ export default function Home() {
             backend.
           </p>
           <p className="max-w-2xl text-pretty text-sm leading-6 text-zinc-700 dark:text-zinc-300">
-            Latest milestone: <span className="font-medium">Lumina Sentinel</span> proves UI geometry
-            before rendering pixels — then drives live Raylib frames with click callbacks routed back
-            into the AVM.
+            <span className="font-medium">v0.2.0</span> brings explainable verification: Z3 counterexamples are now
+            typed and mapped back to source, variable traces pinpoint faulty assertions, and UNSAT cores show proof logic
+            interactively. Latest milestone: <span className="font-medium">Lumina Sentinel</span> proves UI geometry
+            before rendering pixels — then drives live Raylib frames with click callbacks routed back into the AVM.
           </p>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link

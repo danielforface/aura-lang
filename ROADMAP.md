@@ -18,14 +18,59 @@ Aura’s north star is a language where:
 4. The ecosystem is coherent (standard library conventions, strong versioning, reproducible builds).
 
 Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by removing the top bottlenecks:
-- Explainable verification UX (make failures actionable in-editor)
-- High-speed incremental proof streaming (keep proofs under interactive latency)
-- Region-based memory model (Option B) codified across type system + stdlib
-- Differential backend testing (keep Dev-VM + native backends in lockstep)
+- [x] Explainable verification UX — v0.2.0 achieved: typed counterexamples, variable traces, logic traces
+- [ ] High-speed incremental proof streaming (keep proofs under interactive latency)
+- [ ] Region-based memory model (Option B) codified across type system + stdlib
+- [ ] Differential backend testing (keep Dev-VM + native backends in lockstep)
 
 ---
 
-## 0.1 — Current baseline (what exists now)
+## 0.2 — Explainable Verification (Released Jan 2026)
+
+### Verification UX Overhaul
+- [x] Typed counterexamples with structured values (JSON)
+- [x] Variable trace: best-effort def/assign tracking
+- [x] UNSAT core logic trace (proof steps spanning source)
+- [x] Counterexample schema v2 with inline injections
+- [x] Sentinel "Explain" panel with variable traces and hints
+
+### Sentinel IDE Enhancements
+- [x] Proofs panel renders typed values, variable traces, breadcrumb logic trace
+- [x] Export proofs as JSON
+- [x] Export trusted-core report (JSON / HTML)
+- [x] Developer tool menu (Tools menu with cache, profile, debug options)
+- [x] Quick Fix integration
+
+### VS Code Extension Developer Features  
+- [x] Additional command palette actions:
+  - [x] Export Proofs (JSON)
+  - [x] Restart Language Server
+  - [x] Clear Proof Cache
+  - [x] Toggle Debug Output
+- [x] New settings for developers:
+  - [x] Proof debounce (interactive response tuning)
+  - [x] Proof profile (fast vs thorough)
+  - [x] Debug output toggle
+  - [x] Trusted core report display
+
+### CI & Build Improvements
+- [x] Trusted Core audit baseline (CI gate diffs against known-good)
+- [x] Deterministic, reproducible release builds
+- [x] Attestation metadata for all artifacts
+- [x] All-platform SDK packaging (Windows / macOS / Linux)
+
+### Bindgen & FFI  
+- [x] Refined-type mapping via `aura bindgen --refine-types`
+- [x] Range + nullability extraction from C headers
+
+### Release & Website
+- [x] v0.2.0 version bump across all manifests
+- [x] Website updates: release notes, feature descriptions
+- [x] SDK (0.2.0) staged to website/public/downloads
+
+---
+
+## 0.1 — Current baseline (v0.1.0 — historical)
 
 ### Language
 - [x] Core syntax and parsing pipeline

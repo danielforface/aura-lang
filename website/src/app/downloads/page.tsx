@@ -4,7 +4,7 @@ export default function Downloads() {
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-black/10 bg-white/60 p-8 text-black dark:border-white/10 dark:bg-black/40 dark:text-white">
-        <h1 className="text-balance text-3xl font-semibold tracking-tight">Download AuraSDK</h1>
+        <h1 className="text-balance text-3xl font-semibold tracking-tight">Download AuraSDK v0.2.0</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-700 dark:text-zinc-300">
           AuraSDK is a self-contained, portable folder with <span className="font-medium">aura</span>
           , <span className="font-medium">aura-lsp</span>, the standard library, offline docs, and bundled
@@ -40,7 +40,7 @@ export default function Downloads() {
       </section>
 
       <section className="rounded-2xl border border-black/10 bg-white/60 p-8 text-black dark:border-white/10 dark:bg-black/40 dark:text-white">
-        <h2 className="text-balance text-3xl font-semibold tracking-tight">Download Aura Sentinel</h2>
+        <h2 className="text-balance text-3xl font-semibold tracking-tight">Download Aura Sentinel v0.2.0</h2>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-700 dark:text-zinc-300">
           Aura Sentinel is the developer IDE layer for Aura: a VS Code extension bundling the Aura language server
           and proof-driven editor tools (live Z3 diagnostics, Proofs panel, Nexus plugin UX).
@@ -74,7 +74,7 @@ export default function Downloads() {
       </section>
 
       <section className="rounded-2xl border border-black/10 bg-white/60 p-8 text-black dark:border-white/10 dark:bg-black/40 dark:text-white">
-        <h2 className="text-balance text-3xl font-semibold tracking-tight">Download Aura Sentinel App</h2>
+        <h2 className="text-balance text-3xl font-semibold tracking-tight">Download Aura Sentinel App v0.2.0</h2>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-700 dark:text-zinc-300">
           Aura Sentinel App is the standalone desktop shell for Aura Sentinel. It reuses the same proof-driven LSP
           APIs (including <span className="font-mono">aura/proofs</span>) outside VS Code.

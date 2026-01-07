@@ -534,6 +534,32 @@ async function exportTrustedCoreReport(format: "json" | "html") {
   setStatus("Exported report (HTML)");
 }
 
+async function exportProofsJson() {
+  const doc = ensureActiveDoc();
+  if (!doc.uri) return;
+
+  const baseName = doc.path ? doc.path.split("\\").pop() ?? "aura" : "aura";
+  const stem = baseName.endsWith(".aura") ? baseName.slice(0, -5) : baseName;
+  const defaultPath = doc.path ? `${doc.path}.proofs.json` : undefined;
+
+  const outPath = await save({
+    title: "Export Proofs (JSON)",
+    defaultPath: defaultPath ?? `${stem}.proofs.json`,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (!outPath) return;
+
+  const proofData = {
+    uri: doc.uri,
+    path: doc.path,
+    diagnostics: doc.mergedDiagnostics,
+    timestamp: new Date().toISOString(),
+  };
+
+  await writeTextFile(String(outPath), JSON.stringify(proofData, null, 2));
+  setStatus("Exported proofs (JSON)");
+}
+
 // escapeHtml imported
 
 function fileUriToPath(uri: string): string | undefined {
@@ -1433,7 +1459,13 @@ function initMenuBar() {
     ],
     tools: [
       { label: "Proofs", clickId: "proofs" },
+      { label: "Proofs: Affected Regions", clickId: "proofsAffected" },
+      { label: "Proofs: Toggle Profile", clickId: "proofProfile" },
       { label: "Proofs: Clear Cache", clickId: "clearProofCache" },
+      { label: "Export Proofs (JSON)", clickId: "exportProofs" },
+      { label: "Export Trusted-Core Report (JSON)", clickId: "exportTrustedCoreReportJson" },
+      { label: "Export Trusted-Core Report (HTML)", clickId: "exportTrustedCoreReportHtml" },
+      { label: "---", clickId: "" },
       { label: "Diff", clickId: "diff" },
       { label: "Packages", clickId: "pkg" },
       { label: "Search", clickId: "searchFocus" },
@@ -1489,11 +1521,19 @@ function initMenuBar() {
       ev.preventDefault();
       try {
         const it = JSON.parse(decodeURIComponent(cmdBtn.dataset.cmd ?? "")) as { label: string; clickId: string };
-        const target = document.querySelector<HTMLButtonElement>(`#${CSS.escape(it.clickId)}`);
-        if (target) {
-          target.click();
-        } else if (it.clickId === "clearProofCache") {
-          void clearProofCache();
+        if (it.clickId === "") {
+          // Separator; do nothing
+        } else if (it.clickId === "exportProofs") {
+          void exportProofsJson();
+        } else if (it.clickId === "exportTrustedCoreReportJson") {
+          void exportTrustedCoreReport("json");
+        } else if (it.clickId === "exportTrustedCoreReportHtml") {
+          void exportTrustedCoreReport("html");
+        } else {
+          const target = document.querySelector<HTMLButtonElement>(`#${CSS.escape(it.clickId)}`);
+          if (target) {
+            target.click();
+          }
         }
       } catch {
         // ignore

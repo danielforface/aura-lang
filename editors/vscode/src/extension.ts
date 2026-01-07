@@ -889,6 +889,76 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aura.exportProofs", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        return;
+      }
+
+      if (!client) {
+        vscode.window.showErrorMessage("Aura: language server not running");
+        return;
+      }
+
+      try {
+        const res = await client.sendRequest<AuraProofsResponse>("aura/proofs", {
+          uri: editor.document.uri.toString(),
+        } satisfies AuraProofsParams);
+
+        const json = JSON.stringify(res, null, 2);
+        const doc = await vscode.workspace.openTextDocument({
+          language: "json",
+          content: json,
+        });
+        await vscode.window.showTextDocument(doc);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Aura: export proofs failed: ${e}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aura.restartLSP", async () => {
+      if (!client) {
+        vscode.window.showErrorMessage("Aura: language server not running");
+        return;
+      }
+      try {
+        await client.restart();
+        vscode.window.showInformationMessage("Aura: language server restarted");
+      } catch (e) {
+        vscode.window.showErrorMessage(`Aura: restart failed: ${e}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aura.clearProofCache", async () => {
+      const cacheDir = path.join(os.homedir(), ".aura", "cache");
+      try {
+        if (fs.existsSync(cacheDir)) {
+          fs.rmSync(cacheDir, { recursive: true });
+          vscode.window.showInformationMessage("Aura: proof cache cleared");
+        } else {
+          vscode.window.showInformationMessage("Aura: cache directory not found");
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage(`Aura: cache clear failed: ${e}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aura.toggleProofDebug", () => {
+      const current = cfg.get("enableDebugOutput") ?? false;
+      cfg.update("enableDebugOutput", !current, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(
+        `Aura: debug output ${!current ? "enabled" : "disabled"}`
+      );
+    })
+  );
+
   const { state } = computeProofStateForActiveDoc();
   updateStatusBar(status, state);
   refreshDecorations(errorDeco, warningDeco, iotVerifiedDeco, aiVerifiedDeco);
