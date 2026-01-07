@@ -1,0 +1,273 @@
+/* Sentinel Debugger Panel Styling */
+
+.debug-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.debug-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--vscode-activityBar-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3e3e42);
+  flex-wrap: wrap;
+}
+
+.debug-toolbar .btn {
+  padding: 4px 12px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.1s;
+}
+
+.debug-toolbar .btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.debug-toolbar .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debug-toolbar .btn-primary {
+  background: var(--vscode-debugToolBar-background, #3e7a5f);
+}
+
+.debug-toolbar .btn-primary:hover:not(:disabled) {
+  background: #4a9575;
+}
+
+.debug-toolbar .btn-danger {
+  background: var(--vscode-errorForeground, #f44747);
+  color: white;
+}
+
+.debug-toolbar .btn-danger:hover:not(:disabled) {
+  background: #ff6b6b;
+}
+
+.debug-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.debug-section {
+  border-bottom: 1px solid var(--vscode-panel-border, #3e3e42);
+  padding: 8px 0;
+}
+
+.debug-section h3 {
+  margin: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground, #cccccc);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stack-panel,
+.variables-panel,
+.watch-input,
+.console-panel {
+  padding: 0 12px;
+}
+
+.empty {
+  margin: 8px 0;
+  color: var(--vscode-descriptionForeground, #858585);
+  font-style: italic;
+}
+
+/* Stack Frame List */
+.stack-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stack-frame {
+  padding: 4px 0;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.stack-frame:hover {
+  background: var(--vscode-list-hoverBackground, #2d2d30);
+  padding-left: 4px;
+}
+
+.stack-frame code {
+  background: var(--vscode-editor-background, #1e1e1e);
+  padding: 2px 4px;
+  border-radius: 2px;
+  color: var(--vscode-symbolIcon-functionForeground, #dcdcaa);
+}
+
+.stack-frame .location {
+  color: var(--vscode-descriptionForeground, #858585);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+/* Variables List */
+.variable-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.variable {
+  padding: 4px 0;
+  line-height: 1.5;
+  font-family: 'Consolas', monospace;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.variable .name {
+  color: var(--vscode-symbolIcon-variableForeground, #9cdcfe);
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.variable .type {
+  color: var(--vscode-descriptionForeground, #858585);
+  margin-left: 4px;
+}
+
+.variable .value {
+  color: var(--vscode-symbolIcon-numberForeground, #b5cea8);
+  margin-left: 8px;
+  flex: 1;
+  word-break: break-all;
+}
+
+/* Watch Expression Input */
+.watch-input {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.watch-input input {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--vscode-input-background, #3c3c3c);
+  border: 1px solid var(--vscode-input-border, #555555);
+  color: var(--vscode-input-foreground, #cccccc);
+  border-radius: 3px;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.watch-input input:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder, #007acc);
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder, #007acc);
+}
+
+.watch-input button {
+  padding: 4px 12px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.watch-input button:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+/* Debug Console */
+.console-panel {
+  flex: 1;
+  background: var(--vscode-debugConsole-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3e3e42);
+  border-radius: 3px;
+  padding: 8px;
+  overflow-y: auto;
+  max-height: 200px;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.console-line {
+  margin: 2px 0;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.console-line.info {
+  color: var(--vscode-debugConsole-infoForeground, #75beff);
+}
+
+.console-line.error {
+  color: var(--vscode-debugConsole-errorForeground, #f44747);
+}
+
+.console-line.warning {
+  color: var(--vscode-debugConsole-warningForeground, #dcdcaa);
+}
+
+.console-line.stdout {
+  color: var(--vscode-terminal-ansiGreen, #4ec9b0);
+}
+
+.console-line.stderr {
+  color: var(--vscode-terminal-ansiRed, #f44747);
+}
+
+/* Animation: pulse on new breakpoint */
+@keyframes breakpoint-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 71, 71, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(244, 71, 71, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 71, 71, 0);
+  }
+}
+
+.breakpoint {
+  animation: breakpoint-pulse 2s;
+}
+
+/* Responsive: stack compact on small screens */
+@media (max-width: 600px) {
+  .debug-toolbar {
+    flex-direction: column;
+  }
+
+  .debug-toolbar .btn {
+    width: 100%;
+  }
+
+  .variable {
+    flex-direction: column;
+  }
+
+  .variable .name {
+    min-width: auto;
+  }
+}

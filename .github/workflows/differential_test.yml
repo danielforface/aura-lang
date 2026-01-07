@@ -1,0 +1,150 @@
+name: Differential Backend Testing Gate
+
+on:
+  push:
+    branches: [ main, 'release/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  differential-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    strategy:
+      matrix:
+        backend: [ dev-vm, c, llvm ]
+        test-suite: [ golden, fuzzing ]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      
+      - name: Install LLVM (for LLVM backend)
+        if: matrix.backend == 'llvm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-14 llvm-14-dev
+      
+      - name: Install GCC (for C backend)
+        if: matrix.backend == 'c'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ make
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build all backends
+        run: |
+          cargo build -p aura-backend-llvm --release
+          cargo build -p aura-backend-c --release
+          cargo build -p aura --release
+        env:
+          RUST_BACKTRACE: 1
+      
+      - name: Run golden test suite on ${{ matrix.backend }}
+        if: matrix.test-suite == 'golden'
+        run: |
+          ./scripts/run_golden_tests.sh ${{ matrix.backend }}
+        env:
+          AURA_BACKEND: ${{ matrix.backend }}
+          AURA_TEST_TIMEOUT: 60
+      
+      - name: Run differential fuzzing test
+        if: matrix.test-suite == 'fuzzing'
+        run: |
+          cargo test --release -p aura-differential-test fuzz
+        env:
+          AURA_BACKENDS: "dev-vm,c,llvm"
+          AURA_FUZZ_RUNS: 10000
+          AURA_FUZZ_TIMEOUT: 5
+      
+      - name: Check for discrepancies
+        run: |
+          ./scripts/check_differential_parity.sh ${{ matrix.backend }}
+        continue-on-error: false
+      
+      - name: Save regression fixtures
+        if: failure()
+        run: |
+          mkdir -p regressions
+          cp -r build/test-artifacts/* regressions/ || true
+      
+      - name: Upload regression fixtures
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: regressions-${{ matrix.backend }}-${{ matrix.test-suite }}
+          path: regressions/
+          retention-days: 30
+      
+      - name: Report results
+        if: always()
+        run: |
+          echo "## Differential Testing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend**: ${{ matrix.backend }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Suite**: ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status**: $([ $? -eq 0 ] && echo '✅ PASS' || echo '❌ FAIL')" >> $GITHUB_STEP_SUMMARY
+
+  consistency-gate:
+    needs: [ differential-test ]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Check all backends passed
+        run: |
+          if [ "${{ needs.differential-test.result }}" = "failure" ]; then
+            echo "❌ Differential testing gate FAILED"
+            echo "Some backends did not match golden suite or discovered regressions."
+            exit 1
+          fi
+          echo "✅ All backends in sync"
+      
+      - name: Report gate status
+        run: |
+          echo "## Differential Testing Gate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Status: **${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "All backends produced identical IR + semantics" >> $GITHUB_STEP_SUMMARY
+
+  # Notify on failure
+  notify-failure:
+    needs: [ consistency-gate ]
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Differential Testing Gate Failed**\n\nSome backends did not match the golden suite. Check the logs for regressions:\n\n' +
+                    '[View Details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+            })
