@@ -11,16 +11,20 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-// Public module exports for metadata, signing, resolver, and CLI
+// Public module exports for metadata, signing, resolver, CLI, and commands
 pub mod metadata;
 pub mod signing;
 pub mod resolver;
 pub mod cli;
+pub mod commands;
 
 pub use metadata::PackageMetadata;
 pub use signing::{PackageSigningKey, PackageVerifyingKey, PackageSignature};
 pub use resolver::{DependencyResolver, PackageRegistry, ResolvedDependencies};
 pub use cli::{Cli, Commands, InitArgs, AddArgs, RemoveArgs, ListArgs, PublishArgs, VerifyArgs};
+pub use commands::{
+    init_project, add_dependency, remove_dependency, list_dependencies, verify_package,
+};
 
 pub type PkgError = Report;
 
