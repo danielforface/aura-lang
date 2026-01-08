@@ -323,19 +323,23 @@ impl OwnershipContext {
     
     /// Record an immutable borrow of a binding.
     pub fn record_borrow_immut(&mut self, name: &str) -> Result<(), OwnershipViolation> {
+        // Capture current location before taking mutable borrow
+        let current_line = self.current_line;
+        let current_col = self.current_col;
+        
         if let Some(binding) = self.find_binding_mut(name) {
             if !binding.state.allows_borrow() {
                 return Err(OwnershipViolation {
                     binding_name: name.to_string(),
                     error_kind: ViolationKind::BorrowAfterMove,
-                    at_line: self.current_line,
-                    at_col: self.current_col,
+                    at_line: current_line,
+                    at_col: current_col,
                     moved_at_line: binding.moved_at_line,
                     moved_at_col: binding.moved_at_col,
                     message: format!(
                         "cannot borrow '{}': it was moved at line {}",
                         name,
-                        binding.moved_at_line.unwrap_or(self.current_line)
+                        binding.moved_at_line.unwrap_or(current_line)
                     ),
                 });
             }
@@ -348,8 +352,8 @@ impl OwnershipContext {
             Err(OwnershipViolation {
                 binding_name: name.to_string(),
                 error_kind: ViolationKind::UseAfterMove,
-                at_line: self.current_line,
-                at_col: self.current_col,
+                at_line: current_line,
+                at_col: current_col,
                 moved_at_line: None,
                 moved_at_col: None,
                 message: format!("binding '{}' not found in scope", name),
@@ -359,19 +363,23 @@ impl OwnershipContext {
     
     /// Record a mutable borrow of a binding.
     pub fn record_borrow_mut(&mut self, name: &str) -> Result<(), OwnershipViolation> {
+        // Capture current location before taking mutable borrow
+        let current_line = self.current_line;
+        let current_col = self.current_col;
+        
         if let Some(binding) = self.find_binding_mut(name) {
             if !binding.state.allows_borrow() {
                 return Err(OwnershipViolation {
                     binding_name: name.to_string(),
                     error_kind: ViolationKind::BorrowAfterMove,
-                    at_line: self.current_line,
-                    at_col: self.current_col,
+                    at_line: current_line,
+                    at_col: current_col,
                     moved_at_line: binding.moved_at_line,
                     moved_at_col: binding.moved_at_col,
                     message: format!(
                         "cannot mutably borrow '{}': it was moved at line {}",
                         name,
-                        binding.moved_at_line.unwrap_or(self.current_line)
+                        binding.moved_at_line.unwrap_or(current_line)
                     ),
                 });
             }

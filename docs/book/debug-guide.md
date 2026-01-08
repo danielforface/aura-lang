@@ -355,7 +355,226 @@ aura verify --profile thorough --timings file.aura
 
 ## Using Sentinel Integration
 
-### Explain Panel
+### Interactive Explanation Engine
+
+The **Explanation Engine** provides step-by-step breakdowns of proof failures and concurrent code behavior. This is the primary way to understand verification failures and debug proofs.
+
+#### Understanding Proof Failures with Explanations
+
+When a proof fails in Sentinel:
+
+1. **Red ✗ appears** — Function doesn't meet its contract
+2. **Click "Explain"** — Panel opens showing detailed breakdown
+3. **Read counterexample:**
+   - **Main claim** — What was being proven
+   - **Proof steps** — Logical chain up to failure point
+   - **Variable trace** — Concrete values that triggered failure
+   - **Repair hints** — Suggested fixes
+
+**Example: Loop Invariant Failure**
+
+```
+Main Claim: return == (n * (n + 1)) / 2
+
+Loop Analysis (iteration 1):
+├─ Before: i=0, sum=0
+├─ Add i:  sum = 0 + 0 = 0
+├─ Increment: i = 0 + 1 = 1
+├─ Check invariant: sum == (i * (i + 1)) / 2
+│  Expected: 0 == (1 * 2) / 2 = 1
+│  Actual:   0 != 1
+└─ ❌ INVARIANT FAILED at line 13
+```
+
+**Repair Hint:** "Looks like you're adding the old value of i. Either:
+- Add BEFORE incrementing, or
+- Update invariant to (i-1)*i/2"
+
+#### Interactive Variable Inspection
+
+In the Explanation panel:
+
+- **Click variable** — Shows all assignments in trace
+- **Hover source** — Code line highlights
+- **Show all** — Expands full proof tree
+- **Copy trace** — Export for documentation
+- **Proof timeline** — Visual Z3 solver timeline
+
+### Concurrent Code Explanation
+
+The explanation engine analyzes concurrent code for race conditions and deadlocks:
+
+#### Data Race Explanation
+
+```aura
+fn buggy_concurrent() {
+    let mut x = 0;
+    
+    spawn { x = 1; }
+    spawn { x = 2; }
+}
+```
+
+**Explanation:**
+
+```
+Race Condition Detected: data race on 'x'
+
+Thread 1 (line 5):
+  └─ Unprotected write: x = 1
+
+Thread 2 (line 6):
+  └─ Unprotected write: x = 2
+
+Happens-Before Analysis:
+  ✗ No synchronization between writes
+  ✗ Both threads access same memory
+  ✓ At least one is a write
+
+Concurrency Risk: CRITICAL
+
+Repair Suggestions:
+  [1] Use Mutex:
+      let x = Mutex::new(0);
+      spawn { *x.lock() = 1; }
+      spawn { *x.lock() = 2; }
+      
+  [2] Use Atomic:
+      let x = Atomic::new(0);
+      spawn { x.store(1); }
+      spawn { x.store(2); }
+      
+  [3] Separate variables:
+      spawn { let x1 = 1; ... }
+      spawn { let x2 = 2; ... }
+```
+
+#### Deadlock Explanation
+
+```aura
+fn deadlock_risk() {
+    let lock_a = Mutex::new(0);
+    let lock_b = Mutex::new(0);
+    
+    spawn {
+        let _a = lock_a.lock();  // T1 acquires A
+        let _b = lock_b.lock();  // T1 waits for B
+    }
+    spawn {
+        let _b = lock_b.lock();  // T2 acquires B  
+        let _a = lock_a.lock();  // T2 waits for A
+    }
+}
+```
+
+**Explanation:**
+
+```
+Deadlock Detected: Circular Lock Dependency
+
+Lock Dependency Graph:
+  Thread 1: A → B
+  Thread 2: B → A
+  
+Cycle: A ← T1 → B ← T2 → A
+
+Trace:
+  Timeline 1:
+    T1: acquire(A) ✓
+    T2: acquire(B) ✓
+    T1: acquire(B) 🔒 (blocked by T2)
+    T2: acquire(A) 🔒 (blocked by T1)
+    
+  Result: Circular wait → DEADLOCK
+
+Repair Strategies:
+  [1] Enforce lock order globally:
+      Always acquire locks in order: A, then B
+      
+      Thread 1:
+        let _a = lock_a.lock();
+        let _b = lock_b.lock();
+        
+      Thread 2:
+        let _a = lock_a.lock();  // Same order!
+        let _b = lock_b.lock();
+      
+  [2] Use timeouts:
+      if let Ok(b) = lock_b.try_lock_timeout(Duration::ms(100)) {
+          // proceed
+      } else {
+          // retry or abort
+      }
+      
+  [3] Refactor to avoid nested locks:
+      Move B acquisition outside A's critical section
+```
+
+#### Memory Ordering Explanation
+
+For atomic operations and memory barriers:
+
+```aura
+fn memory_ordering_issue() {
+    let x = Atomic::new(0);
+    let y = Atomic::new(0);
+    
+    spawn {
+        x.store(1, Release);  // T1: store x with Release
+        // ??? What about y?
+    }
+    
+    spawn {
+        let y_val = y.load(Acquire);  // T2: load y with Acquire
+        // Does T2 see x = 1?
+    }
+}
+```
+
+**Explanation:**
+
+```
+Memory Ordering Analysis:
+
+Claim: T2 sees x = 1 after y.load()
+Status: ❌ NOT PROVEN
+
+Explanation:
+  Release-Acquire synchronizes through the same atomic!
+  
+  T1 does:  store(x, Release) — no synchronization!
+  T2 does:  load(y, Acquire) — synchronizes with release of y, not x
+  
+  ✗ x.store() and y.load() are different atomics
+  ✗ No happens-before relationship
+  
+  Possible outcomes:
+    - T2 sees x = 0 (reordering)
+    - T2 sees x = 1 (luck)
+
+Fix: Use fence for sequential consistency
+  T1: x.store(1, Relaxed); fence(Release);  // Synchronizes all prior stores
+  T2: fence(Acquire); let y = y.load(Relaxed);  // Synchronizes all later loads
+```
+
+### Explain Panel Features
+
+**Visual Timeline:**
+- Shows order of events across threads
+- Color-codes synchronization points
+- Marks where ordering is guaranteed vs. possible
+
+**Drill-Down:**
+- Click any event to see source line
+- Expand variables to see captured values
+- Show proof of safety (if proven) or counterexample
+
+**Copy Output:**
+- Export explanation as markdown
+- Include in bug reports or design docs
+- Share with team for code review
+
+
 
 When assertion fails:
 

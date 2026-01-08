@@ -454,30 +454,341 @@ fn exists_max(arr: &[i32]) -> bool
 }
 ```
 
-### Reasoning About Concurrency
+### Reasoning About Concurrency with Race Detector
 
-(Detailed in Chapter 12: Concurrency & Race-Free Proofs)
+The **Race Detector** formally verifies freedom from data races, deadlocks, and use-after-free errors in concurrent code:
 
 ```aura
 fn atomic_counter() {
-    let counter = Atomic::new(0);
+    let counter = Mutex::new(0);
     
-    // Proof: Two threads incrementing leads to count == 2
+    // Proof: Two threads incrementing is race-free
     spawn {
-        counter.fetch_add(1);
+        let mut c = counter.lock();  // Verified: no deadlock possible
+        *c = *c + 1;                // Verified: synchronized access
+        drop(c);                     // Automatic lock release (RAII)
     }
+    
     spawn {
-        counter.fetch_add(1);
+        let mut c = counter.lock();
+        *c = *c + 1;
+        drop(c);
     }
     
     join_all();
-    assert counter.load() == 2;  // ✅ Proven race-free
+    assert counter.load() == 2;  // ✅ Proven race-free + lock-free exit
 }
+```
+
+**Race Detector Verification:**
+
+The verifier proves:
+1. **No data races** — All accesses to `counter` are synchronized by the mutex
+2. **No deadlocks** — Lock acquisition graph is acyclic
+3. **No use-after-free** — Mutex lifetime extends through all thread operations
+4. **Happens-before ordering** — Lock release in one thread happens-before acquisition in another
+
+### Advanced: Async/Await with Capture Validation
+
+```aura
+fn process_items(items: &[i32]) {
+    let sum = Mutex::new(0);
+    
+    for item in items {
+        // Verified: no mutable capture of outer scope
+        spawn_async {
+            let mut s = sum.lock();
+            *s = *s + item;  // ✅ Item is immutably captured
+        }
+    }
+}
+```
+
+The verifier enforces:
+- **No mutable capture** — Only immutable `&` or move-by-value
+- **Lifetime safety** — Captured references outlive async task
+- **Race freedom** — Mutable state (sum) is behind mutex
+
+### Race Detector Violation Examples
+
+**Example 1: Data Race (caught)**
+
+```aura
+fn bad_concurrent_write() {
+    let mut x = 0;
+    
+    spawn { x = 1; }  // Thread 1 writes
+    spawn { x = 2; }  // Thread 2 writes
+    // ❌ Error: data race on x (unsynchronized writes)
+}
+```
+
+**Explanation from verifier:**
+
+```
+Race Detector Violation: data race on 'x'
+  Location: line 3, column 5 (Thread 1)
+  Location: line 4, column 5 (Thread 2)
+  
+Suggested Fixes:
+  [1] Protect with mutex:
+      let x = Mutex::new(0);
+      spawn { *x.lock() = 1; }
+  
+  [2] Use atomic:
+      let x = Atomic::new(0);
+      x.store(1, Relaxed);
+  
+  [3] Synchronize with channel:
+      let (tx, rx) = channel();
+      spawn { tx.send(1); }
+      rx.recv();
+```
+
+**Example 2: Deadlock (caught)**
+
+```aura
+fn potential_deadlock() {
+    let lock_a = Mutex::new(0);
+    let lock_b = Mutex::new(0);
+    
+    spawn {
+        let _a = lock_a.lock();  // Thread 1: acquires A
+        // ... some work ...
+        let _b = lock_b.lock();  // Thread 1: tries to acquire B
+    }
+    
+    spawn {
+        let _b = lock_b.lock();  // Thread 2: acquires B
+        // ... some work ...
+        let _a = lock_a.lock();  // Thread 2: tries to acquire A
+        // ❌ Deadlock: circular dependency A → B → A
+    }
+}
+```
+
+**Verifier output:**
+
+```
+Deadlock Detected: circular lock dependency
+
+Cycle: lock_a → lock_b → lock_a
+  
+At line 6:7 (Thread 1):  lock_a acquired
+At line 9:7 (Thread 1):  lock_b acquired (depends on lock_a)
+
+At line 14:7 (Thread 2): lock_b acquired
+At line 17:7 (Thread 2): lock_a acquired (depends on lock_b)
+
+Suggested Fixes:
+  [1] Enforce consistent lock order:
+      Always acquire in order: lock_a, then lock_b
+  
+  [2] Use try_lock with timeout:
+      if let Ok(_) = lock_b.try_lock_timeout(Duration::ms(100)) { ... }
+  
+  [3] Refactor to avoid nested locks
 ```
 
 ---
 
-## Summary: Verification Workflow
+## Part 9: Explanation Engine — Understanding Proofs Interactively
+
+The **Explanation Engine** provides interactive, human-readable explanations of verification results and failures. Unlike raw Z3 output, explanations guide your understanding step-by-step.
+
+### What is an Explanation?
+
+An explanation is a **proof breakdown** showing:
+- **Main claim** — The assertion being proved
+- **Proof steps** — Logical derivations leading to the proof
+- **Critical insights** — Key facts that make the proof work
+- **Counterexample trace** — Variable values along a failing path (for failures)
+
+### Simple Assertion Example
+
+```aura
+fn check_positive(x: i32) -> bool
+    requires x > 0
+    ensures return == true
+{
+    x > 0
+}
+```
+
+**In Sentinel: Click "Explain" → View interactive breakdown:**
+
+```
+Main Claim:  x > 0  (return == true)
+
+Proof Steps:
+  1. Assume x > 0             [from precondition]
+  2. Evaluate: (x > 0)        [boolean expression]
+  3. Result: true             [by assumption from step 1]
+  4. Return: true             [matches postcondition]
+
+✅ Proven
+```
+
+### Complex Proof Example: Understanding Loop Invariants
+
+```aura
+fn sum_first_n(n: i32) -> i32
+    requires n >= 0
+    ensures return == (n * (n + 1)) / 2
+{
+    let mut sum = 0;
+    let mut i = 0;
+    
+    while i < n
+        invariant 0 <= i && i <= n
+        invariant sum == (i * (i + 1)) / 2
+        decreases n - i
+    {
+        sum = sum + i;
+        i = i + 1;
+    }
+    
+    sum
+}
+```
+
+**Explanation (from Sentinel):**
+
+```
+Main Claim: sum == (n * (n + 1)) / 2
+
+Loop Analysis:
+┌─ Loop Entry (before first iteration)
+│  ├─ i = 0, sum = 0
+│  ├─ Invariant Check: 0 <= 0 && 0 <= n ✓
+│  └─ Invariant Check: 0 == (0 * 1) / 2 = 0 ✓
+│
+├─ Loop Body (iteration k)
+│  ├─ Assume invariants: sum = (k*(k+1))/2, i = k
+│  ├─ Add i to sum: sum' = sum + i = (k*(k+1))/2 + k
+│  ├─ Simplify: sum' = (k^2 + k)/2 + k = (k^2 + 3k)/2
+│  ├─             = (k^2 + 3k + 2)/2 = ((k+1)*(k+2))/2
+│  ├─ Increment i: i' = k + 1
+│  └─ Invariant Check: sum' == ((k+1)*(k+2))/2 ✓
+│
+├─ Loop Exit (after i == n)
+│  ├─ Loop condition false: i < n is false, so i == n
+│  ├─ Invariant still holds: sum = (n*(n+1))/2
+│  └─ Postcondition satisfied ✓
+│
+└─ Termination
+   ├─ Decreases metric: n - i
+   ├─ Before iteration: n - k > 0
+   ├─ After iteration: n - (k+1) < n - k
+   └─ Loop terminates ✓
+
+✅ Proven
+```
+
+### Failure Explanation: Why This Proof Failed
+
+```aura
+fn broken_sum(n: i32) -> i32
+    requires n >= 0
+    ensures return == (n * (n + 1)) / 2
+{
+    let mut sum = 0;
+    let mut i = 0;
+    
+    while i < n
+        invariant sum == (i * (i + 1)) / 2
+        // Missing: 0 <= i && i <= n
+        decreases n - i
+    {
+        sum = sum + i;
+        i = i + 1;
+    }
+    
+    sum
+}
+```
+
+**Explanation (Failure):**
+
+```
+Main Claim: return == (n * (n + 1)) / 2
+
+Loop Analysis:
+┌─ Loop Entry
+│  ├─ i = 0, sum = 0
+│  └─ Check invariant: sum == 0 * 1 / 2 = 0 ✓
+│
+├─ Loop Body (iteration 1)
+│  ├─ Add i: sum = 0 + 0 = 0
+│  ├─ Increment i: i = 1
+│  ├─ Check invariant: sum == 1 * 2 / 2 = 1?
+│  │  But we computed sum = 0
+│  └─ ❌ INVARIANT VIOLATED at line 13
+│
+└─ Counterexample:
+   Input:  n = 1
+   
+   Execution Trace:
+   → i = 0, sum = 0, condition (0 < 1) = true
+   → Body: sum = 0 + 0 = 0, i = 0 + 1 = 1
+   → Check invariant: 0 == (1 * 2) / 2 ?
+   → FAILS: 0 ≠ 1
+
+Why This Failed:
+  The invariant claims sum = (i*(i+1))/2 AFTER incrementing i
+  But we add the OLD value of i (which is 0 in iteration 1)
+  
+Fix Option 1: Add missing bound invariant
+  invariant 0 <= i && i <= n
+  
+Fix Option 2: Adjust invariant to match actual computation
+  invariant sum == ((i-1)*i)/2  (if i > 0, else 0)
+  
+Fix Option 3: Reorder operations
+  i = i + 1;
+  sum = sum + (i - 1);  // Add BEFORE incrementing
+```
+
+### Interactive Explanation Features
+
+**Click interactions in Sentinel:**
+
+1. **Variable at step** — Click any variable to see its value at that step
+2. **Jump to source** — Click a step number to highlight the code line
+3. **Show Z3 proof** — Toggle raw SMT-LIB output (advanced users)
+4. **Export proof** — Save explanation as PDF with step-by-step images
+5. **Proof suggestions** — One-click fixes to repair failing proofs
+
+### Using Explanations for Teaching
+
+Explanations are **generated on-demand**, perfect for:
+
+- **Learning** — Students see how proofs decompose
+- **Debugging** — Find exactly where proofs break
+- **Documentation** — Include proof explanations in design docs
+- **Code review** — Peer review proofs with step-by-step explanations
+
+**Example: Classroom Use**
+
+```aura
+// Student code (provided)
+fn merge_sorted(a: &[i32], b: &[i32]) -> Vec[i32]
+    requires is_sorted(a)
+    requires is_sorted(b)
+    ensures is_sorted(return)
+    ensures return.len() == a.len() + b.len()
+{
+    // Implementation (students fill in)
+}
+
+// Instructor review:
+// "Your implementation looks good! Let me check the proof..."
+// [Clicks Explain] 
+// "I see—step 7 is where the sort invariant depends on the is_sorted 
+//  helper. Let's make sure that's proven. Here's the counterexample..."
+```
+
+---
 
 1. **Write assertions** — Document expected behavior with `assert`, `requires`, `ensures`
 2. **Add loop invariants** — Help the verifier reason about unbounded loops
