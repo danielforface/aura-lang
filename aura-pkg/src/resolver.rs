@@ -3,7 +3,7 @@
 
 use semver::{Version, VersionReq};
 use std::collections::{BTreeMap, VecDeque};
-use miette::{IntoDiagnostic, Report};
+use miette::Report;
 
 pub type ResolutionError = Report;
 
@@ -213,7 +213,7 @@ impl DependencyResolver {
     /// Check if a version satisfies requirements
     pub fn verify_compatibility(
         &self,
-        name: &str,
+        _name: &str,
         version: &Version,
         req: &VersionReq,
     ) -> Result<bool, ResolutionError> {

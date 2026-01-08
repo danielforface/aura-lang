@@ -346,6 +346,9 @@ mod tests {
 
     #[test]
     fn test_sha256_hash_signing() {
+        use sha2::Sha256;
+        use sha2::Digest;
+        
         let (signing_key, verifying_key, _hex) = PackageSigningKey::generate();
         
         let mut hasher = Sha256::new();
@@ -369,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_hex_serialization() {
-        let (signing_key, verifying_key, hex) = PackageSigningKey::generate();
+        let (signing_key, _verifying_key, hex) = PackageSigningKey::generate();
         
         let loaded = PackageVerifyingKey::from_hex(&hex).expect("load failed");
         
