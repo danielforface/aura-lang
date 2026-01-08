@@ -11,18 +11,20 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-// Public module exports for metadata, signing, resolver, CLI, lockfile, and commands
+// Public module exports for metadata, signing, resolver, CLI, lockfile, registry, and commands
 pub mod metadata;
 pub mod signing;
 pub mod resolver;
 pub mod cli;
 pub mod lockfile;
+pub mod registry;
 pub mod commands;
 
 pub use metadata::PackageMetadata;
 pub use signing::{PackageSigningKey, PackageVerifyingKey, PackageSignature};
 pub use resolver::{DependencyResolver, PackageRegistry, ResolvedDependencies};
 pub use lockfile::{Lockfile, ResolvedDependency};
+pub use registry::{RegistryClient, FileRegistry, PackageInfo, VersionInfo, RegistryConfig};
 pub use cli::{Cli, Commands, InitArgs, AddArgs, RemoveArgs, ListArgs, PublishArgs, VerifyArgs};
 pub use commands::{
     init_project, add_dependency, remove_dependency, list_dependencies, verify_package,

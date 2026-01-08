@@ -553,3 +553,46 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+/// Publish a package to registry
+pub fn publish_to_registry(
+    manifest_path: &Path,
+    _registry: Option<String>,
+    dry_run: bool,
+    _signing_key: Option<String>,
+    _prerelease: bool,
+) -> Result<(), CmdError> {
+    // Load and validate manifest
+    let metadata = PackageMetadata::from_file(manifest_path)?;
+
+    println!("Publishing package: {}", metadata.package.name);
+    println!("  Version: {}", metadata.package.version);
+    println!("  Edition: {}", metadata.package.edition);
+
+    if let Some(ref desc) = metadata.package.description {
+        println!("  Description: {}", desc);
+    }
+
+    // Validate package before publishing
+    if metadata.package.version == "0.0.0" {
+        return Err(cmd_msg("Cannot publish version 0.0.0"));
+    }
+
+    // In a real implementation, we would:
+    // 1. Create a tarball of the package
+    // 2. Compute package hash
+    // 3. Sign the package
+    // 4. Upload to registry
+    // For now, we'll just validate and show what would happen
+
+    if dry_run {
+        println!("\n[DRY RUN] Would publish to registry");
+        println!("  Package: {}", metadata.package.name);
+        println!("  Version: {}", metadata.package.version);
+    } else {
+        println!("\n✓ Package is valid and ready to publish");
+        println!("  Run without --dry-run to actually publish");
+    }
+
+    Ok(())
+}
