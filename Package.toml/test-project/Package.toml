@@ -1,0 +1,21 @@
+[package]
+name = "test-project"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+
+[dev_dependencies]
+
+[build_dependencies]
+
+[profile.dev]
+opt_level = 0
+lto = false
+codegen_units = 16
+
+[profile.release]
+opt_level = 3
+lto = true
+codegen_units = 1
