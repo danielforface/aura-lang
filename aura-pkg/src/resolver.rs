@@ -139,7 +139,7 @@ impl ResolvedDependencies {
 
 /// Main resolver: resolves all dependencies to specific versions
 pub struct DependencyResolver {
-    registry: PackageRegistry,
+    pub registry: PackageRegistry,
 }
 
 impl DependencyResolver {
