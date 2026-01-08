@@ -21,6 +21,7 @@ pub mod registry;
 pub mod config;
 pub mod commands;
 pub mod cache;
+pub mod security;
 
 pub use metadata::PackageMetadata;
 pub use signing::{PackageSigningKey, PackageVerifyingKey, PackageSignature};
@@ -29,6 +30,11 @@ pub use lockfile::{Lockfile, ResolvedDependency};
 pub use registry::{RegistryClient, FileRegistry, PackageInfo, VersionInfo, RegistryConfig};
 pub use config::{AuraConfig, ConfigSettings, RegistryEntry, ConfigManager};
 pub use cache::{DependencyCache, LazyCache, ParallelResolutionCache, CacheStats};
+pub use security::{
+    validate_registry_url, validate_package_name, validate_version, validate_dependency_spec,
+    validate_author_email, validate_description, validate_file_path, validate_license,
+    SecurityValidator,
+};
 pub use cli::{Cli, Commands, InitArgs, AddArgs, RemoveArgs, ListArgs, PublishArgs, VerifyArgs};
 pub use commands::{
     init_project, add_dependency, remove_dependency, list_dependencies, verify_package,
