@@ -1,0 +1,13 @@
+# Aura build artifacts
+target/
+Aura.lock
+*.aura.o
+*.rlib
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
