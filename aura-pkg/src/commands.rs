@@ -6,7 +6,7 @@
 use crate::metadata::{PackageInfo, PackageMetadata, ProfileConfig};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use miette::Report;
 
 pub type CmdError = Report;
