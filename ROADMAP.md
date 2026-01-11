@@ -810,6 +810,187 @@ All five strategic pillars for v1.0 daily-driver readiness are now complete:
 - [x] Flame graphs (folded export, MVP)
 - [~] Memory + allocation view (reachable-value breakdown; still approximate, MVP)
 
+### Advanced File Explorer & Virtual File Manager (v1.1+ Enhancement — 20+ Steps)
+
+#### File Tree Explorer Enhancements (Steps 1-5)
+- [ ] **Step 1:** Implement hierarchical folder tree visualization
+  - [ ] Display full folder structure on initial folder open
+  - [ ] Lazy-load subfolders (expand on click)
+  - [ ] Show file count indicators per folder
+  - [ ] Support collapsible/expandable folder sections
+- [ ] **Step 2:** Add visual folder hierarchy with icons
+  - [ ] Folder icons (open/closed states)
+  - [ ] File type icons (code, document, media, etc.)
+  - [ ] Recursive nested view with proper indentation
+  - [ ] Breadcrumb navigation above tree
+- [ ] **Step 3:** Implement folder navigation with tree drag-and-drop
+  - [ ] Drag folders to reorder
+  - [ ] Expand/collapse with arrow clicks
+  - [ ] Double-click to navigate into folder
+  - [ ] Single-click to select folder
+- [ ] **Step 4:** Add file filtering and search in tree
+  - [ ] Search box above tree (filters visible files)
+  - [ ] Show/hide hidden files toggle
+  - [ ] Filter by file type (*.ts, *.aura, etc.)
+  - [ ] Highlight matching files in real-time
+- [ ] **Step 5:** Implement breadcrumb navigation
+  - [ ] Show current folder path
+  - [ ] Click any breadcrumb segment to jump to that folder
+  - [ ] Copy full path button
+  - [ ] Home/root folder quick access
+
+#### Recent Folders History (Steps 6-10)
+- [ ] **Step 6:** Create recent folders list in sidebar
+  - [ ] Store up to 10 most recent folders
+  - [ ] Persist to user settings/config file
+  - [ ] Show folder path + last access time
+  - [ ] Pin/unpin favorite folders
+- [ ] **Step 7:** Implement quick folder switcher
+  - [ ] Dropdown menu showing recent folders
+  - [ ] One-click switch between folders
+  - [ ] Star/unstar folder for favorites
+  - [ ] Clear history option
+- [ ] **Step 8:** Add folder bookmark management
+  - [ ] Bookmarks section in file explorer
+  - [ ] Add current folder to bookmarks button
+  - [ ] Drag bookmarks to reorder
+  - [ ] Remove bookmark option
+- [ ] **Step 9:** Implement folder history navigation
+  - [ ] Back/forward buttons for folder history
+  - [ ] Keyboard shortcuts (Alt+Left, Alt+Right)
+  - [ ] History dropdown with hover previews
+  - [ ] Clear history option
+- [ ] **Step 10:** Add recently used folders indicator
+  - [ ] Show access frequency/rank
+  - [ ] Display last modified date
+  - [ ] Show folder size info
+  - [ ] Quick stats on hover
+
+#### Session-Based File Management (Steps 11-15)
+- [ ] **Step 11:** Implement per-folder file session storage
+  - [ ] Save open files per folder
+  - [ ] Store tab order and scroll positions
+  - [ ] Save active tab indicator
+  - [ ] Persist to JSON config file per folder
+- [ ] **Step 12:** Add automatic file restoration on folder switch
+  - [ ] When switching folders, close previous folder's files
+  - [ ] Automatically open saved files for new folder
+  - [ ] Restore tab order and positions
+  - [ ] Restore scroll position for each file
+- [ ] **Step 13:** Implement file tab memory system
+  - [ ] Create tab groups per folder
+  - [ ] Remember which tabs were open
+  - [ ] Store file edit state (modified/saved)
+  - [ ] Quick access to recently closed tabs
+- [ ] **Step 14:** Add session import/export
+  - [ ] Export current folder session as JSON
+  - [ ] Import previous sessions
+  - [ ] Compare session snapshots
+  - [ ] Merge sessions from multiple folders
+- [ ] **Step 15:** Implement session cleanup and organization
+  - [ ] Auto-cleanup sessions for deleted folders
+  - [ ] Merge duplicate sessions
+  - [ ] Archive old sessions
+  - [ ] Session statistics dashboard
+
+#### Virtual File Manager Operations (Steps 16-20)
+- [ ] **Step 16:** Implement copy file/folder operation
+  - [ ] Right-click context menu option
+  - [ ] Keyboard shortcut (Ctrl+C)
+  - [ ] Copy to clipboard (filepath)
+  - [ ] Paste in same or different folder (Ctrl+V)
+  - [ ] Show progress for large files
+- [ ] **Step 17:** Implement delete file/folder with trash
+  - [ ] Right-click delete option
+  - [ ] Confirmation dialog before delete
+  - [ ] Move to trash (recoverable)
+  - [ ] Permanent delete option
+  - [ ] Empty trash functionality
+- [ ] **Step 18:** Implement rename file/folder
+  - [ ] Right-click rename option
+  - [ ] F2 keyboard shortcut
+  - [ ] Inline edit with validation
+  - [ ] Prevent duplicate names
+  - [ ] Keep file extension when renaming
+- [ ] **Step 19:** Implement create new file/folder
+  - [ ] Right-click "New File" option
+  - [ ] Right-click "New Folder" option
+  - [ ] Keyboard shortcuts
+  - [ ] Inline naming dialog
+  - [ ] Default file templates (.aura, .ts, etc.)
+- [ ] **Step 20:** Implement drag-and-drop file operations
+  - [ ] Drag file to move
+  - [ ] Drag folder to move with contents
+  - [ ] Ctrl+drag to copy
+  - [ ] Drag between folders
+  - [ ] Visual drop target indicators
+
+#### Document Change History & Tracking (Steps 21-25)
+- [ ] **Step 21:** Implement document change history tracking
+  - [ ] Track all modifications per document
+  - [ ] Store timestamp, author, change type
+  - [ ] Maintain change log per file
+  - [ ] Persist history to .history folder
+- [ ] **Step 22:** Add visual change indicators in editor
+  - [ ] Highlight changed lines in editor gutter
+  - [ ] Show change type (added/modified/deleted)
+  - [ ] Color code: green (new), yellow (modified), red (deleted)
+  - [ ] Hover to show change details
+- [ ] **Step 23:** Implement change summary panel
+  - [ ] Show list of all changes in current file
+  - [ ] Click to jump to changed line
+  - [ ] Show before/after code snippets
+  - [ ] Group changes by type
+- [ ] **Step 24:** Add change history viewer
+  - [ ] Timeline view of all changes
+  - [ ] Show previous versions of file
+  - [ ] Diff view between versions
+  - [ ] Restore previous version option
+- [ ] **Step 25:** Implement change marks and annotations
+  - [ ] Mark important changes
+  - [ ] Add inline comments/annotations
+  - [ ] Tag changes with keywords
+  - [ ] Filter changes by tag/date/author
+
+#### Clean File View on Folder Switch (Steps 26-28)
+- [ ] **Step 26:** Implement clean state reset on new folder
+  - [ ] Clear all unsaved files when switching folders
+  - [ ] Prompt to save modified files
+  - [ ] Close all tabs from previous folder
+  - [ ] Reset scroll and view positions
+- [ ] **Step 27:** Add startup file view for new folders
+  - [ ] Show welcome panel for empty folders
+  - [ ] Display README file if exists
+  - [ ] Show project structure overview
+  - [ ] Suggest creating first file/folder
+- [ ] **Step 28:** Implement view state isolation per folder
+  - [ ] Each folder has independent window state
+  - [ ] Separate sidebar configuration per folder
+  - [ ] Individual file explorer settings
+  - [ ] Isolated panel layouts
+
+#### Sentinel App Stability & UX (Steps 29-32)
+- [ ] **Step 29:** Implement robust error handling
+  - [ ] Handle file system errors gracefully
+  - [ ] Show user-friendly error messages
+  - [ ] Retry failed operations
+  - [ ] Log errors for debugging
+- [ ] **Step 30:** Add performance monitoring
+  - [ ] Track file operation times
+  - [ ] Monitor folder switching latency
+  - [ ] Track memory usage
+  - [ ] Profile session restoration
+- [ ] **Step 31:** Implement undo/redo for file operations
+  - [ ] Undo last file operation
+  - [ ] Redo undone operations
+  - [ ] Limit undo history (configurable)
+  - [ ] Show undo/redo history
+- [ ] **Step 32:** Add configuration management
+  - [ ] Settings for auto-save behavior
+  - [ ] History retention settings
+  - [ ] Session management options
+  - [ ] UI customization settings
+
 ---
 
 ## LSP + Protocol
