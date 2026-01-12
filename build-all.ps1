@@ -26,8 +26,20 @@ Write-Host "Platform: $(if ($isWindows) { 'Windows' } elseif ($isMacOS) { 'macOS
 if ($Clean) {
     Write-Host "`n[BUILD] Cleaning previous builds..." -ForegroundColor Yellow
     cargo clean
-    if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" | Out-Null }
-    if (Test-Path "build") { Remove-Item -Recurse -Force "build" | Out-Null }
+    if (Test-Path "dist") {
+        try {
+            Remove-Item -Recurse -Force "dist" -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Host "[WARN] Could not fully remove ./dist (some files may be locked). Continuing." -ForegroundColor Yellow
+        }
+    }
+    if (Test-Path "build") {
+        try {
+            Remove-Item -Recurse -Force "build" -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Host "[WARN] Could not fully remove ./build. Continuing." -ForegroundColor Yellow
+        }
+    }
     Write-Host "[OK] Clean complete" -ForegroundColor Green
 }
 

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "build_date": "2026-01-11T16:56:48.411924",
+  "build_date": "2026-01-12T13:25:34.575442",
   "components": {
     "MANIFEST.json": [
       {
@@ -11,9 +11,19 @@
     ],
     "android": [
       {
+        "file": "android/AuraSentinelSample-debug.7z",
+        "size_bytes": 4485863,
+        "size_mb": 4.28
+      },
+      {
         "file": "android/AuraSentinelSample-debug.apk",
         "size_bytes": 5527605,
         "size_mb": 5.27
+      },
+      {
+        "file": "android/AuraSentinelSample-debug.apk.zip",
+        "size_bytes": 4543303,
+        "size_mb": 4.33
       }
     ],
     "apps": [
@@ -23,21 +33,21 @@
         "size_mb": 0.0
       },
       {
+        "file": "apps/sentinel/assets/index-Bb0BZHUN.js",
+        "size_bytes": 492733,
+        "size_mb": 0.47
+      },
+      {
         "file": "apps/sentinel/assets/index-DOn_s_E-.css",
         "size_bytes": 10859,
         "size_mb": 0.01
-      },
-      {
-        "file": "apps/sentinel/assets/index-Dx04opm8.js",
-        "size_bytes": 492168,
-        "size_mb": 0.47
       }
     ],
     "bin": [
       {
         "file": "bin/aura-lsp.exe",
-        "size_bytes": 6422528,
-        "size_mb": 6.12
+        "size_bytes": 6504448,
+        "size_mb": 6.2
       },
       {
         "file": "bin/aura-pkg.exe",
@@ -46,11 +56,16 @@
       },
       {
         "file": "bin/aura.exe",
-        "size_bytes": 11301888,
+        "size_bytes": 11305472,
         "size_mb": 10.78
       }
     ],
     "docs": [
+      {
+        "file": "docs/ALL_MARKDOWN_INDEX.md",
+        "size_bytes": 9928,
+        "size_mb": 0.01
+      },
       {
         "file": "docs/debug-protocol.md",
         "size_bytes": 4257,
@@ -122,6 +137,16 @@
         "size_mb": 0.0
       },
       {
+        "file": "docs/SUMMARIES_OVERVIEW.md",
+        "size_bytes": 15878,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/SUMMARY_INDEX.md",
+        "size_bytes": 5530,
+        "size_mb": 0.01
+      },
+      {
         "file": "docs/trusted-core.md",
         "size_bytes": 1252,
         "size_mb": 0.0
@@ -129,6 +154,11 @@
       {
         "file": "docs/ub-boundaries.md",
         "size_bytes": 1127,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/UPDATES.md",
+        "size_bytes": 3888,
         "size_mb": 0.0
       },
       {
@@ -142,6 +172,11 @@
         "size_mb": 0.01
       },
       {
+        "file": "docs/v1.0-reliability.md",
+        "size_bytes": 7404,
+        "size_mb": 0.01
+      },
+      {
         "file": "docs/v1.0-week1-checklist.md",
         "size_bytes": 8681,
         "size_mb": 0.01
@@ -149,6 +184,1306 @@
       {
         "file": "docs/WEEK-1-EXECUTION.md",
         "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/ANDROID_BUILD_SETUP.md",
+        "size_bytes": 7404,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/ANDROID_FINAL_SETUP.md",
+        "size_bytes": 10575,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/ANNOUNCEMENT.md",
+        "size_bytes": 14673,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__CI_GATE_IMPLEMENTATION.md",
+        "size_bytes": 10815,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__COMPLETE_DELIVERABLES.md",
+        "size_bytes": 13508,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__DELIVERY_SUMMARY.md",
+        "size_bytes": 8148,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__docs__CI_GATE.md",
+        "size_bytes": 9319,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__INDEX.md",
+        "size_bytes": 9241,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__PHASE2_WEEK1_CHECKLIST.md",
+        "size_bytes": 8285,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__PHASE2_WEEK2_PLAN.md",
+        "size_bytes": 10335,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__QUICK_REFERENCE.md",
+        "size_bytes": 6849,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__README_CI_GATE.md",
+        "size_bytes": 9042,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/aura-lsp__START_HERE.md",
+        "size_bytes": 11199,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/BOTTLENECK_IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 11969,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/BUILD_CI_README.md",
+        "size_bytes": 9500,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/BUILD_COMPLETE_SUMMARY.md",
+        "size_bytes": 8170,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/BUILD_REPORT.md",
+        "size_bytes": 9941,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/BUILD_REPORT_2026_01_07.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/CAPABILITY_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 16655,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/CHANGELOG.md",
+        "size_bytes": 7114,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/CI_CD_BUILD_SUMMARY.md",
+        "size_bytes": 10829,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/CI_CD_COMPLETION_REPORT.md",
+        "size_bytes": 11303,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/DELIVERY_SUMMARY.md",
+        "size_bytes": 13851,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/DISTRIBUTION.md",
+        "size_bytes": 7855,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__book__chapter-10-verification.md",
+        "size_bytes": 22050,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__book__debug-guide.md",
+        "size_bytes": 16779,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__book__package-management-guide.md",
+        "size_bytes": 12801,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__debug-protocol.md",
+        "size_bytes": 4257,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__diagnostic-codes.md",
+        "size_bytes": 888,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__editions-and-feature-gates.md",
+        "size_bytes": 836,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__effects-ownership-model.md",
+        "size_bytes": 4952,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__gc-design.md",
+        "size_bytes": 3589,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__JANUARY-2026-STATUS.md",
+        "size_bytes": 8741,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__ownership-effects-options.md",
+        "size_bytes": 3686,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__ownership-option-a.md",
+        "size_bytes": 5913,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__PHASE-1-COMPLETION-REPORT.md",
+        "size_bytes": 13269,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__PHASE-1-FINAL-SUMMARY.md",
+        "size_bytes": 12324,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__PHASE-2-INTEGRATION-CHECKLIST.md",
+        "size_bytes": 15798,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__release-channels.md",
+        "size_bytes": 849,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__release-notes.md",
+        "size_bytes": 328,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__rfcs__0000-template.md",
+        "size_bytes": 485,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__rfcs__README.md",
+        "size_bytes": 802,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__root-md__ANDROID_BUILD_SETUP.md",
+        "size_bytes": 7404,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__ANDROID_FINAL_SETUP.md",
+        "size_bytes": 10575,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__ANNOUNCEMENT.md",
+        "size_bytes": 14673,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__BOTTLENECK_IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 11969,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__BUILD_CI_README.md",
+        "size_bytes": 9500,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__BUILD_COMPLETE_SUMMARY.md",
+        "size_bytes": 8170,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__BUILD_REPORT.md",
+        "size_bytes": 9941,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__BUILD_REPORT_2026_01_07.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__CAPABILITY_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 16655,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__root-md__CHANGELOG.md",
+        "size_bytes": 7114,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__CI_CD_BUILD_SUMMARY.md",
+        "size_bytes": 10829,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__CI_CD_COMPLETION_REPORT.md",
+        "size_bytes": 11303,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__DELIVERY_SUMMARY.md",
+        "size_bytes": 13851,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__DISTRIBUTION.md",
+        "size_bytes": 7855,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__DOCUMENTATION_INDEX.md",
+        "size_bytes": 11551,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__EXAMPLES.md",
+        "size_bytes": 12733,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__FINAL_STATUS_REPORT.md",
+        "size_bytes": 11262,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__FIXES_APPLIED.md",
+        "size_bytes": 8311,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__GUIDE.md",
+        "size_bytes": 11372,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 12785,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__INDEX.md",
+        "size_bytes": 4912,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__root-md__INTEGRATION_VERIFICATION_COMPLETE.md",
+        "size_bytes": 14298,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__LINEAR_TYPES_IMPLEMENTATION.md",
+        "size_bytes": 6196,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__LINEAR_TYPE_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 13342,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__LINEAR_TYPE_ENFORCEMENT_PLAN.md",
+        "size_bytes": 3030,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__root-md__MARKETING.md",
+        "size_bytes": 14595,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_2_WEEK_4_FINAL_SUMMARY.md",
+        "size_bytes": 13607,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_3_COMPLETION_REPORT.md",
+        "size_bytes": 10967,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_3_EXECUTION_CHECKLIST.md",
+        "size_bytes": 23568,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_3_ROADMAP.md",
+        "size_bytes": 20608,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_3_START_GUIDE.md",
+        "size_bytes": 25862,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PHASE_4_MASTER_TASKLIST.md",
+        "size_bytes": 19100,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PILLAR_IMPLEMENTATION_COMPLETE.md",
+        "size_bytes": 11406,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PRESS_RELEASE.md",
+        "size_bytes": 9295,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__PROJECT_STATUS_DASHBOARD.md",
+        "size_bytes": 14429,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__QUICK_REFERENCE.md",
+        "size_bytes": 8570,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__QUICK_START.md",
+        "size_bytes": 4521,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__root-md__QUICK_START_CARD.md",
+        "size_bytes": 8564,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__README_COMPLETION.md",
+        "size_bytes": 8616,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__README_FINAL.md",
+        "size_bytes": 9912,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__REBUILD_ARTIFACTS_COMPLETE.md",
+        "size_bytes": 12005,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__REBUILD_COMPLETE_FINAL_REPORT.md",
+        "size_bytes": 14078,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__REBUILD_INDEX.md",
+        "size_bytes": 8234,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__RELEASE_COMPLETE.md",
+        "size_bytes": 11050,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__RELEASE_NOTES.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__ROADMAP_COMPLETE.md",
+        "size_bytes": 7709,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__ROADMAP_UPDATE_SUMMARY.md",
+        "size_bytes": 5860,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__SENTINEL_APP_ENHANCEMENTS_COMPLETE.md",
+        "size_bytes": 7774,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__SENTINEL_APP_ENHANCEMENT_ROADMAP.md",
+        "size_bytes": 13890,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__SENTINEL_ENHANCEMENT_SUMMARY.md",
+        "size_bytes": 9267,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__STATUS_UPDATE.md",
+        "size_bytes": 11746,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__STD_NET_SAFETY_PLAN.md",
+        "size_bytes": 9410,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__UPDATES_SUMMARY.md",
+        "size_bytes": 9175,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__WEEK_3_COMPLETION_SUMMARY.md",
+        "size_bytes": 9236,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__WEEK_3_FINAL_VERIFICATION.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__root-md__WEEK_3_QUICK_REFERENCE.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__stability-and-compat.md",
+        "size_bytes": 1363,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__trusted-core.md",
+        "size_bytes": 1252,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__ub-boundaries.md",
+        "size_bytes": 1127,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/docs__v1.0-executive-summary.md",
+        "size_bytes": 6966,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__v1.0-implementation-plan.md",
+        "size_bytes": 15010,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__v1.0-reliability.md",
+        "size_bytes": 7404,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__v1.0-week1-checklist.md",
+        "size_bytes": 8681,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/docs__WEEK-1-EXECUTION.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/DOCUMENTATION_INDEX.md",
+        "size_bytes": 11551,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/editors__sentinel-app__README.md",
+        "size_bytes": 1744,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/editors__sentinel-app__ROADMAP.md",
+        "size_bytes": 2686,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/EXAMPLES.md",
+        "size_bytes": 12733,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/examples__aura-code__README.md",
+        "size_bytes": 517,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/examples__aura-move__README.md",
+        "size_bytes": 406,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/examples__aura-vision-safe__README.md",
+        "size_bytes": 654,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/FINAL_STATUS_REPORT.md",
+        "size_bytes": 11262,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/FIXES_APPLIED.md",
+        "size_bytes": 8311,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/GUIDE.md",
+        "size_bytes": 11372,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 12785,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/INTEGRATION_VERIFICATION_COMPLETE.md",
+        "size_bytes": 14298,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/LINEAR_TYPES_IMPLEMENTATION.md",
+        "size_bytes": 6196,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/LINEAR_TYPE_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 13342,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/LINEAR_TYPE_ENFORCEMENT_PLAN.md",
+        "size_bytes": 3030,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/MARKETING.md",
+        "size_bytes": 14595,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/PHASE_2_WEEK_4_FINAL_SUMMARY.md",
+        "size_bytes": 13607,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/PHASE_3_COMPLETION_REPORT.md",
+        "size_bytes": 10967,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/PHASE_3_EXECUTION_CHECKLIST.md",
+        "size_bytes": 23568,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/PHASE_3_ROADMAP.md",
+        "size_bytes": 20608,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/PHASE_3_START_GUIDE.md",
+        "size_bytes": 25862,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/PHASE_4_MASTER_TASKLIST.md",
+        "size_bytes": 19100,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/all-md/PILLAR_IMPLEMENTATION_COMPLETE.md",
+        "size_bytes": 11406,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/PRESS_RELEASE.md",
+        "size_bytes": 9295,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/PROJECT_STATUS_DASHBOARD.md",
+        "size_bytes": 14429,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/QUICK_REFERENCE.md",
+        "size_bytes": 8570,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/QUICK_START.md",
+        "size_bytes": 4521,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/QUICK_START_CARD.md",
+        "size_bytes": 8564,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/README.md",
+        "size_bytes": 4689,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/README_COMPLETION.md",
+        "size_bytes": 8616,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/README_FINAL.md",
+        "size_bytes": 9912,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/REBUILD_ARTIFACTS_COMPLETE.md",
+        "size_bytes": 12005,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/REBUILD_COMPLETE_FINAL_REPORT.md",
+        "size_bytes": 14078,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/REBUILD_INDEX.md",
+        "size_bytes": 8234,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/RELEASE_COMPLETE.md",
+        "size_bytes": 11050,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/RELEASE_NOTES.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/ROADMAP.md",
+        "size_bytes": 52991,
+        "size_mb": 0.05
+      },
+      {
+        "file": "docs/all-md/ROADMAP_COMPLETE.md",
+        "size_bytes": 7709,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/ROADMAP_UPDATE_SUMMARY.md",
+        "size_bytes": 5860,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/samples__android__AuraSentinelSample__README.md",
+        "size_bytes": 562,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__android__README.md",
+        "size_bytes": 1046,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__book.md",
+        "size_bytes": 1853,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__cookbook.md",
+        "size_bytes": 1182,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__lsp-stability.md",
+        "size_bytes": 691,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__README.md",
+        "size_bytes": 581,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__reference.md",
+        "size_bytes": 2106,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__verifier-guide.md",
+        "size_bytes": 1679,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/sdk__docs__z3-gate.md",
+        "size_bytes": 2960,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/SENTINEL_APP_ENHANCEMENTS_COMPLETE.md",
+        "size_bytes": 7774,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/SENTINEL_APP_ENHANCEMENT_ROADMAP.md",
+        "size_bytes": 13890,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/SENTINEL_ENHANCEMENT_SUMMARY.md",
+        "size_bytes": 9267,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/STATUS_UPDATE.md",
+        "size_bytes": 11746,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/STD_NET_SAFETY_PLAN.md",
+        "size_bytes": 9410,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/tools__compat__README.md",
+        "size_bytes": 381,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/UPDATES_SUMMARY.md",
+        "size_bytes": 9175,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/website__README.md",
+        "size_bytes": 1450,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/all-md/WEEK_3_COMPLETION_SUMMARY.md",
+        "size_bytes": 9236,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/WEEK_3_FINAL_VERIFICATION.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/all-md/WEEK_3_QUICK_REFERENCE.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/ANDROID_FINAL_SETUP.md",
+        "size_bytes": 10575,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/ANNOUNCEMENT.md",
+        "size_bytes": 14673,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/aura-lsp__COMPLETE_DELIVERABLES.md",
+        "size_bytes": 13508,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/aura-lsp__DELIVERY_SUMMARY.md",
+        "size_bytes": 8148,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/aura-lsp__INDEX.md",
+        "size_bytes": 9241,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/aura-lsp__PHASE2_WEEK1_CHECKLIST.md",
+        "size_bytes": 8285,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/BOTTLENECK_IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 11969,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/BUILD_COMPLETE_SUMMARY.md",
+        "size_bytes": 8170,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/BUILD_REPORT.md",
+        "size_bytes": 9941,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/BUILD_REPORT_2026_01_07.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/CAPABILITY_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 16655,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/CI_CD_BUILD_SUMMARY.md",
+        "size_bytes": 10829,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/CI_CD_COMPLETION_REPORT.md",
+        "size_bytes": 11303,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/DELIVERY_SUMMARY.md",
+        "size_bytes": 13851,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__book__debug-guide.md",
+        "size_bytes": 16779,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/docs__book__package-management-guide.md",
+        "size_bytes": 12801,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__JANUARY-2026-STATUS.md",
+        "size_bytes": 8741,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__PHASE-1-COMPLETION-REPORT.md",
+        "size_bytes": 13269,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__PHASE-1-FINAL-SUMMARY.md",
+        "size_bytes": 12324,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__PHASE-2-INTEGRATION-CHECKLIST.md",
+        "size_bytes": 15798,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/docs__release-channels.md",
+        "size_bytes": 849,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/summaries/docs__release-notes.md",
+        "size_bytes": 328,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/summaries/docs__root-md__ANDROID_FINAL_SETUP.md",
+        "size_bytes": 10575,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__ANNOUNCEMENT.md",
+        "size_bytes": 14673,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__BOTTLENECK_IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 11969,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__BUILD_COMPLETE_SUMMARY.md",
+        "size_bytes": 8170,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__BUILD_REPORT.md",
+        "size_bytes": 9941,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__BUILD_REPORT_2026_01_07.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__CAPABILITY_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 16655,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/docs__root-md__CI_CD_BUILD_SUMMARY.md",
+        "size_bytes": 10829,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__CI_CD_COMPLETION_REPORT.md",
+        "size_bytes": 11303,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__DELIVERY_SUMMARY.md",
+        "size_bytes": 13851,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__DOCUMENTATION_INDEX.md",
+        "size_bytes": 11551,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__FINAL_STATUS_REPORT.md",
+        "size_bytes": 11262,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__GUIDE.md",
+        "size_bytes": 11372,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 12785,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__INDEX.md",
+        "size_bytes": 4912,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/summaries/docs__root-md__INTEGRATION_VERIFICATION_COMPLETE.md",
+        "size_bytes": 14298,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__LINEAR_TYPE_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 13342,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PHASE_2_WEEK_4_FINAL_SUMMARY.md",
+        "size_bytes": 13607,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PHASE_3_COMPLETION_REPORT.md",
+        "size_bytes": 10967,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PHASE_3_EXECUTION_CHECKLIST.md",
+        "size_bytes": 23568,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PHASE_3_START_GUIDE.md",
+        "size_bytes": 25862,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PILLAR_IMPLEMENTATION_COMPLETE.md",
+        "size_bytes": 11406,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PRESS_RELEASE.md",
+        "size_bytes": 9295,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__PROJECT_STATUS_DASHBOARD.md",
+        "size_bytes": 14429,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__README_COMPLETION.md",
+        "size_bytes": 8616,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__README_FINAL.md",
+        "size_bytes": 9912,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__REBUILD_ARTIFACTS_COMPLETE.md",
+        "size_bytes": 12005,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__REBUILD_COMPLETE_FINAL_REPORT.md",
+        "size_bytes": 14078,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__REBUILD_INDEX.md",
+        "size_bytes": 8234,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__RELEASE_COMPLETE.md",
+        "size_bytes": 11050,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__RELEASE_NOTES.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__ROADMAP_COMPLETE.md",
+        "size_bytes": 7709,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__ROADMAP_UPDATE_SUMMARY.md",
+        "size_bytes": 5860,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__SENTINEL_APP_ENHANCEMENTS_COMPLETE.md",
+        "size_bytes": 7774,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__SENTINEL_ENHANCEMENT_SUMMARY.md",
+        "size_bytes": 9267,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__STATUS_UPDATE.md",
+        "size_bytes": 11746,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__UPDATES_SUMMARY.md",
+        "size_bytes": 9175,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__WEEK_3_COMPLETION_SUMMARY.md",
+        "size_bytes": 9236,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__root-md__WEEK_3_FINAL_VERIFICATION.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__v1.0-executive-summary.md",
+        "size_bytes": 6966,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/docs__v1.0-week1-checklist.md",
+        "size_bytes": 8681,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/DOCUMENTATION_INDEX.md",
+        "size_bytes": 11551,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/FINAL_STATUS_REPORT.md",
+        "size_bytes": 11262,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/GUIDE.md",
+        "size_bytes": 11372,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/IMPLEMENTATION_SUMMARY.md",
+        "size_bytes": 12785,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/INTEGRATION_VERIFICATION_COMPLETE.md",
+        "size_bytes": 14298,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/LINEAR_TYPE_ENFORCEMENT_COMPLETE.md",
+        "size_bytes": 13342,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/PHASE_2_WEEK_4_FINAL_SUMMARY.md",
+        "size_bytes": 13607,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/PHASE_3_COMPLETION_REPORT.md",
+        "size_bytes": 10967,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/PHASE_3_EXECUTION_CHECKLIST.md",
+        "size_bytes": 23568,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/PHASE_3_ROADMAP.md",
+        "size_bytes": 20608,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/PHASE_3_START_GUIDE.md",
+        "size_bytes": 25862,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/PHASE_4_MASTER_TASKLIST.md",
+        "size_bytes": 19100,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/summaries/PILLAR_IMPLEMENTATION_COMPLETE.md",
+        "size_bytes": 11406,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/PRESS_RELEASE.md",
+        "size_bytes": 9295,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/PROJECT_STATUS_DASHBOARD.md",
+        "size_bytes": 14429,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/README_COMPLETION.md",
+        "size_bytes": 8616,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/README_FINAL.md",
+        "size_bytes": 9912,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/REBUILD_ARTIFACTS_COMPLETE.md",
+        "size_bytes": 12005,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/REBUILD_COMPLETE_FINAL_REPORT.md",
+        "size_bytes": 14078,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/REBUILD_INDEX.md",
+        "size_bytes": 8234,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/RELEASE_COMPLETE.md",
+        "size_bytes": 11050,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/RELEASE_NOTES.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/ROADMAP_COMPLETE.md",
+        "size_bytes": 7709,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/ROADMAP_UPDATE_SUMMARY.md",
+        "size_bytes": 5860,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/sdk__docs__verifier-guide.md",
+        "size_bytes": 1679,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/summaries/SENTINEL_APP_ENHANCEMENTS_COMPLETE.md",
+        "size_bytes": 7774,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/SENTINEL_ENHANCEMENT_SUMMARY.md",
+        "size_bytes": 9267,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/STATUS_UPDATE.md",
+        "size_bytes": 11746,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/UPDATES_SUMMARY.md",
+        "size_bytes": 9175,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/WEEK_3_COMPLETION_SUMMARY.md",
+        "size_bytes": 9236,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/WEEK_3_FINAL_VERIFICATION.md",
+        "size_bytes": 6899,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/summaries/WEEK_3_QUICK_REFERENCE.md",
+        "size_bytes": 6899,
         "size_mb": 0.01
       }
     ],
@@ -165,7 +1500,7 @@
       },
       {
         "file": "sdk/android/build-apk.ps1",
-        "size_bytes": 1604,
+        "size_bytes": 2112,
         "size_mb": 0.0
       },
       {
@@ -260,7 +1595,7 @@
       },
       {
         "file": "sdk/std/lumina.aura",
-        "size_bytes": 217,
+        "size_bytes": 264,
         "size_mb": 0.0
       },
       {
@@ -290,7 +1625,7 @@
       },
       {
         "file": "sdk/std/verified_core.aura",
-        "size_bytes": 560,
+        "size_bytes": 568,
         "size_mb": 0.0
       },
       {

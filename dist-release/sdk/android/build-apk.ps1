@@ -1,5 +1,7 @@
 param(
-  [string]$SdkRoot = "$HOME\.aura\android-sdk"
+  [string]$SdkRoot = "$HOME\.aura\android-sdk",
+  [ValidateSet("debug", "release", "Debug", "Release")]
+  [string]$BuildType = "debug"
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,9 +31,17 @@ $gradlew = Join-Path $sample "gradlew.bat"
 Push-Location $sample
 try {
   if (Test-Path $gradlew) {
-    & $gradlew assembleDebug
+    if ($BuildType.ToLower() -eq "release") {
+      & $gradlew assembleRelease
+    } else {
+      & $gradlew assembleDebug
+    }
   } elseif (Get-Command gradle -ErrorAction SilentlyContinue) {
-    gradle assembleDebug
+    if ($BuildType.ToLower() -eq "release") {
+      gradle assembleRelease
+    } else {
+      gradle assembleDebug
+    }
   } else {
     throw "Neither gradlew.bat nor 'gradle' found. Open the project in Android Studio OR install Gradle and re-run."
   }
@@ -39,12 +49,17 @@ try {
   Pop-Location
 }
 
-$apk = Join-Path $sample "app\build\outputs\apk\debug\app-debug.apk"
+$apk = if ($BuildType.ToLower() -eq "release") {
+  Join-Path $sample "app\build\outputs\apk\release\app-release.apk"
+} else {
+  Join-Path $sample "app\build\outputs\apk\debug\app-debug.apk"
+}
 if (-not (Test-Path $apk)) {
   throw "APK not found at expected path: $apk"
 }
 
 $outDir = Join-Path $repoRoot "dist\android"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-Copy-Item -Force -Path $apk -Destination (Join-Path $outDir "AuraSentinelSample-debug.apk")
-Write-Host "Wrote dist/android/AuraSentinelSample-debug.apk"
+$outName = if ($BuildType.ToLower() -eq "release") { "AuraSentinelSample-release.apk" } else { "AuraSentinelSample-debug.apk" }
+Copy-Item -Force -Path $apk -Destination (Join-Path $outDir $outName)
+Write-Host "Wrote dist/android/$outName"
