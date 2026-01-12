@@ -509,6 +509,21 @@ fn point_in_rect(p: Vector2, r: Rectangle) -> bool {
 #[cfg(feature = "raylib")]
 fn measure_node(node: &UiNode) -> (f32, f32) {
     match node.kind.as_str() {
+        "Box" => {
+            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
+            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
+
+            let (pt, pr, pb, pl) = padding_4(node);
+            let (cw, ch) = node
+                .children
+                .first()
+                .map(measure_node)
+                .unwrap_or((0.0, 0.0));
+
+            let w = w_prop.unwrap_or(cw + pl + pr);
+            let h = h_prop.unwrap_or(ch + pt + pb);
+            (w, h)
+        }
         "Button" => {
             let w = prop_i32(node, "width").unwrap_or(200) as f32;
             let h = prop_i32(node, "height").unwrap_or(50) as f32;
@@ -544,6 +559,25 @@ fn measure_node(node: &UiNode) -> (f32, f32) {
             (0.0, 0.0)
         }
     }
+}
+
+#[cfg(feature = "raylib")]
+fn padding_4(node: &UiNode) -> (f32, f32, f32, f32) {
+    // Box model padding: allow `padding` shorthand plus overrides.
+    let p = prop_i32(node, "padding").unwrap_or(0) as f32;
+    let px = prop_i32(node, "padding_x").map(|v| v as f32);
+    let py = prop_i32(node, "padding_y").map(|v| v as f32);
+
+    let pt = prop_i32(node, "padding_top").map(|v| v as f32);
+    let pr = prop_i32(node, "padding_right").map(|v| v as f32);
+    let pb = prop_i32(node, "padding_bottom").map(|v| v as f32);
+    let pl = prop_i32(node, "padding_left").map(|v| v as f32);
+
+    let top = pt.or(py).unwrap_or(p).max(0.0);
+    let right = pr.or(px).unwrap_or(p).max(0.0);
+    let bottom = pb.or(py).unwrap_or(p).max(0.0);
+    let left = pl.or(px).unwrap_or(p).max(0.0);
+    (top, right, bottom, left)
 }
 
 #[cfg(feature = "raylib")]
@@ -594,6 +628,72 @@ fn render_node(
     }
 
     match node.kind.as_str() {
+        "Box" => {
+            let w = prop_i32(node, "width")
+                .map(|v| v.max(0) as f32)
+                .unwrap_or(bounds.width);
+            let h = prop_i32(node, "height")
+                .map(|v| v.max(0) as f32)
+                .unwrap_or(bounds.height);
+
+            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
+            let (pt, pr, pb, pl) = padding_4(node);
+
+            let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
+            let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
+            let border_w = prop_i32(node, "border_width")
+                .or_else(|| prop_i32(node, "stroke_width"))
+                .unwrap_or(0)
+                .max(0) as f32;
+            let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+
+            if radius > 0.0 {
+                let min_dim = rect.width.min(rect.height).max(1.0);
+                let rect_u = [rect.x, rect.y, rect.width, rect.height];
+                let radius_u = radius.min(min_dim * 0.5);
+                let softness_u = 1.25_f32;
+
+                sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
+                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
+                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
+                sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
+                sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
+                sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
+
+                let mut sd = d.begin_shader_mode(&mut sdf.shader);
+                sd.draw_rectangle_rec(rect, Color::WHITE);
+            } else {
+                if bg.a > 0 {
+                    d.draw_rectangle_rec(rect, bg);
+                }
+                if border_w > 0.0 {
+                    d.draw_rectangle_lines_ex(rect, border_w, border);
+                }
+            }
+
+            // Render single child in the padded content rect.
+            if let Some(child) = node.children.first() {
+                let content = Rectangle::new(
+                    rect.x + pl,
+                    rect.y + pt,
+                    (rect.width - pl - pr).max(1.0),
+                    (rect.height - pt - pb).max(1.0),
+                );
+                render_node(
+                    d,
+                    child,
+                    content,
+                    mouse_clicked,
+                    mouse,
+                    now,
+                    sdf,
+                    click_anim,
+                    click_state,
+                    focused_input,
+                    textures,
+                );
+            }
+        }
         "App" => {
             // App is just a root container.
             for child in &node.children {

@@ -49,6 +49,24 @@ Props:
 Children:
 - Any
 
+### `Box` (MVP)
+
+Single-child container that implements a basic box model (padding + background + border).
+
+Props:
+- `width` / `height` (int, optional)
+- Background: `bg` / `background` (string color)
+- Border: `border` / `stroke` (string color)
+- Border width: `border_width` / `stroke_width` (int)
+- Corner radius: `radius` (int)
+- Padding:
+  - `padding` (int)
+  - `padding_x`, `padding_y` (int)
+  - `padding_top`, `padding_right`, `padding_bottom`, `padding_left` (int)
+
+Children:
+- First child is laid out inside the padded content rect.
+
 ### `VStack`
 
 Vertical stack layout.
@@ -174,3 +192,4 @@ TextInput callbacks receive the latest text via `ui.event_text()`.
 - No stable key/diffing for lists (re-renders everything each frame).
 - Layout is simple stack layout (no flex/grid).
 - Image rendering is MVP: no contain/cover modes, no error UI beyond placeholders.
+- Box is single-child only (for now); use `VStack/HStack` inside it.
