@@ -277,6 +277,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 win.click_anim,
                 &mut click_state,
                 &mut win.focused_input,
+                &win.textures,
             );
 
             let click_cb = click_state.clicked_cb;
@@ -689,7 +690,7 @@ fn render_node(
             if let Some(tex) = textures.get(src) {
                 let src_rect = Rectangle::new(0.0, 0.0, tex.width as f32, tex.height as f32);
                 d.draw_texture_pro(
-                    *tex,
+                    tex,
                     src_rect,
                     rect,
                     Vector2::new(0.0, 0.0),

@@ -98,6 +98,21 @@ Props:
 Children:
 - Ignored
 
+### `Image` (MVP)
+
+Draws an image loaded from disk.
+
+Props:
+- `src` / `path` (string): filesystem path to an image file
+- `width` / `height` (int, default 256)
+
+Notes:
+- Textures are cached in-memory for the lifetime of the window.
+- No scaling modes yet (current behavior stretches to the specified rectangle).
+
+Children:
+- Ignored
+
 ### `Button`
 
 Clickable button.
@@ -158,3 +173,4 @@ TextInput callbacks receive the latest text via `ui.event_text()`.
 - TextInput caret is end-of-text only; no selection.
 - No stable key/diffing for lists (re-renders everything each frame).
 - Layout is simple stack layout (no flex/grid).
+- Image rendering is MVP: no contain/cover modes, no error UI beyond placeholders.

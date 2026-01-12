@@ -79,25 +79,61 @@ Goal: Aura can build **real Windows apps** with modern UI, strong input, and reu
 - [ ] Keyboard navigation: Tab/Shift-Tab, Enter/Escape conventions
 - [ ] Clipboard integration
 - [ ] Mouse wheel scrolling + scroll containers
+- [ ] Pointer model: hover state + cursor changes
+- [ ] Text selection + copy/paste in `TextInput`
+- [ ] IME / international text input (Windows)
 
 ### Components & state
 
 - [ ] Component system with props + local state
-- [ ] Stable keys + diffing for lists
+- [ ] Stable keys + diffing for lists (keyed reconciliation)
 - [ ] Built-in app storage (settings + small KV) with safe persistence
+- [ ] Event model: bubbling/capture (or explicit routing) + focus ownership
+- [ ] Async tasks: timers + background jobs without freezing UI
 
 ### Layout & visuals
 
+- [ ] Layout primitives: `Spacer`, `Divider`, `ScrollView`
 - [ ] Flex layout (grow/shrink, align/justify)
 - [ ] Grid layout
-- [ ] Typography: font loading, weights, text wrapping
-- [ ] Icons/images
+  - [ ] Explicit columns/rows, `gap`, and cell spanning
+  - [ ] Auto-flow (row/column), alignment, and min/max sizing
+  - [ ] Virtualized list/grid (performance)
+- [ ] Box model
+  - [ ] Padding (per-side) and margin (per-side)
+  - [ ] Backgrounds: solid + (later) gradients
+  - [ ] Stroke/borders: width/color per-side, corner radius per-corner
+  - [ ] Shadows/elevation (simple drop shadow)
+- [ ] Typography
+  - [ ] Font loading from file + fallback stack
+  - [ ] Text wrapping + ellipsis
+  - [ ] Weights/styles and baseline alignment
+- [ ] Images & icons
+  - [ ] `Image(src: ...)` with fit modes (contain/cover/stretch)
+  - [ ] SVG/icon pipeline (or baked icon font)
 - [ ] Theme tokens (light/dark, palette, spacing scale)
+  - [ ] Token-driven default styles for all widgets
+  - [ ] Runtime theme switching
+
+### Media (sound / pictures / video)
+
+- [ ] Asset pipeline: `assets/` convention + packaging into builds
+- [ ] Images: decode formats + caching + hot-reload
+- [ ] Audio
+  - [ ] `audio.load(path)` / `audio.play(id)` / `audio.stop(id)`
+  - [ ] Volume/mute + basic mixing
+  - [ ] Streaming music vs short SFX
+- [ ] Video
+  - [ ] MVP: frame-by-frame playback API (decode + blit into `Image`)
+  - [ ] Audio/video sync and pause/seek
+  - [ ] Hardware decode (optional, later)
 
 ### Tooling
 
 - [ ] UI inspector overlay (show node tree + bounds)
 - [ ] Hot reload for Lumina apps
+- [ ] Performance overlay: FPS + node count + texture count
+- [ ] Snapshot testing for UI trees (golden renders)
 
 ### Standard library ("arrays" and collections)
 
