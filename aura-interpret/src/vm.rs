@@ -1420,6 +1420,9 @@ impl Avm {
 
                 // If a plugin handles UI, keep rendering until it requests close.
                 let debug_ui = std::env::var("AURA_UI_DEBUG").is_ok();
+                let max_frames = std::env::var("AURA_UI_MAX_FRAMES")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok());
                 let mut frames: u32 = 0;
                 loop {
                     self.poll_shop_stdin();
@@ -1450,6 +1453,17 @@ impl Avm {
                         );
                     }
                     frames = frames.saturating_add(1);
+                    if let Some(max) = max_frames {
+                        if frames >= max {
+                            if debug_ui {
+                                eprintln!(
+                                    "AURA_UI_DEBUG: layout loop ended (max frames reached: {})",
+                                    max
+                                );
+                            }
+                            break;
+                        }
+                    }
                     if fb.close_requested {
                         if debug_ui {
                             eprintln!("AURA_UI_DEBUG: layout loop ended (close requested)");
@@ -1482,6 +1496,9 @@ impl Avm {
                 };
 
                 let debug_ui = std::env::var("AURA_UI_DEBUG").is_ok();
+                let max_frames = std::env::var("AURA_UI_MAX_FRAMES")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok());
                 let mut frames: u32 = 0;
                 loop {
                     self.poll_shop_stdin();
@@ -1512,6 +1529,17 @@ impl Avm {
                         );
                     }
                     frames = frames.saturating_add(1);
+                    if let Some(max) = max_frames {
+                        if frames >= max {
+                            if debug_ui {
+                                eprintln!(
+                                    "AURA_UI_DEBUG: render loop ended (max frames reached: {})",
+                                    max
+                                );
+                            }
+                            break;
+                        }
+                    }
                     if fb.close_requested {
                         if debug_ui {
                             eprintln!("AURA_UI_DEBUG: render loop ended (close requested)");

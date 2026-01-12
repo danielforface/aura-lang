@@ -36,7 +36,7 @@ hex = "0.4"
 proptest = "1.6"
 
 [features]
-default = []
+default = ["lumina-raylib"]
 # Enable Z3-based verification in `aura-verify`
 z3 = [
 	"aura-verify/z3",

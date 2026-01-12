@@ -68,13 +68,14 @@ Goal: Aura can build **real Windows apps** with modern UI, strong input, and reu
 ### Foundations (done / unblocked)
 
 - [x] UI callbacks must be non-blocking (Dev-VM architecture supports async stdin polling)
+- [x] Windows GUI: `aura` builds Lumina with Raylib by default (opens a real window)
 - [x] Lumina: colors accept hex/rgb/rgba strings (enables modern themes)
 - [x] Lumina: `App(bg: ...)` sets window background
 - [x] Lexer: comment parsing does not break strings containing `#` (required for hex colors)
 
 ### Input (mouse/keyboard)
 
-- [ ] Text input widgets: `TextInput`, focus, cursor, selection
+- [~] Text input widgets: `TextInput` MVP (focus + typing + submit)
 - [ ] Keyboard navigation: Tab/Shift-Tab, Enter/Escape conventions
 - [ ] Clipboard integration
 - [ ] Mouse wheel scrolling + scroll containers

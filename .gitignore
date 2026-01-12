@@ -54,6 +54,9 @@
 .vscode/
 
 # Build tools / SDKs (skip large external dependencies)
+.tools/cache/
+.tools/jdk-*/
+.tools/gradle-*/
 .tools/android-sdk/
 .tools/gradle/
 .tools/cmake/
@@ -67,6 +70,12 @@
 tools/android-sdk/
 tools/gradle/
 tools/cmake/
+
+# Unpacked Gradle distributions (use Gradle Wrapper instead)
+gradle/gradle-*/
+
+# Sample Android/Gradle bundles (avoid giant jars in git)
+samples/**/gradle/gradle-*/
 
 # OS
 .DS_Store

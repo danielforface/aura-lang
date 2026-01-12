@@ -9,6 +9,9 @@ use aura_nexus::format_ui_tree;
 use std::cell::RefCell;
 
 #[cfg(feature = "raylib")]
+use std::collections::HashMap;
+
+#[cfg(feature = "raylib")]
 use raylib::prelude::*;
 
 #[cfg(feature = "raylib")]
@@ -80,6 +83,8 @@ struct LuminaWindow {
     click_anim: Option<(u64, f64)>,
 
     focused_input: Option<FocusedTextInput>,
+
+    textures: HashMap<String, Texture2D>,
 }
 
 #[cfg(feature = "raylib")]
@@ -154,6 +159,16 @@ impl AuraPlugin for AuraLuminaPlugin {
     ) -> Option<Result<(), NexusDiagnostic>> {
         #[cfg(not(feature = "raylib"))]
         {
+            use std::sync::atomic::{AtomicBool, Ordering};
+
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "Aura Lumina UI is running in headless mode (built without the `raylib` feature), so no window can be opened.\n\
+Rebuild the `aura` binary with `--features lumina-raylib` (or keep default features enabled)."
+                );
+            }
+
             // Fallback: print once (no interactive loop).
             print!("{}", format_ui_tree(tree));
 
@@ -197,10 +212,15 @@ impl AuraPlugin for AuraLuminaPlugin {
                     open_frames: 0,
                     sdf,
                     click_anim: None,
+                    focused_input: None,
+                    textures: HashMap::new(),
                 });
             }
 
             let win = win_ref.as_mut().expect("window initialized");
+
+            // Preload any image textures before begin_drawing (needs &mut RaylibHandle).
+            ensure_textures_loaded(&mut win.rl, &win.thread, &mut win.textures, tree);
 
             let mut fb = UiRuntimeFeedback::default();
             // Some environments can briefly report a close request right after initialization.
@@ -231,16 +251,10 @@ impl AuraPlugin for AuraLuminaPlugin {
             let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
 
             let mut typed = String::new();
-            loop {
-                let c = win.rl.get_char_pressed();
-                if c == 0 {
-                    break;
-                }
-                if let Some(ch) = char::from_u32(c as u32) {
-                    // Basic filtering: accept printable chars; keep newline out.
-                    if ch != '\n' && ch != '\r' {
-                        typed.push(ch);
-                    }
+            while let Some(ch) = win.rl.get_char_pressed() {
+                // Basic filtering: accept printable chars; keep newline out.
+                if ch != '\n' && ch != '\r' {
+                    typed.push(ch);
                 }
             }
 
@@ -519,10 +533,38 @@ fn measure_node(node: &UiNode) -> (f32, f32) {
             let h = prop_i32(node, "height").unwrap_or(46) as f32;
             (w, h)
         }
+        "Image" => {
+            let w = prop_i32(node, "width").unwrap_or(256) as f32;
+            let h = prop_i32(node, "height").unwrap_or(256) as f32;
+            (w, h)
+        }
         _ => {
             // Containers default to available space.
             (0.0, 0.0)
         }
+    }
+}
+
+#[cfg(feature = "raylib")]
+fn ensure_textures_loaded(
+    rl: &mut RaylibHandle,
+    thread: &RaylibThread,
+    textures: &mut HashMap<String, Texture2D>,
+    node: &UiNode,
+) {
+    if node.kind == "Image" {
+        if let Some(src) = prop_string(node, "src").or_else(|| prop_string(node, "path")) {
+            let src = src.to_string();
+            if !textures.contains_key(&src) {
+                if let Ok(tex) = rl.load_texture(thread, &src) {
+                    textures.insert(src, tex);
+                }
+            }
+        }
+    }
+
+    for child in &node.children {
+        ensure_textures_loaded(rl, thread, textures, child);
     }
 }
 
@@ -538,6 +580,7 @@ fn render_node(
     click_anim: Option<(u64, f64)>,
     click_state: &mut ClickState,
     focused_input: &mut Option<FocusedTextInput>,
+    textures: &HashMap<String, Texture2D>,
 ) {
     // Optional absolute positioning: if a node provides `x`/`y` props, render it at that position.
     // This enables simple "game-ish" demos (moving objects) without adding a full canvas API yet.
@@ -564,6 +607,7 @@ fn render_node(
                     click_anim,
                     click_state,
                     focused_input,
+                    textures,
                 );
             }
         }
@@ -593,6 +637,7 @@ fn render_node(
                     click_anim,
                     click_state,
                     focused_input,
+                    textures,
                 );
                 y += ch + spacing;
             }
@@ -616,6 +661,7 @@ fn render_node(
                     click_anim,
                     click_state,
                     focused_input,
+                    textures,
                 );
                 x += cw + spacing;
             }
@@ -627,6 +673,39 @@ fn render_node(
                 .or_else(|| prop_string(node, "content"))
                 .unwrap_or("");
             d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
+        }
+        "Image" => {
+            let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
+            let h = prop_i32(node, "height").unwrap_or(bounds.height as i32).max(1) as f32;
+            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+
+            let src = prop_string(node, "src").or_else(|| prop_string(node, "path"));
+            let Some(src) = src else {
+                d.draw_rectangle_rec(rect, Color::DARKGRAY);
+                d.draw_text("Image: missing src", rect.x as i32 + 8, rect.y as i32 + 8, 16, Color::RAYWHITE);
+                return;
+            };
+
+            if let Some(tex) = textures.get(src) {
+                let src_rect = Rectangle::new(0.0, 0.0, tex.width as f32, tex.height as f32);
+                d.draw_texture_pro(
+                    *tex,
+                    src_rect,
+                    rect,
+                    Vector2::new(0.0, 0.0),
+                    0.0,
+                    Color::WHITE,
+                );
+            } else {
+                d.draw_rectangle_rec(rect, Color::DARKGRAY);
+                d.draw_text(
+                    &format!("Image not loaded: {}", src),
+                    rect.x as i32 + 8,
+                    rect.y as i32 + 8,
+                    16,
+                    Color::RAYWHITE,
+                );
+            }
         }
         "TextInput" => {
             let w = prop_i32(node, "width").unwrap_or(360) as f32;
@@ -680,11 +759,12 @@ fn render_node(
                         .or_else(|| prop_string(node, "text"))
                         .unwrap_or("")
                         .to_string();
+                    let caret = value.chars().count();
                     *focused_input = Some(FocusedTextInput {
                         on_change: cb,
                         on_submit,
                         buffer: value,
-                        caret: value.chars().count(),
+                        caret,
                     });
                     is_focused = true;
                 }
@@ -823,6 +903,7 @@ fn render_node(
                     click_anim,
                     click_state,
                     focused_input,
+                    textures,
                 );
             }
         }
