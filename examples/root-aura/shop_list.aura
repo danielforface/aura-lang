@@ -1,0 +1,110 @@
+# shop_list.aura
+# Aura Lumina UI example: "Shop List" (add / remove / edit flows)
+#
+# Note: Current Aura UI examples are event-driven demos; callbacks are async (`~>`) and
+# should not mutate captured `val mut` bindings. This example keeps state immutable
+# and logs actions to illustrate the UX.
+
+import aura::lumina
+
+cell main():
+    val title: String = "SHOP LIST"
+    val subtitle: String = "Add, remove, edit — clean and fast"
+
+    val item_1: String = "Oat milk"
+    val item_2: String = "Eggs"
+    val item_3: String = "Coffee beans"
+
+    val qty_1: String = "2"
+    val qty_2: String = "12"
+    val qty_3: String = "1"
+
+    layout:
+        VStack(spacing: 18, alignment: "center", style: Style { padding: 48 }) {
+            render: Text(text: title, style: Style { fg: "White", size: 44 })
+            render: Text(text: subtitle, style: Style { fg: "Gold", size: 18 })
+
+            render:
+                VStack(spacing: 12, acknowledge: "card") {
+                    render: Text(text: "Today", style: Style { fg: "White", size: 22 })
+
+                    render:
+                        HStack(spacing: 12) {
+                            render: Text(text: "{item_1}", style: Style { fg: "White", size: 18 })
+                            render: Text(text: "qty {qty_1}", style: Style { fg: "Gold", size: 16 })
+
+                            render: Button(label: "Edit", style: Style { bg: "Black", fg: "White", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("edit item: {item_1}")
+                                }
+                            }
+
+                            render: Button(label: "Remove", style: Style { bg: "Red", fg: "White", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("remove item: {item_1}")
+                                }
+                            }
+                        }
+
+                    render:
+                        HStack(spacing: 12) {
+                            render: Text(text: "{item_2}", style: Style { fg: "White", size: 18 })
+                            render: Text(text: "qty {qty_2}", style: Style { fg: "Gold", size: 16 })
+
+                            render: Button(label: "Edit", style: Style { bg: "Black", fg: "White", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("edit item: {item_2}")
+                                }
+                            }
+
+                            render: Button(label: "Remove", style: Style { bg: "Red", fg: "White", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("remove item: {item_2}")
+                                }
+                            }
+                        }
+
+                    render:
+                        HStack(spacing: 12) {
+                            render: Text(text: "{item_3}", style: Style { fg: "White", size: 18 })
+                            render: Text(text: "qty {qty_3}", style: Style { fg: "Gold", size: 16 })
+
+                            render: Button(label: "Edit", style: Style { bg: "Black", fg: "White", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("edit item: {item_3}")
+                                }
+                            }
+
+                            render: Button(label: "Remove", style: Style { bg: "Red", fg: "White", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> {
+                                    val io = "io"
+                                    io.println("remove item: {item_3}")
+                                }
+                            }
+                        }
+                }
+
+            render:
+                HStack(spacing: 12) {
+                    render: Button(label: "Add Item", style: Style { bg: "Gold", fg: "Black", radius: 18, width: 170, height: 48 }) {
+                        on_click: ~> {
+                            val io = "io"
+                            io.println("add item")
+                        }
+                    }
+
+                    render: Button(label: "Clear List", style: Style { bg: "Black", fg: "White", radius: 18, width: 170, height: 48 }) {
+                        on_click: ~> {
+                            val io = "io"
+                            io.println("clear list")
+                        }
+                    }
+                }
+
+            render: Text(text: "Tip: wire these actions to real state once UI-state primitives land.", style: Style { fg: "White", size: 14 })
+        }
