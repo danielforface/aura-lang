@@ -187,6 +187,56 @@ function setActiveDoc(id: string) {
   activeDocId = id;
   updateEditability();
 }
+
+// Status message display (shows in status bar or console)
+let statusBarEl: HTMLElement | null = null;
+let statusBarTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function showStatus(message: string, duration: number = 3000): void {
+  // Create status element if it doesn't exist
+  if (!statusBarEl) {
+    statusBarEl = document.createElement("div");
+    statusBarEl.id = "status-bar";
+    statusBarEl.style.cssText = `
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background-color: #252526;
+      color: #cccccc;
+      padding: 8px 12px;
+      font-size: 12px;
+      border-top: 1px solid #3e3e42;
+      z-index: 1000;
+      font-family: monospace;
+      max-height: 24px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    `;
+    document.body.appendChild(statusBarEl);
+  }
+
+  // Update status text
+  statusBarEl.textContent = message;
+  statusBarEl.style.display = "block";
+
+  // Clear previous timeout if any
+  if (statusBarTimeoutId) {
+    clearTimeout(statusBarTimeoutId);
+  }
+
+  // Auto-hide after duration
+  if (duration > 0) {
+    statusBarTimeoutId = setTimeout(() => {
+      if (statusBarEl) {
+        statusBarEl.style.display = "none";
+      }
+      statusBarTimeoutId = null;
+    }, duration);
+  }
+}
+
 let lspStarted = false;
 let lspAutoRestarting = false;
 let isRefreshing = false;

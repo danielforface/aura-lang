@@ -3,8 +3,8 @@ import aura::lumina
 import aura::iot
 
 cell main():
-    val mut clicks: u32 = 0
-    val mut sys_status: String = "Secured"
+    val clicks: u32 = 0
+    val sys_status: String = "Secured"
 
     layout:
         VStack(spacing: 15, alignment: "center") {
@@ -14,9 +14,8 @@ cell main():
 
             render: Button(label: "Pulse System", width: 200, height: 50) {
                 on_click: ~> {
-                    clicks = clicks + 1
-                    if clicks > 5:
-                        sys_status = "Overloaded"
+                    val io = "io"
+                    io.println("pulse")
                 }
             }
 

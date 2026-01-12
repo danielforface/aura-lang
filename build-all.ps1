@@ -46,7 +46,7 @@ Write-Host "[OK] Rust workspace build complete" -ForegroundColor Green
 
 # Step 3: Build VS Code Extension
 Write-Host "`n[BUILD] Building VS Code Extension..." -ForegroundColor Yellow
-$vscodeExtPath = "editors/aura-vscode"
+$vscodeExtPath = "editors/vscode"
 if (Test-Path $vscodeExtPath) {
     Push-Location $vscodeExtPath
     
@@ -55,11 +55,18 @@ if (Test-Path $vscodeExtPath) {
         if (-not (Test-Path "node_modules")) {
             npm install
         }
-        npm run compile
+        npm run build
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[WARN] VS Code extension compilation had issues" -ForegroundColor Yellow
         } else {
             Write-Host "[OK] VS Code extension compiled" -ForegroundColor Green
+        }
+
+        npm run package:vsix
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] VS Code extension packaging (VSIX) had issues" -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK] VS Code extension packaged (VSIX)" -ForegroundColor Green
         }
     }
     Pop-Location

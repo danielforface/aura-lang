@@ -790,6 +790,14 @@ fn diagnostic_from_span(text: &str, span: SourceSpan, code: &str, message: Strin
 fn compute_diagnostics(uri: &Url, text: &str, prover: &mut aura_verify::Z3Prover) -> Vec<Diagnostic> {
     let mut diags: Vec<Diagnostic> = Vec::new();
 
+    // Heuristic: quantifiers require `--smt-profile thorough`.
+    // Keep Fast as the default for responsiveness.
+    let smt_profile = if text.contains("forall") || text.contains("exists") {
+        aura_verify::SmtProfile::Thorough
+    } else {
+        aura_verify::SmtProfile::Fast
+    };
+
     let text = match aura_sdk::augment_source_with_default_std(text) {
         Ok(t) => t,
         Err(_) => text.to_string(),
@@ -825,7 +833,7 @@ fn compute_diagnostics(uri: &Url, text: &str, prover: &mut aura_verify::Z3Prover
             source_path,
             manifest_path: manifest.clone(),
         });
-        match verify_with_manifest_plugins(&program, prover, &mut nexus, &manifest_plugins) {
+        match verify_with_manifest_plugins(&program, prover, &mut nexus, &manifest_plugins, smt_profile) {
             Ok(report) => {
                 for p in report.proofs {
                     diags.push(diagnostic_from_proof_note(
@@ -849,17 +857,37 @@ fn verify_with_manifest_plugins(
     prover: &mut aura_verify::Z3Prover,
     nexus: &mut aura_nexus::NexusContext,
     manifest_plugins: &[PluginManifest],
+    smt_profile: aura_verify::SmtProfile,
 ) -> std::result::Result<aura_verify::VerificationReport, aura_verify::VerifyError> {
     let requested = requested_plugins_from_manifest(manifest_plugins)?;
+
+    fn run_with_profile<P: aura_nexus::Z3PluginDispatch>(
+        program: &aura_ast::Program,
+        prover: &mut aura_verify::Z3Prover,
+        plugins: &P,
+        nexus: &mut aura_nexus::NexusContext,
+        profile: aura_verify::SmtProfile,
+    ) -> std::result::Result<aura_verify::VerificationReport, aura_verify::VerifyError> {
+        aura_verify::verify_program_z3_profile(program, prover, plugins, nexus, profile)?;
+        let proofs = aura_nexus::drain_proofs(nexus);
+        Ok(aura_verify::VerificationReport {
+            status: aura_verify::VerificationStatus::Success,
+            proofs,
+        })
+    }
 
     match requested.as_slice() {
         [a] if a == "aura-ai" => {
             let plugins = (aura_plugin_ai::AuraAiPlugin::new(),);
-            aura_verify::verify_program_z3_report(program, prover, &plugins, nexus)
+            run_with_profile(program, prover, &plugins, nexus, smt_profile)
         }
         [a] if a == "aura-iot" => {
             let plugins = (aura_plugin_iot::AuraIotPlugin::new(),);
-            aura_verify::verify_program_z3_report(program, prover, &plugins, nexus)
+            run_with_profile(program, prover, &plugins, nexus, smt_profile)
+        }
+        [a] if a == "aura-lumina" => {
+            let plugins = (aura_plugin_lumina::AuraLuminaPlugin::new(),);
+            run_with_profile(program, prover, &plugins, nexus, smt_profile)
         }
         [a, b]
             if (a == "aura-ai" && b == "aura-iot") || (a == "aura-iot" && b == "aura-ai") =>
@@ -868,7 +896,7 @@ fn verify_with_manifest_plugins(
                 aura_plugin_iot::AuraIotPlugin::new(),
                 aura_plugin_ai::AuraAiPlugin::new(),
             );
-            aura_verify::verify_program_z3_report(program, prover, &plugins, nexus)
+            run_with_profile(program, prover, &plugins, nexus, smt_profile)
         }
         other => Err(aura_verify::VerifyError {
             message: format!(
@@ -1635,7 +1663,18 @@ fn list_aura_files(root: &Path) -> Vec<PathBuf> {
     fn should_skip_dir(name: &str) -> bool {
         matches!(
             name,
-            "target" | "target-alt" | "target-lsp-test" | "dist" | "node_modules" | ".git" | "vendor"
+            "target"
+                | "target-alt"
+                | "target-lsp-test"
+                | "dist"
+                | "dist-release"
+                | "dist-complete"
+                | "node_modules"
+                | ".git"
+                | "vendor"
+                | "sdk"
+                | "samples"
+                | "tests"
         )
     }
 

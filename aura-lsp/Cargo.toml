@@ -15,6 +15,7 @@ aura-verify = { path = "../aura-verify", default-features = false, features = ["
 aura-nexus = { path = "../aura-nexus", default-features = false }
 aura-plugin-iot = { path = "../aura-plugin-iot", default-features = false, features = ["z3"] }
 aura-plugin-ai = { path = "../aura-plugin-ai", default-features = false, features = ["z3"] }
+aura-plugin-lumina = { path = "../aura-plugin-lumina", default-features = false }
 aura-sdk = { path = "../aura-sdk" }
 
 miette = { workspace = true }

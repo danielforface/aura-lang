@@ -261,6 +261,7 @@ dependencies = [
  "aura-parse",
  "aura-plugin-ai",
  "aura-plugin-iot",
+ "aura-plugin-lumina",
  "aura-sdk",
  "aura-verify",
  "hex",

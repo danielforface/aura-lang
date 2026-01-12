@@ -1,6 +1,6 @@
 # All Markdown Files (Aggregated)
 
-Generated: 2026-01-12T08:55:17.790869
+Generated: 2026-01-12T13:15:54.526933
 
 This is a flattened copy of markdown files from the repo (excluding build/deps folders).
 

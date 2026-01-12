@@ -13,8 +13,8 @@ cell inc_bounded(x: u32) ->:
 
 cell sum_to(n: u32) ->:
     requires n <= 10
-    val i: u32 = 0
-    val acc: u32 = 0
+    val mut i: u32 = 0
+    val mut acc: u32 = 0
     while i < n invariant i <= n decreases n - i:
         acc = acc + i
         i = i + 1
