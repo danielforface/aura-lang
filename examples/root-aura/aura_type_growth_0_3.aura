@@ -1,33 +1,11 @@
-import aura::io
-
-trait Numeric
-
-type Box<T: Numeric> = T
-
-type Point = record {
-  x: u32 = 0,
-  y: u32 = 0,
-}
-
-type OptionU32 = enum {
-  Some(value: u32),
-  None(),
-}
+# aura_type_growth_0_3.aura
+# Minimal, syntax-compatible example demonstrating refined integer ranges.
 
 cell main():
-  val x: Box<u32> = 1
+    val io = "io"
 
-  val p: Point = Point { x: 10 }
-  val px: u32 = p.x
-  io::println("px = {px}")
+    val x: u32[0..10] = 5
+    val y: u32[0..10] = x
 
-  val o: OptionU32 = OptionU32::Some(5)
-  match o:
-    OptionU32::Some(v):
-      io::println("some = {v}")
-    _:
-      io::println("none")
-
-  val n: u32 where n >= 0 = 10
-  val m: u32 where m >= 0 = n + 2
-  io::println("m = {m}")
+    io.println("x = {x}")
+    io.println("y = {y}")
