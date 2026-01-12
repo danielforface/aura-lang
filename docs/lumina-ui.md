@@ -54,18 +54,70 @@ Children:
 Single-child container that implements a basic box model (padding + background + border).
 
 Props:
-- `width` / `height` (int, optional)
-- Background: `bg` / `background` (string color)
+- `bg` / `background` (string color)
 - Border: `border` / `stroke` (string color)
 - Border width: `border_width` / `stroke_width` (int)
-- Corner radius: `radius` (int)
-- Padding:
-  - `padding` (int)
-  - `padding_x`, `padding_y` (int)
-  - `padding_top`, `padding_right`, `padding_bottom`, `padding_left` (int)
+- `radius` (int)
+- `padding` (int)
+- `padding_x`, `padding_y` (int)
+- `padding_left`, `padding_top`, `padding_right`, `padding_bottom` (int)
+- `width`, `height` (int, optional)
 
 Children:
-- First child is laid out inside the padded content rect.
+- 0 or 1 child (more than one is currently ignored)
+
+### `Image` (MVP)
+
+Draws an image loaded from disk.
+
+Props:
+- `src` / `path` (string): filesystem path to an image file
+- `width` / `height` (int, default 256)
+- `fit` (string, default `"stretch"`): `"stretch"` | `"contain"` | `"cover"`
+- `tint` / `color` (string color, default white)
+
+Notes:
+- Textures are cached in-memory for the lifetime of the window.
+- `contain` preserves aspect ratio and letterboxes.
+- `cover` preserves aspect ratio and crops.
+
+Children:
+- Ignored
+
+### `Grid`
+
+Simple grid layout for placing children in rows/columns.
+
+```aura
+Grid(cols: 3, gap: 12, padding: 12, bg: "#101010") {
+  Box(col: 0, row: 0, bg: "#222", height: 60) { Text(value: "A") }
+  Box(col: 1, row: 0, bg: "#222", height: 60) { Text(value: "B") }
+  Box(col: 2, row: 0, bg: "#222", height: 60) { Text(value: "C") }
+
+  Box(col: 0, row: 1, col_span: 2, bg: "#333", height: 80) { Text(value: "Spans 2 cols") }
+  Box(col: 2, row: 1, row_span: 2, bg: "#333", height: 160) { Text(value: "Spans 2 rows") }
+}
+```
+
+Props:
+- `cols` / `columns` (int, default 1)
+- `rows` (int, optional; if omitted/0, rows are inferred from children)
+- `gap` (int, default 0)
+- `gap_x` / `gap_y` (int, optional)
+- `padding` / `padding_*` (int)
+- `bg` / `background` (string color, optional)
+- `border` (string color, optional)
+- `border_width` (int, optional)
+- `radius` (int, optional)
+
+Child placement props:
+- `col` (int, default 0)
+- `row` (int, default 0)
+- `col_span` (int, default 1)
+- `row_span` (int, default 1)
+
+Notes:
+- Indices are 0-based.
 
 ### `VStack`
 
@@ -112,21 +164,6 @@ Props:
   - defaults to the available bounds
 - `color` / `fg` / `fill` (string color)
 - `radius` (int)
-
-Children:
-- Ignored
-
-### `Image` (MVP)
-
-Draws an image loaded from disk.
-
-Props:
-- `src` / `path` (string): filesystem path to an image file
-- `width` / `height` (int, default 256)
-
-Notes:
-- Textures are cached in-memory for the lifetime of the window.
-- No scaling modes yet (current behavior stretches to the specified rectangle).
 
 Children:
 - Ignored
@@ -190,6 +227,6 @@ TextInput callbacks receive the latest text via `ui.event_text()`.
 - No scrolling containers.
 - TextInput caret is end-of-text only; no selection.
 - No stable key/diffing for lists (re-renders everything each frame).
-- Layout is simple stack layout (no flex/grid).
-- Image rendering is MVP: no contain/cover modes, no error UI beyond placeholders.
+- Grid is MVP: equal-size cells only (no content-based track sizing, alignment, or overflow handling yet).
+- Image rendering is MVP: `fit` works (`stretch`/`contain`/`cover`), but there’s no clipping/radius yet; missing files draw a placeholder.
 - Box is single-child only (for now); use `VStack/HStack` inside it.

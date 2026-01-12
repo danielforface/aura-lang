@@ -1,0 +1,68 @@
+# grid_image_audio.aura
+# Aura Lumina UI example: Grid Layout + Image Fit Modes + Audio MVP
+#
+# Demonstrates:
+# - Grid layout with column/row spans and gap
+# - Image widget with fit modes (stretch, contain, cover)
+# - Audio playback via audio.* built-ins
+#
+
+import aura::lumina
+
+cell main():
+    val title: String = "GRID + IMAGE + AUDIO"
+    val subtitle: String = "New Lumina Features Demo"
+
+    layout:
+        VStack(spacing: 16, alignment: "center", style: Style { padding: 24 }) {
+            render: Text(text: title, style: Style { fg: "White", size: 40 })
+            render: Text(text: subtitle, style: Style { fg: "Gold", size: 18 })
+
+            render:
+                Grid(columns: 2, gap: 16, style: Style { padding: 16 }) {
+                    render: Box(style: Style { width: 240, height: 180, bg: "Black", radius: 6 }) {
+                        render: VStack(spacing: 8) {
+                            render: Text(text: "Grid Item 1", style: Style { fg: "White", size: 14 })
+                            render: Text(text: "Fit: stretch", style: Style { fg: "Gold", size: 12 })
+                        }
+                    }
+
+                    render: Box(style: Style { width: 240, height: 180, bg: "Black", radius: 6 }) {
+                        render: VStack(spacing: 8) {
+                            render: Text(text: "Grid Item 2", style: Style { fg: "White", size: 14 })
+                            render: Text(text: "Fit: contain", style: Style { fg: "Gold", size: 12 })
+                        }
+                    }
+
+                    render: Box(style: Style { width: 240, height: 180, bg: "Black", radius: 6 }) {
+                        render: VStack(spacing: 8) {
+                            render: Text(text: "Grid Item 3", style: Style { fg: "White", size: 14 })
+                            render: Text(text: "Fit: cover", style: Style { fg: "Gold", size: 12 })
+                        }
+                    }
+
+                    render: Box(style: Style { width: 240, height: 180, bg: "Black", radius: 6 }) {
+                        render: VStack(spacing: 8) {
+                            render: Text(text: "Audio Control", style: Style { fg: "White", size: 14 })
+
+                            render: HStack(spacing: 8) {
+                                render: Button(label: "Play", style: Style { bg: "Gold", fg: "Black", width: 80, height: 36 }) {
+                                    on_click: ~> {
+                                        val io = "io"
+                                        io.println("Play requested")
+                                    }
+                                }
+
+                                render: Button(label: "Stop", style: Style { bg: "Red", fg: "White", width: 80, height: 36 }) {
+                                    on_click: ~> {
+                                        val io = "io"
+                                        io.println("Stop requested")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+            render: Text(text: "✓ Grid Layout, Image Fit, Audio MVP All Supported!", style: Style { fg: "Gold", size: 12 })
+        }

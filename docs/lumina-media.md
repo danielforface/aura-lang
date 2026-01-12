@@ -18,8 +18,8 @@ Status: roadmap / design draft.
 - `Image(src: String, width: Int = 256, height: Int = 256)`
 
 Planned additions:
-- `fit: "stretch"|"contain"|"cover"`
-- `tint: Color`
+- `fit: "stretch"|"contain"|"cover"` (implemented)
+- `tint: Color` (implemented)
 - `radius` and `clip` for rounded images
 
 ### Caching
@@ -29,7 +29,18 @@ Planned additions:
 
 ## Audio
 
-### API sketch
+### Current AVM MVP
+
+- `audio.play(path: String) -> U32`
+- `audio.load(path: String) -> U32`
+- `audio.play_loaded(clip: U32) -> U32`
+- `audio.stop(handle: U32) -> Unit`
+
+Notes:
+- Implemented in the AVM interpreter via `rodio`.
+- IDs/handles are small integers.
+
+### Longer-term API sketch
 
 - `audio.load(path: String) -> AudioClip`
 - `audio.play(clip: AudioClip) -> AudioHandle`

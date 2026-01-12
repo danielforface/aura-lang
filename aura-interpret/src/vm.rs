@@ -3,8 +3,12 @@ use std::{fs, io};
 use std::sync::mpsc;
 use std::time::Instant;
 
+use std::io::{BufReader, Cursor};
+
 use aura_ast::{BinOp, CallArg, Expr, ExprKind, MatchStmt, Pattern, Program, Span, Stmt, UnaryOp};
 use aura_nexus::{take_ui_feedback, NexusContext, UiNode, UiPluginDispatch};
+
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
 use crate::debug::{
     DebugEvent, DebugSession, DebugWatchValue, PerfReport, PerfTimelineEvent, ParsedExpr,
@@ -160,10 +164,58 @@ pub struct Avm {
     ui_event_text: String,
     ui_text_state: HashMap<String, String>,
 
+    // Minimal audio state (prototype).
+    audio: Option<AudioState>,
+
     // Background stdin reader so UI callbacks don't block the render loop.
     stdin_rx: Option<mpsc::Receiver<String>>,
 
     debug: Option<DebugSession>,
+}
+
+struct AudioState {
+    _stream: OutputStream,
+    stream_handle: OutputStreamHandle,
+    next_clip_id: u64,
+    clips: HashMap<u64, Vec<u8>>,
+    next_handle_id: u64,
+    sinks: HashMap<u64, Sink>,
+}
+
+impl std::fmt::Debug for AudioState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioState")
+            .field("clips", &self.clips.len())
+            .field("sinks", &self.sinks.len())
+            .finish()
+    }
+}
+
+impl AudioState {
+    fn new() -> miette::Result<Self> {
+        let (stream, stream_handle) = OutputStream::try_default()
+            .map_err(|e| miette::miette!("AVM: failed to initialize audio output: {e}"))?;
+        Ok(Self {
+            _stream: stream,
+            stream_handle,
+            next_clip_id: 1,
+            clips: HashMap::new(),
+            next_handle_id: 1,
+            sinks: HashMap::new(),
+        })
+    }
+
+    fn alloc_clip_id(&mut self) -> u64 {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        id
+    }
+
+    fn alloc_handle_id(&mut self) -> u64 {
+        let id = self.next_handle_id;
+        self.next_handle_id += 1;
+        id
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -492,6 +544,116 @@ impl Avm {
 }
 
 impl Avm {
+    fn audio_state(&mut self) -> miette::Result<&mut AudioState> {
+        if self.audio.is_none() {
+            self.audio = Some(AudioState::new()?);
+        }
+        Ok(self.audio.as_mut().expect("just initialized"))
+    }
+
+    fn builtin_audio_dispatch(&mut self, name: &str, args: &[CallArg]) -> miette::Result<AvmValue> {
+        let eval1 = |vm: &mut Avm, idx: usize| -> miette::Result<AvmValue> {
+            let a = args.get(idx).ok_or_else(|| {
+                miette::miette!("AVM: {} expects at least {} argument(s)", name, idx + 1)
+            })?;
+            vm.eval_expr(call_arg_value(a))
+        };
+
+        match name {
+            "audio.load" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: audio.load expects 1 argument"));
+                }
+                let path = match eval1(self, 0)? {
+                    AvmValue::Str(s) => s,
+                    _ => return Err(miette::miette!("AVM: audio.load expects string path")),
+                };
+
+                let bytes = fs::read(&path)
+                    .map_err(|e| miette::miette!("AVM: failed to read audio file '{path}': {e}"))?;
+                let audio = self.audio_state()?;
+                let id = audio.alloc_clip_id();
+                audio.clips.insert(id, bytes);
+                Ok(AvmValue::Int(id as i64))
+            }
+            "audio.play" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: audio.play expects 1 argument"));
+                }
+                let path = match eval1(self, 0)? {
+                    AvmValue::Str(s) => s,
+                    _ => return Err(miette::miette!("AVM: audio.play expects string path")),
+                };
+
+                let file = std::fs::File::open(&path)
+                    .map_err(|e| miette::miette!("AVM: failed to open audio file '{path}': {e}"))?;
+                let source = Decoder::new(BufReader::new(file))
+                    .map_err(|e| miette::miette!("AVM: failed to decode audio '{path}': {e}"))?;
+
+                let audio = self.audio_state()?;
+                let sink = Sink::try_new(&audio.stream_handle)
+                    .map_err(|e| miette::miette!("AVM: failed to create audio sink: {e}"))?;
+                sink.append(source);
+                sink.play();
+
+                let handle = audio.alloc_handle_id();
+                audio.sinks.insert(handle, sink);
+                Ok(AvmValue::Int(handle as i64))
+            }
+            "audio.play_loaded" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: audio.play_loaded expects 1 argument"));
+                }
+                let id = match eval1(self, 0)? {
+                    AvmValue::Int(i) if i >= 0 => i as u64,
+                    _ => return Err(miette::miette!("AVM: audio.play_loaded expects clip id (int)")),
+                };
+
+                let audio = self.audio_state()?;
+                let Some(bytes) = audio.clips.get(&id) else {
+                    return Err(miette::miette!("AVM: audio.play_loaded unknown clip id {id}"));
+                };
+
+                let cursor = Cursor::new(bytes.clone());
+                let source = Decoder::new(BufReader::new(cursor))
+                    .map_err(|e| miette::miette!("AVM: failed to decode loaded audio: {e}"))?;
+
+                let sink = Sink::try_new(&audio.stream_handle)
+                    .map_err(|e| miette::miette!("AVM: failed to create audio sink: {e}"))?;
+                sink.append(source);
+                sink.play();
+
+                let handle = audio.alloc_handle_id();
+                audio.sinks.insert(handle, sink);
+                Ok(AvmValue::Int(handle as i64))
+            }
+            "audio.stop" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: audio.stop expects 1 argument"));
+                }
+                let handle = match eval1(self, 0)? {
+                    AvmValue::Int(i) if i >= 0 => i as u64,
+                    _ => {
+                        return Err(miette::miette!(
+                            "AVM: audio.stop expects handle id (int)"
+                        ))
+                    }
+                };
+
+                let Some(audio) = self.audio.as_mut() else {
+                    return Ok(AvmValue::Unit);
+                };
+                if let Some(sink) = audio.sinks.remove(&handle) {
+                    sink.stop();
+                }
+                Ok(AvmValue::Unit)
+            }
+            _ => Err(miette::miette!("AVM: unknown audio builtin '{name}'")),
+        }
+    }
+}
+
+impl Avm {
     pub fn new(cfg: AvmConfig) -> Self {
         let debug = cfg.debug.clone();
 
@@ -523,6 +685,7 @@ impl Avm {
             shop: ShopState::default(),
             ui_event_text: String::new(),
             ui_text_state: HashMap::new(),
+            audio: None,
             stdin_rx: Some(rx),
             debug,
         }
@@ -1821,6 +1984,8 @@ impl Avm {
                     self.builtin_shop_dispatch(&name, args)
                 } else if name.starts_with("ui.") {
                     self.builtin_ui_dispatch(&name, args)
+                } else if name.starts_with("audio.") {
+                    self.builtin_audio_dispatch(&name, args)
                 } else if is_ui_call(&name, trailing.is_some()) {
                     let mut node = UiNode::new(name);
 
@@ -2146,9 +2311,12 @@ fn is_ui_call(name: &str, has_trailing: bool) -> bool {
         name,
         "App"
             | "Window"
+            | "Box"
+            | "Grid"
             | "VStack"
             | "HStack"
             | "Text"
+            | "Image"
             | "TextInput"
             | "Button"
             | "Spacer"

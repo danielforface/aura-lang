@@ -310,6 +310,48 @@ impl Checker {
             },
         );
 
+        // --- audio (prototype; AVM-only) ---
+        checker.functions.insert(
+            "audio.load".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "path".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::U32,
+            },
+        );
+        checker.functions.insert(
+            "audio.play".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "path".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::U32,
+            },
+        );
+        checker.functions.insert(
+            "audio.play_loaded".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "clip".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::U32,
+            },
+        );
+        checker.functions.insert(
+            "audio.stop".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "handle".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Unit,
+            },
+        );
+
         // AVM-only persistence + app-state helpers (prototype)
         checker.functions.insert(
             "shop.path".to_string(),

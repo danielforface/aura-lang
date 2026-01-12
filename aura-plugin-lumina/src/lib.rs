@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use aura_nexus::{AuraPlugin, NexusContext, NexusDiagnostic, PluginCapability, UiNode, UiRuntimeFeedback, UiTextInputEvent};
+use aura_nexus::{AuraPlugin, NexusContext, NexusDiagnostic, PluginCapability, UiNode, UiRuntimeFeedback};
 
 #[cfg(not(feature = "raylib"))]
 use aura_nexus::format_ui_tree;
@@ -524,6 +524,44 @@ fn measure_node(node: &UiNode) -> (f32, f32) {
             let h = h_prop.unwrap_or(ch + pt + pb);
             (w, h)
         }
+        "Grid" => {
+            let cols = prop_i32(node, "cols")
+                .or_else(|| prop_i32(node, "columns"))
+                .unwrap_or(1)
+                .max(1) as usize;
+
+            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
+            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
+            if rows == 0 {
+                for child in &node.children {
+                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
+                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
+                    rows = rows.max(r + rs);
+                }
+                rows = rows.max(1);
+            }
+
+            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
+            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
+            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
+
+            let (pt, pr, pb, pl) = padding_4(node);
+
+            let mut max_cell_w = 0.0_f32;
+            let mut max_cell_h = 0.0_f32;
+            for child in &node.children {
+                let (cw, ch) = measure_node(child);
+                max_cell_w = max_cell_w.max(cw);
+                max_cell_h = max_cell_h.max(ch);
+            }
+
+            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
+            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
+
+            let w = w_prop.unwrap_or((cols as f32) * max_cell_w + ((cols - 1) as f32) * gap_x + pl + pr);
+            let h = h_prop.unwrap_or((rows as f32) * max_cell_h + ((rows - 1) as f32) * gap_y + pt + pb);
+            (w, h)
+        }
         "Button" => {
             let w = prop_i32(node, "width").unwrap_or(200) as f32;
             let h = prop_i32(node, "height").unwrap_or(50) as f32;
@@ -743,6 +781,116 @@ fn render_node(
                 y += ch + spacing;
             }
         }
+        "Grid" => {
+            let w = prop_i32(node, "width")
+                .map(|v| v.max(0) as f32)
+                .unwrap_or(bounds.width);
+            let h = prop_i32(node, "height")
+                .map(|v| v.max(0) as f32)
+                .unwrap_or(bounds.height);
+
+            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
+            let (pt, pr, pb, pl) = padding_4(node);
+
+            let cols = prop_i32(node, "cols")
+                .or_else(|| prop_i32(node, "columns"))
+                .unwrap_or(1)
+                .max(1) as usize;
+            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
+            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
+            if rows == 0 {
+                for child in &node.children {
+                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
+                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
+                    rows = rows.max(r + rs);
+                }
+                rows = rows.max(1);
+            }
+
+            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
+            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
+            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
+
+            // Optional background/border like Box (useful for debugging grid bounds).
+            let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
+            let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
+            let border_w = prop_i32(node, "border_width")
+                .or_else(|| prop_i32(node, "stroke_width"))
+                .unwrap_or(0)
+                .max(0) as f32;
+            let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+
+            if radius > 0.0 {
+                let min_dim = rect.width.min(rect.height).max(1.0);
+                let rect_u = [rect.x, rect.y, rect.width, rect.height];
+                let radius_u = radius.min(min_dim * 0.5);
+                let softness_u = 1.25_f32;
+
+                sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
+                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
+                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
+                sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
+                sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
+                sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
+
+                let mut sd = d.begin_shader_mode(&mut sdf.shader);
+                sd.draw_rectangle_rec(rect, Color::WHITE);
+            } else {
+                if bg.a > 0 {
+                    d.draw_rectangle_rec(rect, bg);
+                }
+                if border_w > 0.0 {
+                    d.draw_rectangle_lines_ex(rect, border_w, border);
+                }
+            }
+
+            let content = Rectangle::new(
+                rect.x + pl,
+                rect.y + pt,
+                (rect.width - pl - pr).max(1.0),
+                (rect.height - pt - pb).max(1.0),
+            );
+
+            let total_gap_x = ((cols - 1) as f32) * gap_x;
+            let total_gap_y = ((rows - 1) as f32) * gap_y;
+            let cell_w = ((content.width - total_gap_x) / cols as f32).max(1.0);
+            let cell_h = ((content.height - total_gap_y) / rows as f32).max(1.0);
+
+            for child in &node.children {
+                let col = prop_i32(child, "col").unwrap_or(0).max(0) as usize;
+                let row = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
+                let col_span = prop_i32(child, "col_span").unwrap_or(1).max(1) as usize;
+                let row_span = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
+
+                if col >= cols || row >= rows {
+                    continue;
+                }
+
+                let col_span = col_span.min(cols - col);
+                let row_span = row_span.min(rows - row);
+
+                let span_w = (cell_w * (col_span as f32)) + (gap_x * ((col_span - 1) as f32));
+                let span_h = (cell_h * (row_span as f32)) + (gap_y * ((row_span - 1) as f32));
+
+                let x = content.x + (col as f32) * (cell_w + gap_x);
+                let y = content.y + (row as f32) * (cell_h + gap_y);
+                let child_bounds = Rectangle::new(x, y, span_w.min(content.width), span_h.min(content.height));
+
+                render_node(
+                    d,
+                    child,
+                    child_bounds,
+                    mouse_clicked,
+                    mouse,
+                    now,
+                    sdf,
+                    click_anim,
+                    click_state,
+                    focused_input,
+                    textures,
+                );
+            }
+        }
         "HStack" => {
             let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
             let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
@@ -788,14 +936,50 @@ fn render_node(
             };
 
             if let Some(tex) = textures.get(src) {
-                let src_rect = Rectangle::new(0.0, 0.0, tex.width as f32, tex.height as f32);
+                let fit = prop_string(node, "fit").unwrap_or("stretch");
+                let tint = parse_color(prop_string(node, "tint").or_else(|| prop_string(node, "color")));
+
+                let src_w = tex.width as f32;
+                let src_h = tex.height as f32;
+                let mut src_rect = Rectangle::new(0.0, 0.0, src_w, src_h);
+                let mut dst_rect = rect;
+
+                if fit == "contain" {
+                    let sx = rect.width / src_w;
+                    let sy = rect.height / src_h;
+                    let s = sx.min(sy);
+                    let dw = (src_w * s).max(1.0);
+                    let dh = (src_h * s).max(1.0);
+                    dst_rect = Rectangle::new(
+                        rect.x + (rect.width - dw) / 2.0,
+                        rect.y + (rect.height - dh) / 2.0,
+                        dw,
+                        dh,
+                    );
+                } else if fit == "cover" {
+                    // Crop the source rect to match destination aspect ratio.
+                    let src_aspect = src_w / src_h;
+                    let dst_aspect = rect.width / rect.height;
+                    if src_aspect > dst_aspect {
+                        // Source too wide -> crop width.
+                        let new_w = src_h * dst_aspect;
+                        let x0 = (src_w - new_w) / 2.0;
+                        src_rect = Rectangle::new(x0, 0.0, new_w, src_h);
+                    } else if src_aspect < dst_aspect {
+                        // Source too tall -> crop height.
+                        let new_h = src_w / dst_aspect;
+                        let y0 = (src_h - new_h) / 2.0;
+                        src_rect = Rectangle::new(0.0, y0, src_w, new_h);
+                    }
+                }
+
                 d.draw_texture_pro(
                     tex,
                     src_rect,
-                    rect,
+                    dst_rect,
                     Vector2::new(0.0, 0.0),
                     0.0,
-                    Color::WHITE,
+                    tint,
                 );
             } else {
                 d.draw_rectangle_rec(rect, Color::DARKGRAY);

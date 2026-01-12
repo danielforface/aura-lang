@@ -1,5 +1,16 @@
 # AuraSDK stdlib: aura::lumina
-# Minimal shims and style helpers for Lumina UI.
+# Minimal shims and style helpers for Lumina UI runtime.
+#
+# This module provides:
+# - Theming helpers (ModernDark, PixarModern)
+# - Layout primitives (Grid, VStack, HStack, Box, etc.)
+# - Media widgets (Image with fit modes, Audio controls)
+# - Input widgets (TextInput, Button)
+#
+# All UI constructors return an opaque UI node at runtime (AVM interprets as json-like tree).
+# Compilation with Z3 gate treats these as verified layout expressions.
+
+## --- Theme Helpers ---
 
 cell PixarModern():
     Style { bg: "Black", fg: "White", radius: 18, padding: 14 }
@@ -7,5 +18,142 @@ cell PixarModern():
 cell ModernDark():
     Style { bg: "#161B22", fg: "#E6EDF3", radius: 18, padding: 14 }
 
+cell NordTheme():
+    Style { bg: "#2E3440", fg: "#ECEFF4", radius: 12, padding: 12 }
+
+cell DragonflyTheme():
+    Style { bg: "#0E1419", fg: "#FFFBF0", radius: 8, padding: 10 }
+
+## --- Layout Primitives ---
+
+# Grid: Multi-column responsive layout
+# Props: columns (required), rows (optional), gap, padding, bg, border, radius
+# Children can use col, row, col_span, row_span for placement
+cell Grid():
+    ()
+
+# VStack: Vertical stack layout
+# Props: spacing, alignment, padding, bg, border, radius
+cell VStack():
+    ()
+
+# HStack: Horizontal stack layout
+# Props: spacing, alignment, padding, bg, border, radius
+cell HStack():
+    ()
+
+# Box: Single-child container with padding/border/background
+# Props: padding, padding_*, bg, border, border_width, radius, width, height
+cell Box():
+    ()
+
+# Rect: Simple rectangle shape
+# Props: width, height, bg, border, radius, padding
+cell Rect():
+    ()
+
+## --- Input Widgets ---
+
+# TextInput: Text field for user input
+# Props: placeholder, value, width, height, padding, bg, fg
+# Callbacks: on_change (emits typed ui.event_text)
+cell TextInput():
+    ()
+
+# Button: Clickable button
+# Props: label, width, height, padding, bg, fg, radius
+# Callbacks: on_click
+cell Button():
+    ()
+
+# Spacer: Empty container for layout spacing
+# Props: width, height
+cell Spacer():
+    ()
+
+## --- Media Widgets ---
+
+# Image: Display an image file with fit modes
+# Props:
+#   - src/path: string file path
+#   - width, height: int (default 256)
+#   - fit: "stretch" (default) | "contain" | "cover"
+#   - tint/color: string color (default "white")
+cell Image():
+    ()
+
+## --- Text Widget ---
+
+# Text: Display text
+# Props: text, size, fg, padding, alignment
+cell Text():
+    ()
+
+## --- App Root ---
+
+# App: Root container for the entire UI tree
+# Props: bg, padding, width, height
+cell App():
+    ()
+
+# Window: Alternative root container (same as App)
+cell Window():
+    ()
+
+## --- Audio Built-ins (AVM Runtime) ---
+
+# Load audio file by path, return clip ID (U32)
+extern fn audio.load(path: String) -> U32
+
+# Play a loaded audio clip by ID, return playback handle (U32)
+extern fn audio.play_loaded(clip_id: U32) -> U32
+
+# Play audio directly from file path, return playback handle (U32)
+extern fn audio.play(path: String) -> U32
+
+# Stop playback by handle
+extern fn audio.stop(handle: U32) -> ()
+
+## --- UI Event Built-ins (AVM Runtime) ---
+
+# Get the current text input event payload
+extern fn ui.event_text() -> String
+
+# Get text state by key
+extern fn ui.get_text(key: String) -> String
+
+# Set text state by key
+extern fn ui.set_text(key: String, value: String) -> ()
+
+## --- Style Reference ---
+
+# Style object with common properties
+cell Style(
+    fg: String,              # Foreground / text color
+    bg: String,              # Background color
+    size: Int,               # Font size
+    padding: Int,            # Padding (all sides)
+    padding_x: Int,          # Horizontal padding
+    padding_y: Int,          # Vertical padding
+    padding_left: Int,       # Left padding
+    padding_right: Int,      # Right padding
+    padding_top: Int,        # Top padding
+    padding_bottom: Int,     # Bottom padding
+    margin: Int,             # Margin (all sides)
+    width: Int,              # Width in pixels
+    height: Int,             # Height in pixels
+    radius: Int,             # Corner radius
+    border: String,          # Border color
+    border_width: Int,       # Border width
+    alignment: String,       # "left" | "center" | "right"
+    spacing: Int             # Gap between children
+):
+    ()
+
+## --- Utility Functions ---
+
 cell log(msg: String):
     io.println("[lumina.log] (dynamic message suppressed in AVM)")
+
+cell debug_style():
+    Style { bg: "Red", fg: "White", padding: 4 }

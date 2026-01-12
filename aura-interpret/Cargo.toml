@@ -17,3 +17,6 @@ thiserror = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Audio MVP for AVM demos (Windows/macOS/Linux via cpal backends).
+rodio = "0.20"

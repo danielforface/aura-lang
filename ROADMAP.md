@@ -1152,6 +1152,164 @@ Bundling Android SDK/NDK inside Sentinel:
 
 ---
 
+## v2.0+ Strategic Vision: Four Pillars for Advanced Hardware & AI-Driven Development
+
+### Pillar 1: Hardware Mastery & OS Development (Bare Metal + Kernel Safety)
+
+**Goal:** Enable writing secure kernels, drivers, and firmware without external dependencies, with formal hardware-software contracts.
+
+1. **Aura Freestanding (no_std):** Compilation mode without runtime for direct bare-metal execution on CPU (ARM, x86-64, RISC-V).
+   - [ ] no_std library subset (core, alloc with verified allocators)
+   - [ ] Compilation target flags and panic behavior customization
+   - [ ] LLVM freestanding runtime integration
+   
+2. **Verified Interrupt Table Generation:** Formal generation and verification of IDT/IVT tables preventing gaps, overlaps, or handler mismatches.
+   - [ ] Interrupt descriptor table (IDT) schema in Aura type system
+   - [ ] Z3 constraints ensuring non-overlapping, complete handler coverage
+   - [ ] Hardware exception mapping (SIMD faults, page faults, etc.)
+   - [ ] Automated handler stub generation with proof
+   
+3. **Hardware-Software Contract Bridge:** Import hardware specs (YAML/JSON: memory maps, registers, interrupt vectors) and convert to Z3 contracts.
+   - [ ] Hardware specification parser (vendor datasheets → contract DSL)
+   - [ ] Register aliasing conflict detection via Z3
+   - [ ] Memory-mapped I/O (MMIO) bounds checking at compile time
+   - [ ] Verified contract enforcement in Z3 Gate
+   
+4. **Verified MMIO & Volatile Access:** Safe primitives for hardware memory access preventing unsafe compiler optimizations.
+   - [ ] `volatile_read(addr)` / `volatile_write(addr, val)` AVM built-ins
+   - [ ] LLVM IR generation with `volatile` flag (no elision)
+   - [ ] Type-system guarantee: no data-race on volatile access
+   - [ ] Documented MMIO patterns for drivers (SPI, UART, GPIO)
+   
+5. **Linear-Capability DMA Safety:** Proof that DMA operations (device → memory writes) cannot violate memory safety.
+   - [ ] DMA descriptor linear type enforcing single-owner semantics
+   - [ ] Region ownership transfer to device + reclaim on completion
+   - [ ] Z3 proof that device cannot access regions outside assigned
+   - [ ] ISA abstraction for IOMMU support (x86 VT-d, ARM SMMU)
+   
+6. **Custom Verified Allocators:** Page/heap allocators written in Aura with proofs of correctness (no leaks, no double-free).
+   - [ ] Buddy allocator with fragmentation bounds
+   - [ ] Verified slab allocator for fixed-size allocation
+   - [ ] Z3 invariants on free list integrity
+   - [ ] Leak detection via reachability analysis (region end-of-life)
+
+---
+
+### Pillar 2: AI-Aided Proofs & Automated Verification (Neural-Symbolic Synthesis)
+
+**Goal:** Make proof writing as natural as test writing by combining local LLM suggestions with Z3 verification.
+
+7. **Neural-Symbolic Invariant Synthesis:** Local LLM in Sentinel proposes loop invariants; Z3 validates them in real time.
+   - [ ] Embedding of Aura code + verification context into LLM prompt
+   - [ ] Invariant candidate generation (3+ per loop)
+   - [ ] Z3 strengthening (find why candidate fails, suggest refinement)
+   - [ ] Sentinel UI showing top-3 validated invariants with confidence scores
+   - [ ] Integration with loop-unrolling for SMT verification
+   
+8. **Automated Proof Repair:** When proof fails, IDE suggests code or contract fixes to reach "Proven" state.
+   - [ ] Unsat-core analysis to pinpoint failing assumptions
+   - [ ] Contract weakening suggestions (relax `requires`, strengthen `ensures`)
+   - [ ] Code mutation proposals (add casts, add assertions for SMT hints)
+   - [ ] One-click accept: patch code + re-verify instantly
+   - [ ] Explainability: show why each fix candidate works
+   
+9. **Natural Language Logic Trace:** Complex Z3 proofs converted to step-by-step English explanations in Sentinel.
+   - [ ] Unsat-core span mapping to source-level proof steps
+   - [ ] Variable timeline: "x starts at 5, incremented in loop, bound by invariant, final value 15"
+   - [ ] If-else branch paths tracked through proof
+   - [ ] Counterexample slicing: show only variables relevant to failure
+   - [ ] Accessibility: read-aloud narration of proof in Sentinel
+
+---
+
+### Pillar 3: Resource Accounting & Real-Time Safety (WCET + Energy Budget)
+
+**Goal:** Formally prove performance and power guarantees for embedded and real-time systems.
+
+10. **Worst-Case Execution Time (WCET) Proofs:** Compile-time upper bounds on function/loop execution cycles.
+    - [ ] Instruction-level cycle counting (per-ISA: x86, ARM, RISC-V)
+    - [ ] Loop bound inference via interval analysis (or manual annotation)
+    - [ ] Call-graph flattening + per-path analysis
+    - [ ] Z3 constraints for control-flow complexity (nested loops, recursion depth)
+    - [ ] Report: function WCET in cycles + confidence level
+    - [ ] Verification: prove WCET ≤ deadline (real-time assertion)
+    
+11. **Static Energy Budgeting:** Per-instruction power model + whole-function energy bound with Z3 verification.
+    - [ ] Energy consumption library per CPU/ISA (mW per cycle, per operation)
+    - [ ] Thermal model integration (Tj ≤ Tjmax proof)
+    - [ ] Supply current tracking (Icc limits for power rail)
+    - [ ] SoC-specific (ARM A9, STM32, etc.) parameterization
+    - [ ] Report: function energy signature + peak current
+    
+12. **Stack Depth Guard:** Compile-time proof that recursion + local variables never overflow stack.
+    - [ ] Stack frame size calculation per function (params + locals)
+    - [ ] Recursion depth bound inference or annotation
+    - [ ] Call-graph analysis to compute max call stack depth
+    - [ ] Z3 constraint: Σ frame_sizes ≤ stack_size
+    - [ ] Error on unbounded recursion (reject code that might overflow)
+
+---
+
+### Pillar 4: Unified Ecosystem & Hardware Integration (Sentinel ↔ Verification ↔ Hardware)
+
+**Goal:** Ensure language, tooling, and hardware verification are tightly synchronized; every safety rule surfaces everywhere.
+
+13. **Unified Diagnostic Manifest:** Centralized system where new safety rules auto-propagate to LSP, Book, Cookbook, and Sentinel.
+    - [ ] Rule registry: { rule_id, error_message, LSP_code, book_chapter, cookbook_example, sentinel_widget }
+    - [ ] Auto-generation of all downstream artifacts from single YAML
+    - [ ] Versioned rule evolution (deprecated rules marked with migration path)
+    - [ ] CI: verify no orphaned diagnostics (every code error has book chapter)
+    
+14. **Sentinel Hardware View:** Real-time visualization of memory map, register state, and interrupt vectors synced with Z3 proofs.
+    - [ ] Memory map panel: physical layout with MMIO regions highlighted
+    - [ ] Register inspector: current value + Z3 constraints overlay
+    - [ ] Interrupt vector viewer: handler addresses + priority
+    - [ ] Live debugger integration: breakpoint → show register state
+    - [ ] Hardware spec overlay: vendor datasheet constraints shown inline
+    
+15. **Aura-Android Verified Bridge (HAL):** Aura drivers for Android can be written with proofs preventing kernel panics.
+    - [ ] HAL interface stubs in Aura (power_supply, lights, sensors)
+    - [ ] Type-safe JNI bridge generation (Aura ↔ Java)
+    - [ ] Z3 contract: no unwrap panics, no null dereferences in driver code
+    - [ ] Android CI: automated HAL certification (proof + dynamic testing)
+    - [ ] Example: verified charging controller driver (no faults)
+    
+16. **VSIX Intelligent Inlays:** VS Code extension renders "ghost text" above variables showing Z3-derived state predicates.
+    - [ ] At variable reference: "x: u32 where x > 0 && x < 100"
+    - [ ] At loop condition: "invariant: i ≤ n, sum ≥ 0"
+    - [ ] Hover: expand to full Z3 model slice at that point
+    - [ ] Interactive: click to jump to proof step establishing fact
+    - [ ] Performance: lazy evaluation (inline only visible code)
+
+---
+
+### Comparison: Aura v2.0 vs. Rust / Zig
+
+| Feature | Aura v2.0 | Rust | Zig |
+| --- | --- | --- | --- |
+| **Hardware contracts (Z3)** | ✅ Formal spec → proof | ❌ Manual unsafe blocks | ❌ Manual unsafe |
+| **OS kernel dev** | ✅ Verified interrupts + memory model | ⚠️ Possible via unsafe | ⚠️ Possible via unsafe |
+| **Proof writing** | ✅ AI invariant synthesis + auto-repair | ❌ No proofs | ❌ No proofs |
+| **WCET guarantees** | ✅ Compile-time bounded cycles | ❌ Dynamic profiling only | ❌ Dynamic profiling only |
+| **Hardware-aware** | ✅ Datasheet import + verify overlap | ❌ No spec integration | ❌ No spec integration |
+| **Sentinel UI** | ✅ Memory map + register + proof view | ❌ No IDE visualization | ❌ No IDE visualization |
+
+---
+
+### Definition of Done (v2.0 Pillars)
+
+Each pillar is complete when:
+1. **Core:** Implemented in compiler backend (C or LLVM lowering) with zero panics.
+2. **Verifier:** Z3 Gate fully supports new axioms and proof strategies.
+3. **LSP:** Full autocomplete, diagnostics, and quick fixes in VS Code.
+4. **Sentinel:** Dedicated UI panel for pillar feature (hardware view, AI synthesis, WCET report).
+5. **Docs:** New Aura Book chapter + 5+ working examples in Cookbook.
+6. **Tests:** 30+ unit + integration tests; all pass; >80% code coverage.
+7. **SDK:** Updated stdlib with new hardware/resource APIs.
+8. **CI:** Regression tests automated; blockage on failures.
+
+---
+
 ## Definition of Done (for checklist items)
 
 - [ ] Tests exist (unit + integration where appropriate)
