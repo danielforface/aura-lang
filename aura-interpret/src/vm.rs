@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::{fs, io};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use aura_ast::{BinOp, CallArg, Expr, ExprKind, MatchStmt, Pattern, Program, Span, Stmt, UnaryOp};
@@ -151,12 +153,294 @@ pub struct Avm {
     // Captured stdout from externs like io.println
     stdout: String,
 
+    // Minimal built-in app state for interactive AVM demos/tools.
+    shop: ShopState,
+
+    // Background stdin reader so UI callbacks don't block the render loop.
+    stdin_rx: Option<mpsc::Receiver<String>>,
+
     debug: Option<DebugSession>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ShopItem {
+    name: String,
+    qty: String,
+    notes: String,
+    purchased: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ShopState {
+    path: Option<String>,
+    items: Vec<ShopItem>,
+
+    pending: Option<ShopPending>,
+    status: String,
+}
+
+#[derive(Clone, Debug)]
+enum ShopPending {
+    Add {
+        stage: u8,
+        name: String,
+        qty: String,
+        notes: String,
+    },
+    Edit {
+        index: usize,
+        stage: u8,
+        name: String,
+        qty: String,
+        notes: String,
+    },
+}
+
+impl ShopState {
+    fn default_path() -> String {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            format!("{}\\AuraShopList\\shopping_list.tsv", appdata)
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/.aura_shop_list.tsv", home)
+        }
+    }
+
+    fn ensure_path(&mut self) -> String {
+        if let Some(p) = self.path.clone() {
+            return p;
+        }
+        let p = Self::default_path();
+        self.path = Some(p.clone());
+        p
+    }
+
+    fn load_from_path(&mut self, path: &str) -> miette::Result<()> {
+        self.path = Some(path.to_string());
+        let raw = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.items.clear();
+                return Ok(());
+            }
+            Err(e) => return Err(miette::miette!("failed to read {path}: {e}")),
+        };
+
+        let mut items = Vec::new();
+        for line in raw.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // TSV: name\tqty\tnotes\tpurchased
+            let mut parts = line.splitn(4, '\t');
+            let name = parts.next().unwrap_or("").to_string();
+            if name.trim().is_empty() {
+                continue;
+            }
+            let qty = parts.next().unwrap_or("1").to_string();
+            let notes = parts.next().unwrap_or("").to_string();
+            let purchased = match parts.next().unwrap_or("0") {
+                "1" | "true" | "TRUE" | "yes" | "YES" => true,
+                _ => false,
+            };
+            items.push(ShopItem {
+                name,
+                qty,
+                notes,
+                purchased,
+            });
+        }
+        self.items = items;
+        Ok(())
+    }
+
+    fn save_to_path(&mut self, path: &str) -> miette::Result<()> {
+        self.path = Some(path.to_string());
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = fs::create_dir_all(parent);
+            }
+        }
+        let mut out = String::new();
+        for it in &self.items {
+            let purchased = if it.purchased { "1" } else { "0" };
+            out.push_str(&it.name.replace('\n', " "));
+            out.push('\t');
+            out.push_str(&it.qty.replace('\n', " "));
+            out.push('\t');
+            out.push_str(&it.notes.replace('\n', " "));
+            out.push('\t');
+            out.push_str(purchased);
+            out.push('\n');
+        }
+        fs::write(path, out).map_err(|e| miette::miette!("failed to write {path}: {e}"))
+    }
+
+    fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    fn status(&self) -> String {
+        if self.status.trim().is_empty() {
+            "Ready".to_string()
+        } else {
+            self.status.clone()
+        }
+    }
+
+    fn set_status(&mut self, s: impl Into<String>) {
+        self.status = s.into();
+    }
+
+    fn cancel_pending(&mut self) {
+        self.pending = None;
+        self.set_status("Canceled");
+    }
+
+    fn begin_add(&mut self) {
+        self.pending = Some(ShopPending::Add {
+            stage: 0,
+            name: String::new(),
+            qty: String::new(),
+            notes: String::new(),
+        });
+        self.set_status("Add: type item name in the terminal, press Enter");
+    }
+
+    fn begin_edit(&mut self, index: usize) {
+        let Some(it) = self.items.get(index).cloned() else {
+            self.set_status("Edit: invalid index");
+            return;
+        };
+        self.pending = Some(ShopPending::Edit {
+            index,
+            stage: 0,
+            name: it.name,
+            qty: it.qty,
+            notes: it.notes,
+        });
+        self.set_status("Edit: type new name (or blank to keep), press Enter");
+    }
+
+    fn consume_input_line(&mut self, line: &str) {
+        let line = line.trim_end_matches(['\n', '\r']);
+        let Some(p) = &mut self.pending else {
+            return;
+        };
+
+        match p {
+            ShopPending::Add {
+                stage,
+                name,
+                qty,
+                notes,
+            } => match *stage {
+                0 => {
+                    if line.trim().is_empty() {
+                        self.set_status("Add: name cannot be empty. Type a name, press Enter");
+                    } else {
+                        *name = line.trim().to_string();
+                        *stage = 1;
+                        self.set_status("Add: type quantity (Enter for 1), press Enter");
+                    }
+                }
+                1 => {
+                    *qty = if line.trim().is_empty() {
+                        "1".to_string()
+                    } else {
+                        line.trim().to_string()
+                    };
+                    *stage = 2;
+                    self.set_status("Add: type notes (Enter to skip), press Enter");
+                }
+                _ => {
+                    *notes = line.trim().to_string();
+                    let name_s = name.trim().to_string();
+                    let qty_s = if qty.trim().is_empty() {
+                        "1".to_string()
+                    } else {
+                        qty.trim().to_string()
+                    };
+                    let notes_s = notes.trim().to_string();
+
+                    if !name_s.is_empty() {
+                        self.items.push(ShopItem {
+                            name: name_s.clone(),
+                            qty: qty_s,
+                            notes: notes_s,
+                            purchased: false,
+                        });
+                        let path = self.ensure_path();
+                        let _ = self.save_to_path(&path);
+                        self.set_status(format!("Added: {name_s}"));
+                    }
+
+                    self.pending = None;
+                }
+            },
+            ShopPending::Edit {
+                index,
+                stage,
+                name,
+                qty,
+                notes,
+            } => match *stage {
+                0 => {
+                    if !line.trim().is_empty() {
+                        *name = line.trim().to_string();
+                    }
+                    *stage = 1;
+                    self.set_status("Edit: type new quantity (or blank to keep), press Enter");
+                }
+                1 => {
+                    if !line.trim().is_empty() {
+                        *qty = line.trim().to_string();
+                    }
+                    *stage = 2;
+                    self.set_status("Edit: type new notes (or blank to keep), press Enter");
+                }
+                _ => {
+                    if !line.trim().is_empty() {
+                        *notes = line.trim().to_string();
+                    }
+                    if let Some(it) = self.items.get_mut(*index) {
+                        it.name = name.trim().to_string();
+                        it.qty = qty.trim().to_string();
+                        it.notes = notes.trim().to_string();
+                        let path = self.ensure_path();
+                        let _ = self.save_to_path(&path);
+                        self.set_status("Saved edit".to_string());
+                    } else {
+                        self.set_status("Edit: item no longer exists".to_string());
+                    }
+                    self.pending = None;
+                }
+            },
+        }
+    }
 }
 
 impl Avm {
     pub fn new(cfg: AvmConfig) -> Self {
         let debug = cfg.debug.clone();
+
+        let (tx, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let stdin = io::stdin();
+            loop {
+                let mut line = String::new();
+                if stdin.read_line(&mut line).is_err() {
+                    break;
+                }
+                while line.ends_with(['\n', '\r']) {
+                    line.pop();
+                }
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
         Self {
             cfg,
             env: HashMap::new(),
@@ -165,7 +449,325 @@ impl Avm {
             verify_cache: HashMap::new(),
             hot: HashMap::new(),
             stdout: String::new(),
+            shop: ShopState::default(),
+            stdin_rx: Some(rx),
             debug,
+        }
+    }
+
+    fn poll_shop_stdin(&mut self) {
+        let Some(rx) = &self.stdin_rx else {
+            return;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok(line) => {
+                    // Only consume lines when we're in an add/edit flow.
+                    if self.shop.is_pending() {
+                        self.shop.consume_input_line(&line);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.stdin_rx = None;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn builtin_io_read_line(&mut self, prompt: &str) -> miette::Result<AvmValue> {
+        if !prompt.is_empty() {
+            self.stdout.push_str(prompt);
+            if !prompt.ends_with(' ') {
+                self.stdout.push(' ');
+            }
+        }
+
+        // Note: blocks the render loop while waiting.
+        let mut line = String::new();
+        io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| miette::miette!("failed to read stdin: {e}"))?;
+        while line.ends_with(['\n', '\r']) {
+            line.pop();
+        }
+        Ok(AvmValue::Str(line))
+    }
+
+    fn builtin_io_read_text(&self, path: &str) -> miette::Result<AvmValue> {
+        let s = fs::read_to_string(path)
+            .map_err(|e| miette::miette!("failed to read {path}: {e}"))?;
+        Ok(AvmValue::Str(s))
+    }
+
+    fn builtin_io_write_text(&self, path: &str, text: &str) -> miette::Result<AvmValue> {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = fs::create_dir_all(parent);
+            }
+        }
+        fs::write(path, text).map_err(|e| miette::miette!("failed to write {path}: {e}"))?;
+        Ok(AvmValue::Unit)
+    }
+
+    fn builtin_shop_dispatch(&mut self, name: &str, args: &[CallArg]) -> miette::Result<AvmValue> {
+        let eval1 = |vm: &mut Avm, idx: usize| -> miette::Result<AvmValue> {
+            let a = args.get(idx).ok_or_else(|| {
+                miette::miette!("AVM: {} expects at least {} argument(s)", name, idx + 1)
+            })?;
+            vm.eval_expr(call_arg_value(a))
+        };
+
+        match name {
+            "shop.status" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.status expects 0 arguments"));
+                }
+                Ok(AvmValue::Str(self.shop.status()))
+            }
+            "shop.is_pending" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.is_pending expects 0 arguments"));
+                }
+                Ok(AvmValue::Bool(self.shop.is_pending()))
+            }
+            "shop.cancel" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.cancel expects 0 arguments"));
+                }
+                self.shop.cancel_pending();
+                Ok(AvmValue::Unit)
+            }
+            "shop.begin_add" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.begin_add expects 0 arguments"));
+                }
+                self.shop.begin_add();
+                Ok(AvmValue::Unit)
+            }
+            "shop.begin_edit" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: shop.begin_edit expects 1 argument"));
+                }
+                let idx = match eval1(self, 0)? {
+                    AvmValue::Int(i) => i,
+                    _ => return Err(miette::miette!("AVM: shop.begin_edit expects integer index")),
+                };
+                if idx < 0 {
+                    return Ok(AvmValue::Unit);
+                }
+                self.shop.begin_edit(idx as usize);
+                Ok(AvmValue::Unit)
+            }
+            "shop.path" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.path expects 0 arguments"));
+                }
+                Ok(AvmValue::Str(self.shop.ensure_path()))
+            }
+            "shop.load" => {
+                if args.len() > 1 {
+                    return Err(miette::miette!("AVM: shop.load expects 0 or 1 arguments"));
+                }
+                let path = if args.is_empty() {
+                    self.shop.ensure_path()
+                } else {
+                    match eval1(self, 0)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.load expects string path")),
+                    }
+                };
+                self.shop.load_from_path(&path)?;
+                // First-run UX: ensure the file exists even if empty.
+                self.shop.save_to_path(&path)?;
+                Ok(AvmValue::Unit)
+            }
+            "shop.save" => {
+                if args.len() > 1 {
+                    return Err(miette::miette!("AVM: shop.save expects 0 or 1 arguments"));
+                }
+                let path = if args.is_empty() {
+                    self.shop.ensure_path()
+                } else {
+                    match eval1(self, 0)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.save expects string path")),
+                    }
+                };
+                self.shop.save_to_path(&path)?;
+                Ok(AvmValue::Unit)
+            }
+            "shop.count" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.count expects 0 arguments"));
+                }
+                Ok(AvmValue::Int(self.shop.items.len() as i64))
+            }
+            "shop.get_name" | "shop.get_qty" | "shop.get_notes" | "shop.get_done" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: {} expects 1 argument", name));
+                }
+                let idx = match eval1(self, 0)? {
+                    AvmValue::Int(i) => i,
+                    _ => return Err(miette::miette!("AVM: {} expects integer index", name)),
+                };
+                if idx < 0 {
+                    return Ok(AvmValue::Str("".to_string()));
+                }
+                let i = idx as usize;
+                let Some(it) = self.shop.items.get(i) else {
+                    return Ok(AvmValue::Str("".to_string()));
+                };
+                match name {
+                    "shop.get_name" => Ok(AvmValue::Str(it.name.clone())),
+                    "shop.get_qty" => Ok(AvmValue::Str(it.qty.clone())),
+                    "shop.get_notes" => Ok(AvmValue::Str(it.notes.clone())),
+                    "shop.get_done" => Ok(AvmValue::Bool(it.purchased)),
+                    _ => unreachable!(),
+                }
+            }
+            "shop.add" => {
+                if args.len() < 1 || args.len() > 3 {
+                    return Err(miette::miette!(
+                        "AVM: shop.add expects 1..3 arguments (name, qty?, notes?)"
+                    ));
+                }
+                let name_s = match eval1(self, 0)? {
+                    AvmValue::Str(s) => s,
+                    _ => return Err(miette::miette!("AVM: shop.add expects string name")),
+                };
+                let qty_s = if args.len() >= 2 {
+                    match eval1(self, 1)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.add expects string qty")),
+                    }
+                } else {
+                    "1".to_string()
+                };
+                let notes_s = if args.len() >= 3 {
+                    match eval1(self, 2)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.add expects string notes")),
+                    }
+                } else {
+                    "".to_string()
+                };
+
+                if name_s.trim().is_empty() {
+                    return Ok(AvmValue::Unit);
+                }
+                self.shop.items.push(ShopItem {
+                    name: name_s.trim().to_string(),
+                    qty: if qty_s.trim().is_empty() {
+                        "1".to_string()
+                    } else {
+                        qty_s.trim().to_string()
+                    },
+                    notes: notes_s.trim().to_string(),
+                    purchased: false,
+                });
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
+            "shop.remove" | "shop.toggle" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: {} expects 1 argument", name));
+                }
+                let idx = match eval1(self, 0)? {
+                    AvmValue::Int(i) => i,
+                    _ => return Err(miette::miette!("AVM: {} expects integer index", name)),
+                };
+                if idx < 0 {
+                    return Ok(AvmValue::Unit);
+                }
+                let i = idx as usize;
+                if i >= self.shop.items.len() {
+                    return Ok(AvmValue::Unit);
+                }
+
+                if name == "shop.remove" {
+                    self.shop.items.remove(i);
+                } else {
+                    let it = &mut self.shop.items[i];
+                    it.purchased = !it.purchased;
+                }
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
+            "shop.edit" => {
+                if args.len() < 2 || args.len() > 4 {
+                    return Err(miette::miette!(
+                        "AVM: shop.edit expects 2..4 arguments (idx, name, qty?, notes?)"
+                    ));
+                }
+                let idx = match eval1(self, 0)? {
+                    AvmValue::Int(i) => i,
+                    _ => return Err(miette::miette!("AVM: shop.edit expects integer index")),
+                };
+                let name_s = match eval1(self, 1)? {
+                    AvmValue::Str(s) => s,
+                    _ => return Err(miette::miette!("AVM: shop.edit expects string name")),
+                };
+                let qty_s = if args.len() >= 3 {
+                    match eval1(self, 2)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.edit expects string qty")),
+                    }
+                } else {
+                    "".to_string()
+                };
+                let notes_s = if args.len() >= 4 {
+                    match eval1(self, 3)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.edit expects string notes")),
+                    }
+                } else {
+                    "".to_string()
+                };
+
+                if idx < 0 {
+                    return Ok(AvmValue::Unit);
+                }
+                let i = idx as usize;
+                if i >= self.shop.items.len() {
+                    return Ok(AvmValue::Unit);
+                }
+                let it = &mut self.shop.items[i];
+                if !name_s.trim().is_empty() {
+                    it.name = name_s.trim().to_string();
+                }
+                if !qty_s.trim().is_empty() {
+                    it.qty = qty_s.trim().to_string();
+                }
+                if !notes_s.trim().is_empty() {
+                    it.notes = notes_s.trim().to_string();
+                }
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
+            "shop.clear" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.clear expects 0 arguments"));
+                }
+                self.shop.items.clear();
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
+            "shop.clear_completed" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.clear_completed expects 0 arguments"));
+                }
+                self.shop.items.retain(|x| !x.purchased);
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
+            _ => Err(miette::miette!("AVM: unknown builtin '{name}'")),
         }
     }
 
@@ -606,6 +1208,7 @@ impl Avm {
                 let debug_ui = std::env::var("AURA_UI_DEBUG").is_ok();
                 let mut frames: u32 = 0;
                 loop {
+                    self.poll_shop_stdin();
                     self.reset_frame_callbacks();
                     let v = self.exec_block(&lb.body, ui_plugins, nexus)?;
                     let AvmValue::Ui(node) = v else {
@@ -660,6 +1263,7 @@ impl Avm {
                 let debug_ui = std::env::var("AURA_UI_DEBUG").is_ok();
                 let mut frames: u32 = 0;
                 loop {
+                    self.poll_shop_stdin();
                     self.reset_frame_callbacks();
                     let v = self.exec_block(&rb.body, ui_plugins, nexus)?;
                     let AvmValue::Ui(node) = v else {
@@ -850,6 +1454,13 @@ impl Avm {
                 .env
                 .get(&id.node)
                 .cloned()
+                .or_else(|| match id.node.as_str() {
+                    // Minimal: allow module-style calls like `io.println(...)` and `shop.count()`
+                    // without requiring `val io = "io"` pre-bindings.
+                    "io" => Some(AvmValue::Str("io".to_string())),
+                    "shop" => Some(AvmValue::Str("shop".to_string())),
+                    _ => None,
+                })
                 .ok_or_else(|| miette::miette!("AVM: unknown identifier '{}'", id.node)),
             ExprKind::Unary { op, expr } => {
                 let v = self.eval_expr(expr)?;
@@ -918,6 +1529,39 @@ impl Avm {
                             "AVM: io.println only supports string literals in AVM"
                         )),
                     }
+                } else if name == "io.read_line" {
+                    if args.len() != 1 {
+                        return Err(miette::miette!("AVM: io.read_line expects 1 argument"));
+                    }
+                    let v = self.eval_expr(call_arg_value(&args[0]))?;
+                    let AvmValue::Str(prompt) = v else {
+                        return Err(miette::miette!("AVM: io.read_line expects a string prompt"));
+                    };
+                    self.builtin_io_read_line(&prompt)
+                } else if name == "io.read_text" {
+                    if args.len() != 1 {
+                        return Err(miette::miette!("AVM: io.read_text expects 1 argument"));
+                    }
+                    let v = self.eval_expr(call_arg_value(&args[0]))?;
+                    let AvmValue::Str(path) = v else {
+                        return Err(miette::miette!("AVM: io.read_text expects a string path"));
+                    };
+                    self.builtin_io_read_text(&path)
+                } else if name == "io.write_text" {
+                    if args.len() != 2 {
+                        return Err(miette::miette!("AVM: io.write_text expects 2 arguments"));
+                    }
+                    let p = self.eval_expr(call_arg_value(&args[0]))?;
+                    let t = self.eval_expr(call_arg_value(&args[1]))?;
+                    let AvmValue::Str(path) = p else {
+                        return Err(miette::miette!("AVM: io.write_text expects a string path"));
+                    };
+                    let AvmValue::Str(text) = t else {
+                        return Err(miette::miette!("AVM: io.write_text expects a string payload"));
+                    };
+                    self.builtin_io_write_text(&path, &text)
+                } else if name.starts_with("shop.") {
+                    self.builtin_shop_dispatch(&name, args)
                 } else if is_ui_call(&name, trailing.is_some()) {
                     let mut node = UiNode::new(name);
 

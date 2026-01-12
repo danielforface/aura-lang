@@ -237,6 +237,236 @@ impl Checker {
             },
         );
 
+        // AVM-only IO helpers (prototype)
+        checker.functions.insert(
+            "io.read_line".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "prompt".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "io.read_text".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "path".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "io.write_text".to_string(),
+            FnSig {
+                params: vec![
+                    FnParam {
+                        name: "path".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "text".to_string(),
+                        ty: Type::String,
+                    },
+                ],
+                ret: Type::Unit,
+            },
+        );
+
+        // AVM-only persistence + app-state helpers (prototype)
+        checker.functions.insert(
+            "shop.path".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.status".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.is_pending".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Bool,
+            },
+        );
+        checker.functions.insert(
+            "shop.cancel".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.begin_add".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.begin_edit".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.load".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "path".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.save".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "path".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.count".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::U32,
+            },
+        );
+        checker.functions.insert(
+            "shop.get_name".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.get_qty".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.get_notes".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.get_done".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Bool,
+            },
+        );
+        checker.functions.insert(
+            "shop.add".to_string(),
+            FnSig {
+                params: vec![
+                    FnParam {
+                        name: "name".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "qty".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "notes".to_string(),
+                        ty: Type::String,
+                    },
+                ],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.edit".to_string(),
+            FnSig {
+                params: vec![
+                    FnParam {
+                        name: "index".to_string(),
+                        ty: Type::U32,
+                    },
+                    FnParam {
+                        name: "name".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "qty".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "notes".to_string(),
+                        ty: Type::String,
+                    },
+                ],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.remove".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.toggle".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.clear".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.clear_completed".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Unit,
+            },
+        );
+
         // --- tensor ---
         checker.functions.insert(
             "tensor.new".to_string(),

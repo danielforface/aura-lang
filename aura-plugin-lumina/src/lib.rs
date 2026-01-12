@@ -206,7 +206,9 @@ impl AuraPlugin for AuraLuminaPlugin {
             let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
 
             let mut d = rl.begin_drawing(thread);
-            d.clear_background(Color::BLACK);
+            // Allow app-level theming via `App(bg: ...)`.
+            let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
+            d.clear_background(app_bg);
 
             let click_cb = render_node(
                 &mut d,
@@ -264,13 +266,77 @@ fn prop_string<'a>(node: &'a UiNode, k: &str) -> Option<&'a str> {
 
 #[cfg(feature = "raylib")]
 fn parse_color(name: Option<&str>) -> Color {
-    match name.unwrap_or("White") {
-        "Gold" => Color::GOLD,
-        "White" => Color::WHITE,
-        "Black" => Color::BLACK,
-        "Red" => Color::RED,
-        "Green" => Color::GREEN,
-        "Blue" => Color::BLUE,
+    let s = name.unwrap_or("White").trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        // Accept #RRGGBB or #RRGGBBAA
+        if hex.len() == 6 || hex.len() == 8 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok();
+            let g = u8::from_str_radix(&hex[2..4], 16).ok();
+            let b = u8::from_str_radix(&hex[4..6], 16).ok();
+            let a = if hex.len() == 8 {
+                u8::from_str_radix(&hex[6..8], 16).ok()
+            } else {
+                Some(255)
+            };
+            if let (Some(r), Some(g), Some(b), Some(a)) = (r, g, b, a) {
+                return Color::new(r, g, b, a);
+            }
+        }
+    }
+
+    // rgb(r,g,b) / rgba(r,g,b,a) where a can be 0..1 or 0..255
+    let lower = s.to_ascii_lowercase();
+    if let Some(args) = lower.strip_prefix("rgb(").and_then(|v| v.strip_suffix(')')) {
+        let mut it = args.split(',').map(|p| p.trim());
+        let r = it.next().and_then(|v| v.parse::<u8>().ok());
+        let g = it.next().and_then(|v| v.parse::<u8>().ok());
+        let b = it.next().and_then(|v| v.parse::<u8>().ok());
+        if let (Some(r), Some(g), Some(b)) = (r, g, b) {
+            return Color::new(r, g, b, 255);
+        }
+    }
+    if let Some(args) = lower.strip_prefix("rgba(").and_then(|v| v.strip_suffix(')')) {
+        let parts: Vec<&str> = args.split(',').map(|p| p.trim()).collect();
+        if parts.len() == 4 {
+            let r = parts[0].parse::<u8>().ok();
+            let g = parts[1].parse::<u8>().ok();
+            let b = parts[2].parse::<u8>().ok();
+            let a_u8 = if let Ok(a) = parts[3].parse::<u8>() {
+                Some(a)
+            } else if let Ok(a) = parts[3].parse::<f32>() {
+                Some((a.clamp(0.0, 1.0) * 255.0).round() as u8)
+            } else {
+                None
+            };
+            if let (Some(r), Some(g), Some(b), Some(a)) = (r, g, b, a_u8) {
+                return Color::new(r, g, b, a);
+            }
+        }
+    }
+
+    // A small named palette (case-insensitive). Prefer expanding via hex/rgb.
+    match lower.as_str() {
+        "gold" => Color::GOLD,
+        "white" => Color::WHITE,
+        "black" => Color::BLACK,
+        "red" => Color::RED,
+        "green" => Color::GREEN,
+        "blue" => Color::BLUE,
+        "raywhite" => Color::RAYWHITE,
+        "lightgray" | "lightgrey" => Color::LIGHTGRAY,
+        "gray" | "grey" => Color::GRAY,
+        "darkgray" | "darkgrey" => Color::DARKGRAY,
+        "maroon" => Color::MAROON,
+        "orange" => Color::ORANGE,
+        "yellow" => Color::YELLOW,
+        "purple" => Color::PURPLE,
+        "violet" => Color::VIOLET,
+        "pink" => Color::PINK,
+        "skyblue" => Color::SKYBLUE,
+        "lime" => Color::LIME,
+        "beige" => Color::BEIGE,
+        "brown" => Color::BROWN,
+        "transparent" => Color::new(0, 0, 0, 0),
         _ => Color::WHITE,
     }
 }

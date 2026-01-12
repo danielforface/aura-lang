@@ -67,3 +67,34 @@ Aura supports verification annotations (when built with Z3 features):
 - Quantifiers (`forall` / `exists`) with guardrails
 
 See `sdk/docs/z3-gate.md` and `sdk/docs/verifier-guide.md`.
+
+## 5. Apps & UI (Lumina)
+
+Aura’s current UI story is **Lumina** (Raylib backend in this repo).
+
+### 5.1. Core idea
+
+- The UI is rebuilt every frame from Aura code (`layout:` / `render:` blocks).
+- Callbacks (`on_click: ~> { ... }`) run on the UI loop.
+
+Rule: **Never block inside UI callbacks** (no long I/O, no waiting for stdin, no sleep).
+If you block, the window will stop responding (mouse/keyboard appear “broken”).
+
+### 5.2. Styling & colors
+
+Style fields like `bg`, `fg`, and `color` accept:
+
+- Named colors: `"Black"`, `"White"`, `"Gold"`, plus a small set like `"Gray"`, `"DarkGray"`, `"SkyBlue"`, etc.
+- Hex colors: `"#RRGGBB"` or `"#RRGGBBAA"`
+- CSS-like forms: `"rgb(r,g,b)"`, `"rgba(r,g,b,a)"`
+
+Apps can also set an app background color:
+
+- `App(title: "My App", bg: "#0B0F14") { ... }`
+
+### 5.3. Input (current + planned)
+
+Current prototype approach (AVM): staged, non-blocking console input for demos.
+
+Planned (Lumina): real UI input widgets (TextInput), focus management, and event APIs
+so apps can be fully mouse+keyboard driven without the terminal.

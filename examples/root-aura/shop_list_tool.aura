@@ -1,0 +1,181 @@
+# shop_list_tool.aura
+# Real(ish) Aura Lumina shopping list tool (AVM): persistent list + add/edit/remove.
+#
+# Persistence:
+#   %APPDATA%\AuraShopList\shopping_list.tsv
+#
+# Notes:
+# - Current Lumina widgets are minimal (Text/Rect/Button + stacks).
+# - AVM provides built-in `shop.*` helpers for this tool.
+# - Text entry happens in the console (prompts) when you click Add/Edit,
+#   but the UI stays responsive (no blocking reads on the UI thread).
+
+import aura::lumina
+
+cell main():
+    # Load from default path (or create empty list).
+    shop.load(path: shop.path())
+
+    render:
+        App(title: "Shop List", bg: "#0B0F14") {
+            VStack(padding: 28, spacing: 14, alignment: "center") {
+                render: Text(text: "Shop List", style: Style { fg: "#E6EDF3", size: 36 })
+                render: Text(text: "Items", style: Style { fg: "#8B949E", size: 14 })
+                render: Text(text: shop.count(), style: Style { fg: "#E6EDF3", size: 22 })
+
+                if shop.is_pending():
+                    VStack(spacing: 6, padding: 0) {
+                        render: Text(text: "Console input", style: Style { fg: "#58A6FF", size: 14 })
+                        render: Text(text: shop.status(), style: Style { fg: "#E6EDF3", size: 16 })
+                        render: Button(label: "Cancel", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 16, width: 140, height: 44 }) {
+                            on_click: ~> { shop.cancel() }
+                        }
+                    }
+                else:
+                    VStack()
+
+                render: Text(text: "Saved at", style: Style { fg: "#8B949E", size: 14 })
+                render: Text(text: shop.path(), style: Style { fg: "#E6EDF3", size: 14 })
+
+                render: Rect(width: 900, height: 2, radius: 0, color: "#30363D")
+
+                render: VStack(spacing: 10, padding: 0) {
+                    # Row 0
+                    if 0 < shop.count():
+                        HStack(spacing: 12, padding: 0) {
+                            render: Text(text: shop.get_name(index: 0), style: Style { fg: "White", size: 18 })
+                            render: Text(text: shop.get_qty(index: 0), style: Style { fg: "#8B949E", size: 16 })
+                            render: Text(text: shop.get_done(index: 0), style: Style { fg: "#58A6FF", size: 16 })
+
+                            render: Button(label: "Done", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> { shop.toggle(index: 0) }
+                            }
+                            render: Button(label: "Edit", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    shop.begin_edit(index: 0)
+                                }
+                            }
+                            render: Button(label: "Remove", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> { shop.remove(index: 0) }
+                            }
+                        }
+                    else:
+                        VStack()
+
+                    # Row 1
+                    if 1 < shop.count():
+                        HStack(spacing: 12, padding: 0) {
+                            render: Text(text: shop.get_name(index: 1), style: Style { fg: "White", size: 18 })
+                            render: Text(text: shop.get_qty(index: 1), style: Style { fg: "#8B949E", size: 16 })
+                            render: Text(text: shop.get_done(index: 1), style: Style { fg: "#58A6FF", size: 16 })
+                            render: Button(label: "Done", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> { shop.toggle(index: 1) }
+                            }
+                            render: Button(label: "Edit", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    shop.begin_edit(index: 1)
+                                }
+                            }
+                            render: Button(label: "Remove", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> { shop.remove(index: 1) }
+                            }
+                        }
+                    else:
+                        VStack()
+
+                    # Row 2
+                    if 2 < shop.count():
+                        HStack(spacing: 12, padding: 0) {
+                            render: Text(text: shop.get_name(index: 2), style: Style { fg: "White", size: 18 })
+                            render: Text(text: shop.get_qty(index: 2), style: Style { fg: "#8B949E", size: 16 })
+                            render: Text(text: shop.get_done(index: 2), style: Style { fg: "#58A6FF", size: 16 })
+                            render: Button(label: "Done", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> { shop.toggle(index: 2) }
+                            }
+                            render: Button(label: "Edit", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    shop.begin_edit(index: 2)
+                                }
+                            }
+                            render: Button(label: "Remove", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> { shop.remove(index: 2) }
+                            }
+                        }
+                    else:
+                        VStack()
+
+                    # Row 3
+                    if 3 < shop.count():
+                        HStack(spacing: 12, padding: 0) {
+                            render: Text(text: shop.get_name(index: 3), style: Style { fg: "White", size: 18 })
+                            render: Text(text: shop.get_qty(index: 3), style: Style { fg: "#8B949E", size: 16 })
+                            render: Text(text: shop.get_done(index: 3), style: Style { fg: "#58A6FF", size: 16 })
+                            render: Button(label: "Done", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> { shop.toggle(index: 3) }
+                            }
+                            render: Button(label: "Edit", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    shop.begin_edit(index: 3)
+                                }
+                            }
+                            render: Button(label: "Remove", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> { shop.remove(index: 3) }
+                            }
+                        }
+                    else:
+                        VStack()
+
+                    # Row 4
+                    if 4 < shop.count():
+                        HStack(spacing: 12, padding: 0) {
+                            render: Text(text: shop.get_name(index: 4), style: Style { fg: "White", size: 18 })
+                            render: Text(text: shop.get_qty(index: 4), style: Style { fg: "#8B949E", size: 16 })
+                            render: Text(text: shop.get_done(index: 4), style: Style { fg: "#58A6FF", size: 16 })
+                            render: Button(label: "Done", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> { shop.toggle(index: 4) }
+                            }
+                            render: Button(label: "Edit", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 14, width: 90, height: 38 }) {
+                                on_click: ~> {
+                                    shop.begin_edit(index: 4)
+                                }
+                            }
+                            render: Button(label: "Remove", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 14, width: 110, height: 38 }) {
+                                on_click: ~> { shop.remove(index: 4) }
+                            }
+                        }
+                    else:
+                        VStack()
+
+                    render: Text(text: "(Shows up to 5 items in this prototype)", style: Style { fg: "#8B949E", size: 14 })
+                }
+
+                render: Rect(width: 900, height: 2, radius: 0, color: "#30363D")
+
+                render: HStack(spacing: 12, padding: 0) {
+                    render: Button(label: "Add Item", style: Style { bg: "#238636", fg: "#E6EDF3", radius: 18, width: 180, height: 54 }) {
+                        on_click: ~> {
+                            shop.begin_add()
+                        }
+                    }
+
+                    render: Button(label: "Clear Completed", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 18, width: 200, height: 54 }) {
+                        on_click: ~> { shop.clear_completed() }
+                    }
+
+                    render: Button(label: "Clear All", style: Style { bg: "#DA3633", fg: "#E6EDF3", radius: 18, width: 160, height: 54 }) {
+                        on_click: ~> { shop.clear() }
+                    }
+                }
+
+                render: HStack(spacing: 12, padding: 0) {
+                    render: Button(label: "Reload", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 18, width: 180, height: 46 }) {
+                        on_click: ~> { shop.load(path: shop.path()) }
+                    }
+                    render: Button(label: "Save", style: Style { bg: "#161B22", fg: "#E6EDF3", radius: 18, width: 180, height: 46 }) {
+                        on_click: ~> { shop.save(path: shop.path()) }
+                    }
+                }
+
+                render: Text(text: "Tip: click Add/Edit, then follow prompts in the console.", style: Style { fg: "#8B949E", size: 14 })
+            }
+        }

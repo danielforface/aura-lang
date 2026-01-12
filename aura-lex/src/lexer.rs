@@ -241,6 +241,49 @@ impl<'a> Lexer<'a> {
         Self { src }
     }
 
+    fn find_comment_start(code: &str) -> Option<usize> {
+        // Find the earliest occurrence of '#' or '//' that is NOT inside a "..." string.
+        // This is a small state machine (still a prototype), but it fixes common cases like
+        // hex colors "#RRGGBB" used in UI styling.
+        let bytes = code.as_bytes();
+        let mut i = 0usize;
+        let mut in_string = false;
+        let mut escape = false;
+
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_string {
+                if escape {
+                    escape = false;
+                } else if b == b'\\' {
+                    escape = true;
+                } else if b == b'"' {
+                    in_string = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if b == b'"' {
+                in_string = true;
+                i += 1;
+                continue;
+            }
+
+            if b == b'#' {
+                return Some(i);
+            }
+
+            if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                return Some(i);
+            }
+
+            i += 1;
+        }
+
+        None
+    }
+
     pub fn lex(&self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         let mut indent_stack: Vec<usize> = vec![0];
@@ -305,18 +348,9 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            // Naive comment stripping (outside of string literals): strip at the earliest
-            // occurrence of '#' or '//' (prototype behavior).
+            // Comment stripping: ignore comment markers inside string literals.
             let mut code = &content[leading_spaces..];
-            let hash = code.find('#');
-            let slash_slash = code.find("//");
-            let cut = match (hash, slash_slash) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
-            };
-            if let Some(idx) = cut {
+            if let Some(idx) = Self::find_comment_start(code) {
                 code = &code[..idx];
             }
             if code.trim().is_empty() {

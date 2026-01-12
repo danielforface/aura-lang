@@ -61,6 +61,50 @@ Current focus (Jan 2026): ship Aura as a production-ready daily driver (v1.0) by
 
 ---
 
+## App / UI Platform (Lumina)
+
+Goal: Aura can build **real Windows apps** with modern UI, strong input, and reusable components.
+
+### Foundations (done / unblocked)
+
+- [x] UI callbacks must be non-blocking (Dev-VM architecture supports async stdin polling)
+- [x] Lumina: colors accept hex/rgb/rgba strings (enables modern themes)
+- [x] Lumina: `App(bg: ...)` sets window background
+- [x] Lexer: comment parsing does not break strings containing `#` (required for hex colors)
+
+### Input (mouse/keyboard)
+
+- [ ] Text input widgets: `TextInput`, focus, cursor, selection
+- [ ] Keyboard navigation: Tab/Shift-Tab, Enter/Escape conventions
+- [ ] Clipboard integration
+- [ ] Mouse wheel scrolling + scroll containers
+
+### Components & state
+
+- [ ] Component system with props + local state
+- [ ] Stable keys + diffing for lists
+- [ ] Built-in app storage (settings + small KV) with safe persistence
+
+### Layout & visuals
+
+- [ ] Flex layout (grow/shrink, align/justify)
+- [ ] Grid layout
+- [ ] Typography: font loading, weights, text wrapping
+- [ ] Icons/images
+- [ ] Theme tokens (light/dark, palette, spacing scale)
+
+### Tooling
+
+- [ ] UI inspector overlay (show node tree + bounds)
+- [ ] Hot reload for Lumina apps
+
+### Standard library ("arrays" and collections)
+
+- [ ] First-class array/list story: literals, indexing safety, slices
+- [ ] Standard collections (Vec/List/Map/Set) with clear ownership + performance model
+
+---
+
 ## 0.2 — Explainable Verification (Released Jan 2026)
 
 ### Verification UX Overhaul
