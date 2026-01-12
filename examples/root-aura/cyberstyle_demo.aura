@@ -1,0 +1,25 @@
+#cyberstyle_demo.aura
+import aura::lumina
+
+cell main():
+    val pulses: u32 = 0
+    val status: String = "SECURE"
+
+    layout:
+        VStack(spacing: 16, alignment: "center", style: Style { padding: 48 }) {
+            render: Text(text: "SENTINEL COMMAND CENTER", style: Style { fg: "White", size: 42 })
+
+            render: Text(text: "Status: {status}", style: Style { fg: "Gold", size: 22 })
+
+            render: Button(label: "PULSE", style: Style { bg: "Black", fg: "White", radius: 22, width: 260, height: 60 }) {
+                on_click: ~> {
+                    val io = "io"
+                    io.println("PULSE clicked")
+                }
+            }
+
+            render: Text(text: "Verified Pulses: {pulses}", style: Style { fg: "White", size: 20 })
+        }
+
+    # Minimal CyberStyle demo: exercises Style literals, prop injection, Z3 aesthetics gate,
+    # and raylib SDF rendering + click tween on the Button.

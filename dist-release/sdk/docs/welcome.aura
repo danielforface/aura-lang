@@ -1,0 +1,11 @@
+# welcome.aura - תוכנת ההדגמה הראשונה של המשתמש
+import aura::lumina
+
+cell main():
+    layout:
+        VStack(alignment: "center") {
+            render: Text(text: "Welcome to the Aura Universe!", style: PixarModern())
+            render: Button(label: "Start Creating") {
+                on_click: ~> { log("Aura SDK is Active.") }
+            }
+        }

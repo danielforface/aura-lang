@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 /// Capability Enforcement Diagnostics
 /// 
 /// Provides detailed error reporting for capability violations with:
@@ -5,8 +7,6 @@
 /// - Remediation suggestions
 /// - Diagnostic history/context
 /// - LSP-compatible output format
-
-#![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
 use crate::capability_enforcement::{CapabilityKind, CapabilityViolation};

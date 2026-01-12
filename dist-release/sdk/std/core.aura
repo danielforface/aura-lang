@@ -1,0 +1,12 @@
+# AuraSDK stdlib: std::core
+# Minimal “complete feeling” core module for the current prototype.
+# This is intentionally tiny: it exists to make `import std::core` meaningful.
+#
+# NOTE: many advanced features (Option/Result, iterators) are roadmap items
+# and will land once the language has enums + pattern ergonomics in the std.
+
+# Core utilities
+trusted extern cell panic(msg: String) -> Unit
+
+# Basic formatting/logging
+trusted extern cell debug(msg: String) -> Unit

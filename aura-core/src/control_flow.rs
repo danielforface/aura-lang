@@ -63,7 +63,7 @@ impl ControlFlowGraph {
         for path in current_paths {
             if path.reachable {
                 // True branch
-                let mut true_branch = ControlFlowPath {
+                let true_branch = ControlFlowPath {
                     path_id: self.next_path_id,
                     bindings: path.bindings.clone(),
                     reachable: true,
@@ -286,6 +286,9 @@ impl OwnershipFlowAnalyzer {
                     merged.insert(name.to_string(), s);
                 }
                 (None, None) => {}
+                _ => {
+                    // All other combinations default to unification failure
+                }
             }
         }
         

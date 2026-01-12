@@ -1,0 +1,15 @@
+# linear_types_tests.aura
+# Minimal file that exercises basic typing + verification-friendly loops.
+
+import aura::io
+
+cell main():
+    val mut i: u32 = 0
+    val mut acc: u32 = 0
+
+    while i < 10 invariant i <= 10 invariant acc >= 0:
+        acc = acc + i
+        i = i + 1
+
+    io::println("acc = {acc}")
+    assert i == 10

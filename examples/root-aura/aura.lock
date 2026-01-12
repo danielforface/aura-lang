@@ -1,0 +1,9 @@
+[packages.onnxruntime]
+version = "1.23.2"
+url = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip"
+sha256 = "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+
+[packages.raylib]
+version = "5.5"
+url = "https://github.com/raysan5/raylib/releases/download/5.5/raylib-5.5_win64_msvc16.zip"
+sha256 = "8d046084d12353183e701ef4c9d276c21fcd3243c2a368091fabfb2769b8507c"

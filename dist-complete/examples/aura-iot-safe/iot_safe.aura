@@ -1,0 +1,5 @@
+import aura::hw
+
+cell main() ->:
+    val cap = hw.open("SPI_CTRL")
+    val _ok = hw.write_u32(cap, 0, 1023)

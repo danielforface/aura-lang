@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 /// Race Condition Detection Engine for Pillar 5
 /// 
 /// Provides formal verification of concurrent code to prevent:
@@ -7,8 +9,6 @@
 /// - Resource leaks in concurrent code
 /// 
 /// Uses happens-before relationship analysis + lock dependency graphs.
-
-#![forbid(unsafe_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -249,7 +249,7 @@ impl RaceDetector {
             let mut threads = HashSet::new();
             let mut has_write = false;
             
-            for (thread_id, access_type, line, col) in &accesses {
+            for (thread_id, access_type, _line, _col) in &accesses {
                 threads.insert(*thread_id);
                 if *access_type == AccessType::Write {
                     has_write = true;
@@ -280,7 +280,7 @@ impl RaceDetector {
         // Build dependency graph: lock A -> lock B if B acquired after A in same thread
         let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
         
-        for (thread_id, lock_order) in &self.sync_info.lock_order {
+        for (_thread_id, lock_order) in &self.sync_info.lock_order {
             for i in 0..lock_order.len() {
                 for j in (i + 1)..lock_order.len() {
                     graph
@@ -321,7 +321,7 @@ impl RaceDetector {
     pub fn detect_lock_leaks(&mut self) {
         for (_, lock) in &self.locks {
             // If a lock is still acquired by any thread at end, it's leaked
-            for (thread_id, (line, col)) in &lock.acquired_by {
+            for (_thread_id, (line, col)) in &lock.acquired_by {
                 self.violations.push(RaceViolation::LockLeak {
                     lock_name: lock.name.clone(),
                     acquired_at: (*line, *col),

@@ -1,0 +1,6 @@
+# AuraSDK stdlib: aura::io / std::io
+# NOTE: In the current prototype, these are host-provided externs.
+
+trusted extern cell println(text: String) -> Unit
+trusted extern cell display(t: Tensor) -> Unit
+trusted extern cell load_tensor(path: String) -> Tensor

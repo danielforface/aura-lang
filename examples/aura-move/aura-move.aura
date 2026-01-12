@@ -7,9 +7,9 @@
 import aura::lumina
 
 cell main():
-    val mut x: u32 = 6
-    val mut y: u32 = 4
-    val mut steps: u32 = 0
+    val x: u32 = 6
+    val y: u32 = 4
+    val steps: u32 = 0
 
     # Grid settings (virtual).
     val grid_max_x: u32 = 12
@@ -33,30 +33,26 @@ cell main():
             render: HStack(spacing: 12, padding: 0) {
                 render: Button(label: "LEFT", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
                     on_click: ~> {
-                        if x > 0:
-                            x = x - 1
-                        steps = steps + 1
+                        val io = "io"
+                        io.println("LEFT")
                     }
                 }
                 render: Button(label: "UP", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
                     on_click: ~> {
-                        if y > 0:
-                            y = y - 1
-                        steps = steps + 1
+                        val io = "io"
+                        io.println("UP")
                     }
                 }
                 render: Button(label: "DOWN", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
                     on_click: ~> {
-                        if y < grid_max_y:
-                            y = y + 1
-                        steps = steps + 1
+                        val io = "io"
+                        io.println("DOWN")
                     }
                 }
                 render: Button(label: "RIGHT", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
                     on_click: ~> {
-                        if x < grid_max_x:
-                            x = x + 1
-                        steps = steps + 1
+                        val io = "io"
+                        io.println("RIGHT")
                     }
                 }
             }

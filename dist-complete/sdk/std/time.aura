@@ -1,0 +1,4 @@
+# AuraSDK stdlib: std::time
+# Minimal time surface: wall-clock is inherently effectful; keep it explicit.
+
+trusted extern cell now_millis() -> u32

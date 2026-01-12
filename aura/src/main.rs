@@ -1450,29 +1450,57 @@ fn update_manifest_for_install(project_root: &Path, install: &aura_pkg::InstallR
 }
 
 fn ensure_table(doc: &mut toml::Value, key: &str) {
-    if !doc.get(key).is_some_and(|v| v.is_table()) {
-        doc[key] = toml::Value::Table(toml::map::Map::new());
+    if !doc.is_table() {
+        *doc = toml::Value::Table(toml::map::Map::new());
+    }
+
+    let table = doc
+        .as_table_mut()
+        .expect("ensure_table: doc must be a table after normalization");
+
+    match table.get_mut(key) {
+        Some(toml::Value::Table(_)) => {}
+        _ => {
+            table.insert(
+                key.to_string(),
+                toml::Value::Table(toml::map::Map::new()),
+            );
+        }
     }
 }
 
 fn push_string_array_unique(doc: &mut toml::Value, table_path: &[&str], key: &str, value: &str) {
-    let mut cur = doc;
-    for seg in table_path {
-        if !cur.get(seg).is_some_and(|v| v.is_table()) {
-            cur[*seg] = toml::Value::Table(toml::map::Map::new());
-        }
-        cur = cur.get_mut(seg).expect("table exists");
+    if !doc.is_table() {
+        *doc = toml::Value::Table(toml::map::Map::new());
     }
 
-    let arr = cur.get_mut(key);
-    match arr {
+    let mut cur = doc
+        .as_table_mut()
+        .expect("push_string_array_unique: doc must be a table after normalization");
+
+    for seg in table_path {
+        let entry = cur
+            .entry((*seg).to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        if !entry.is_table() {
+            *entry = toml::Value::Table(toml::map::Map::new());
+        }
+        cur = entry
+            .as_table_mut()
+            .expect("push_string_array_unique: table exists after normalization");
+    }
+
+    match cur.get_mut(key) {
         Some(toml::Value::Array(a)) => {
             if !a.iter().any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(value))) {
                 a.push(toml::Value::String(value.to_string()));
             }
         }
         _ => {
-            cur[key] = toml::Value::Array(vec![toml::Value::String(value.to_string())]);
+            cur.insert(
+                key.to_string(),
+                toml::Value::Array(vec![toml::Value::String(value.to_string())]),
+            );
         }
     }
 }

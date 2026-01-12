@@ -6,13 +6,11 @@ cell sum_to(n: u32) ->:
     val i: u32 = 0
     val acc: u32 = 0
 
-    while i < n invariant i <= n decreases n - i {
+    while i < n invariant i <= n decreases n - i:
         acc = acc + i
         i = i + 1
-    }
 
-    # Post-condition as a statement-level ensure.
-    ensures i == n
+    assert i == n
 
     # Quantifiers are accepted only under `--smt-profile thorough`.
     assert forall(x: u32): x == x

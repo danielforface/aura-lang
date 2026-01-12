@@ -1,0 +1,26 @@
+#aura_sentinel_demo.aura
+import aura::lumina
+import aura::iot
+
+cell main():
+    val clicks: u32 = 0
+    val sys_status: String = "Secured"
+
+    layout:
+        VStack(spacing: 15, alignment: "center") {
+            render: Text(text: "Aura Sentinel OS", color: "Gold", size: 40)
+
+            render: Text(text: "Status: {sys_status}", color: "White")
+
+            render: Button(label: "Pulse System", width: 200, height: 50) {
+                on_click: ~> {
+                    val io = "io"
+                    io.println("Pulse clicked")
+                }
+            }
+
+            render: Text(text: "Verified Interactions: {clicks}")
+        }
+
+    #Note: standalone `invariant ...` is not yet a language statement.
+    #The Z3 gate still verifies regular expressions and loop invariants.

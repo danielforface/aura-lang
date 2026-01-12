@@ -1,0 +1,2 @@
+# AuraSDK stdlib: aura::tensor
+# NOTE: In the current prototype, tensor::* is backed by the C stdlib + verifier.

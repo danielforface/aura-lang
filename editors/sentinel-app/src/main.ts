@@ -1078,6 +1078,7 @@ app.innerHTML = `
         <button class="menuTop" type="button" data-menu="tools" aria-haspopup="true" aria-expanded="false">Tools</button>
       </div>
       <div class="menuRight">
+        <button class="menuBtn" id="makeSdk" type="button" title="Convert folder to SDK project">Make SDK</button>
         <div class="breadcrumbs" id="crumbs"></div>
         <div class="status" id="status">Idle</div>
       </div>
@@ -1111,7 +1112,11 @@ app.innerHTML = `
         <summary>Explorer</summary>
         <div class="sideContent" id="filesOut">
           <div class="meta" id="workspaceLabel">No folder open.</div>
-          <div class="recent" id="recentOut" style="margin-top:10px;"></div>
+          <div class="explorerActions" style="margin-top:8px; display:flex; gap:4px;">
+            <button id="explorerRefresh" class="miniBtn" type="button" title="Refresh directory tree">🔄 Refresh</button>
+            <button id="explorerNewFile" class="miniBtn" type="button" title="Create new file">📄 New File</button>
+            <button id="explorerNewFolder" class="miniBtn" type="button" title="Create new folder">📁 New Folder</button>
+          </div>
           <div class="fileTree" id="fileTree" style="margin-top:10px;"></div>
         </div>
       </details>
@@ -1319,7 +1324,6 @@ app.innerHTML = `
 
 const editorHost = document.querySelector<HTMLDivElement>("#editor")!;
 const workspaceLabelEl = document.querySelector<HTMLDivElement>("#workspaceLabel")!;
-const recentOutEl = document.querySelector<HTMLDivElement>("#recentOut")!;
 const fileTreeEl = document.querySelector<HTMLDivElement>("#fileTree")!;
 const proofsOut = document.querySelector<HTMLDivElement>("#proofsOut")!;
 const navOut = document.querySelector<HTMLDivElement>("#navOut")!;
@@ -1336,6 +1340,10 @@ const runDevBtn = document.querySelector<HTMLButtonElement>("#runDev")!;
 const stopRunBtn = document.querySelector<HTMLButtonElement>("#stopRun")!;
 const testsBtn = document.querySelector<HTMLButtonElement>("#tests")!;
 const pkgBtn = document.querySelector<HTMLButtonElement>("#pkg")!;
+const makeSdkBtn = document.querySelector<HTMLButtonElement>("#makeSdk");
+const explorerRefreshBtn = document.querySelector<HTMLButtonElement>("#explorerRefresh");
+const explorerNewFileBtn = document.querySelector<HTMLButtonElement>("#explorerNewFile");
+const explorerNewFolderBtn = document.querySelector<HTMLButtonElement>("#explorerNewFolder");
 const diffPaneEl = document.querySelector<HTMLDivElement>("#diffPane")!;
 const diffLeftHost = document.querySelector<HTMLDivElement>("#diffLeft")!;
 
@@ -2838,22 +2846,7 @@ function renderProblemsPanel() {
     .join("\n");
 }
 
-function renderRecents() {
-  const r = loadRecentProjects();
-  if (!r.folders.length) {
-    recentOutEl.innerHTML = `<div class="meta">Recent projects will appear here.</div>`;
-    return;
-  }
-  recentOutEl.innerHTML = `
-    <div class="meta">Recent projects</div>
-    ${r.folders
-      .map((p) => {
-        const json = encodeURIComponent(JSON.stringify(p));
-        return `<div class="recentRow" data-folder="${json}" title="Open folder">${escapeHtml(p)}</div>`;
-      })
-      .join("\n")}
-  `;
-}
+
 
 function setWorkspaceRoot(p: string | undefined) {
   workspaceRootPath = p;
@@ -2870,14 +2863,12 @@ function setWorkspaceRoot(p: string | undefined) {
       }
       unwatchWorkspace = null;
     }
-    renderRecents();
     updateEditability();
     return;
   }
   const sdkTag = isSdkEnabledForWorkspace() ? " (SDK)" : "";
   workspaceLabelEl.textContent = workspaceRootPath + sdkTag;
   addRecentFolder(workspaceRootPath);
-  renderRecents();
   void refreshFileTree();
   void startWorkspaceWatch(workspaceRootPath);
   // Warm caches for quick-open/search.
@@ -4220,6 +4211,78 @@ pkgBtn.addEventListener("click", () => {
   void refreshPkgGraph();
 });
 
+if (makeSdkBtn) {
+  makeSdkBtn.addEventListener("click", () => {
+    if (!workspaceRootPath) {
+      showStatus("No folder open. Please open a folder first.");
+      return;
+    }
+    void (async () => {
+      try {
+        showStatus("Initializing SDK...");
+        const result = await invoke("make_sdk", { path: workspaceRootPath });
+        showStatus(`SDK initialized successfully in ${workspaceRootPath}`);
+        await refreshFileTree();
+        await ensureWorkspaceFiles();
+      } catch (err) {
+        showStatus(`Error initializing SDK: ${err}`);
+      }
+    })();
+  });
+}
+
+if (explorerRefreshBtn) {
+  explorerRefreshBtn.addEventListener("click", async () => {
+    await refreshFileTree();
+    await ensureWorkspaceFiles();
+    showStatus("File tree refreshed.");
+  });
+}
+
+if (explorerNewFileBtn) {
+  explorerNewFileBtn.addEventListener("click", () => {
+    if (!workspaceRootPath) {
+      showStatus("No folder open. Please open a folder first.");
+      return;
+    }
+    const filename = prompt("Enter filename (relative to workspace):");
+    if (!filename) return;
+    void (async () => {
+      try {
+        const filepath = `${workspaceRootPath}/${filename}`;
+        await invoke("create_file", { path: filepath, content: "" });
+        showStatus(`File created: ${filename}`);
+        await refreshFileTree();
+        await ensureWorkspaceFiles();
+      } catch (err) {
+        showStatus(`Error creating file: ${err}`);
+      }
+    })();
+  });
+}
+
+if (explorerNewFolderBtn) {
+  explorerNewFolderBtn.addEventListener("click", () => {
+    if (!workspaceRootPath) {
+      showStatus("No folder open. Please open a folder first.");
+      return;
+    }
+    const dirname = prompt("Enter folder name (relative to workspace):");
+    if (!dirname) return;
+    void (async () => {
+      try {
+        const dirpath = `${workspaceRootPath}/${dirname}`;
+        await invoke("create_dir", { path: dirpath });
+        showStatus(`Folder created: ${dirname}`);
+        await refreshFileTree();
+        await ensureWorkspaceFiles();
+      } catch (err) {
+        showStatus(`Error creating folder: ${err}`);
+      }
+    })();
+  });
+}
+
 consoleClearBtn.addEventListener("click", () => {
   consoleClear();
 });
@@ -4866,21 +4929,6 @@ tabsEl.addEventListener(
   },
   true,
 );
-
-recentOutEl.addEventListener("click", (ev) => {
-  const target = ev.target as HTMLElement;
-  const row = target.closest<HTMLElement>(".recentRow");
-  if (!row) return;
-  const enc = row.getAttribute("data-folder");
-  if (!enc) return;
-  try {
-    const folder = JSON.parse(decodeURIComponent(enc)) as string;
-    if (!folder) return;
-    setWorkspaceRoot(folder);
-  } catch {
-    // ignore
-  }
-});
 
 fileTreeEl.addEventListener("click", async (ev) => {
   const target = ev.target as HTMLElement;

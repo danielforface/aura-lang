@@ -1,0 +1,308 @@
+{
+  "version": "1.0.0",
+  "build_date": "2026-01-11T16:56:48.411924",
+  "components": {
+    "MANIFEST.json": [
+      {
+        "file": "MANIFEST.json",
+        "size_bytes": 6986,
+        "size_mb": 0.01
+      }
+    ],
+    "android": [
+      {
+        "file": "android/AuraSentinelSample-debug.apk",
+        "size_bytes": 5527605,
+        "size_mb": 5.27
+      }
+    ],
+    "apps": [
+      {
+        "file": "apps/sentinel/index.html",
+        "size_bytes": 409,
+        "size_mb": 0.0
+      },
+      {
+        "file": "apps/sentinel/assets/index-DOn_s_E-.css",
+        "size_bytes": 10859,
+        "size_mb": 0.01
+      },
+      {
+        "file": "apps/sentinel/assets/index-Dx04opm8.js",
+        "size_bytes": 492168,
+        "size_mb": 0.47
+      }
+    ],
+    "bin": [
+      {
+        "file": "bin/aura-lsp.exe",
+        "size_bytes": 6422528,
+        "size_mb": 6.12
+      },
+      {
+        "file": "bin/aura-pkg.exe",
+        "size_bytes": 2467840,
+        "size_mb": 2.35
+      },
+      {
+        "file": "bin/aura.exe",
+        "size_bytes": 11301888,
+        "size_mb": 10.78
+      }
+    ],
+    "docs": [
+      {
+        "file": "docs/debug-protocol.md",
+        "size_bytes": 4257,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/diagnostic-codes.md",
+        "size_bytes": 888,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/editions-and-feature-gates.md",
+        "size_bytes": 836,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/effects-ownership-model.md",
+        "size_bytes": 4952,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/gc-design.md",
+        "size_bytes": 3589,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/JANUARY-2026-STATUS.md",
+        "size_bytes": 8741,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/ownership-effects-options.md",
+        "size_bytes": 3686,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/ownership-option-a.md",
+        "size_bytes": 5913,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/PHASE-1-COMPLETION-REPORT.md",
+        "size_bytes": 13269,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/PHASE-1-FINAL-SUMMARY.md",
+        "size_bytes": 12324,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/PHASE-2-INTEGRATION-CHECKLIST.md",
+        "size_bytes": 15798,
+        "size_mb": 0.02
+      },
+      {
+        "file": "docs/release-channels.md",
+        "size_bytes": 849,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/release-notes.md",
+        "size_bytes": 328,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/stability-and-compat.md",
+        "size_bytes": 1363,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/trusted-core.md",
+        "size_bytes": 1252,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/ub-boundaries.md",
+        "size_bytes": 1127,
+        "size_mb": 0.0
+      },
+      {
+        "file": "docs/v1.0-executive-summary.md",
+        "size_bytes": 6966,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/v1.0-implementation-plan.md",
+        "size_bytes": 15010,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/v1.0-week1-checklist.md",
+        "size_bytes": 8681,
+        "size_mb": 0.01
+      },
+      {
+        "file": "docs/WEEK-1-EXECUTION.md",
+        "size_bytes": 10403,
+        "size_mb": 0.01
+      }
+    ],
+    "sdk": [
+      {
+        "file": "sdk/install.ps1",
+        "size_bytes": 1606,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/install.sh",
+        "size_bytes": 1163,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/android/build-apk.ps1",
+        "size_bytes": 1604,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/android/README.md",
+        "size_bytes": 1046,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/android/setup-android.ps1",
+        "size_bytes": 3370,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/book.md",
+        "size_bytes": 1853,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/cookbook.md",
+        "size_bytes": 1182,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/lsp-stability.md",
+        "size_bytes": 691,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/README.md",
+        "size_bytes": 581,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/reference.md",
+        "size_bytes": 2106,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/verifier-guide.md",
+        "size_bytes": 1679,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/welcome.aura",
+        "size_bytes": 393,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/docs/z3-gate.md",
+        "size_bytes": 2960,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/collections.aura",
+        "size_bytes": 271,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/collections_region.aura",
+        "size_bytes": 2730,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/concurrent.aura",
+        "size_bytes": 2913,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/core.aura",
+        "size_bytes": 486,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/crypto.aura",
+        "size_bytes": 132,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/hw.aura",
+        "size_bytes": 96,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/io.aura",
+        "size_bytes": 264,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/json.aura",
+        "size_bytes": 99,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/lumina.aura",
+        "size_bytes": 217,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/math.aura",
+        "size_bytes": 201,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/net.aura",
+        "size_bytes": 1966,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/tensor.aura",
+        "size_bytes": 115,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/time.aura",
+        "size_bytes": 151,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/toml.aura",
+        "size_bytes": 99,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/verified_core.aura",
+        "size_bytes": 560,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/std/yaml.aura",
+        "size_bytes": 99,
+        "size_mb": 0.0
+      },
+      {
+        "file": "sdk/styles/pixar-modern.json",
+        "size_bytes": 86,
+        "size_mb": 0.0
+      }
+    ]
+  }
+}

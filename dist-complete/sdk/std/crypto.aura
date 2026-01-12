@@ -1,0 +1,3 @@
+# AuraSDK stdlib: std::crypto
+# Placeholder: crypto APIs should only land once we commit to audits or
+# provide narrow wrappers.

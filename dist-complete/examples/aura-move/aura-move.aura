@@ -1,0 +1,64 @@
+# aura-move.aura
+# Movement/object demo (game-ish): move a "player" rectangle around.
+# Run:
+#   cd examples/aura-move
+#   cargo run -p aura --features z3,lumina-raylib -- run aura-move.aura --mode avm
+
+import aura::lumina
+
+cell main():
+    val mut x: u32 = 6
+    val mut y: u32 = 4
+    val mut steps: u32 = 0
+
+    # Grid settings (virtual).
+    val grid_max_x: u32 = 12
+    val grid_max_y: u32 = 8
+
+    # Map grid -> pixels (tuned for 1920x1080 window).
+    val origin_x: u32 = 560
+    val origin_y: u32 = 220
+    val cell_size: u32 = 56
+
+    layout:
+        VStack(padding: 20, spacing: 14, alignment: "center") {
+            render: Text(text: "AURA MOVE: OBJECT MOTION", style: Style { fg: "Gold", size: 40 })
+            render: Text(text: "Position: ({x}, {y})    Steps: {steps}", style: Style { fg: "White", size: 22 })
+
+            # The "player" object.
+            render: Rect(width: 44, height: 44, radius: 12, color: "Gold", x: origin_x + x * cell_size, y: origin_y + y * cell_size)
+
+            render: Text(text: "Use the D-Pad buttons to move.", style: Style { fg: "White", size: 18 })
+
+            render: HStack(spacing: 12, padding: 0) {
+                render: Button(label: "LEFT", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
+                    on_click: ~> {
+                        if x > 0:
+                            x = x - 1
+                        steps = steps + 1
+                    }
+                }
+                render: Button(label: "UP", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
+                    on_click: ~> {
+                        if y > 0:
+                            y = y - 1
+                        steps = steps + 1
+                    }
+                }
+                render: Button(label: "DOWN", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
+                    on_click: ~> {
+                        if y < grid_max_y:
+                            y = y + 1
+                        steps = steps + 1
+                    }
+                }
+                render: Button(label: "RIGHT", style: Style { bg: "Black", fg: "White", radius: 18, width: 160, height: 60 }) {
+                    on_click: ~> {
+                        if x < grid_max_x:
+                            x = x + 1
+                        steps = steps + 1
+                    }
+                }
+            }
+        }
+

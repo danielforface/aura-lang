@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 /// Explanation Engine - Pillar 1 Rewrite
 /// 
 /// Transforms Z3 UNSAT cores into human-readable explanations that developers
@@ -6,9 +8,7 @@
 /// Key innovation: Traces proof steps back to source code, enriches with variable
 /// values, and generates example-based explanations.
 
-#![forbid(unsafe_code)]
-
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 /// Proof step in the derivation
 #[derive(Clone, Debug)]
@@ -202,7 +202,7 @@ impl Explanation {
         
         if !self.variable_trace.is_empty() {
             output.push_str("## Variable Trace\n");
-            for (name, binding) in &self.variable_trace {
+            for (_name, binding) in &self.variable_trace {
                 output.push_str(&format!("  - {}\n", binding.display()));
                 output.push_str(&format!("    Defined at line {}\n", binding.defined_at.0));
                 if !binding.used_at.is_empty() {

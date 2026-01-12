@@ -164,7 +164,7 @@ impl SignatureValidator {
     pub fn validate_body(
         sig: &LinearFunctionSignature,
         used_params: &[&str],
-        borrowed_params: &[&str],
+        _borrowed_params: &[&str],
         returned_param: Option<&str>,
     ) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();

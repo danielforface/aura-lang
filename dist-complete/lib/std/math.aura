@@ -1,0 +1,5 @@
+# AuraSDK stdlib: aura::math / std::math
+# Minimal math utilities for the current prototype.
+
+trusted extern cell min_u32(a: u32, b: u32) -> u32
+trusted extern cell max_u32(a: u32, b: u32) -> u32

@@ -149,7 +149,7 @@ impl LinearTypeRules {
     /// - Move it to another function (pass it along)
     /// - Return it to the caller
     /// - Explicitly consume it
-    pub fn check_linear_consumed(ownership: &OwnershipContext) -> Result<(), Vec<String>> {
+    pub fn check_linear_consumed(ownership: &mut OwnershipContext) -> Result<(), Vec<String>> {
         let unconsumed = ownership.check_linear_resources_consumed();
         if !unconsumed.is_empty() {
             let errors: Vec<String> = unconsumed

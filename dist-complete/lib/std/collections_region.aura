@@ -1,0 +1,93 @@
+# AuraSDK stdlib: std::collections (region-aware)
+#
+# Region-based collections for efficient memory management.
+# Each collection is allocated in an explicit region and must be freed
+# when the region closes.
+
+## Region-allocated vector
+## Proof contract: vector access is bounds-checked via Z3
+pub fn vec_new<T>(region_id: U32) -> VecRegion<T>
+  requires region_id >= 0
+  ensures result.capacity >= 0
+  ensures result.len == 0
+{
+  # Real implementation would allocate in the region with id region_id
+  # For now, this is a placeholder verifiable signature
+  VecRegion { region: region_id, capacity: 0, len: 0, _data: () }
+}
+
+## Push element to region vector
+## Proof: automatic reallocation preserves ordering and increases len by 1
+pub fn vec_push<T>(v: VecRegion<T>, item: T, region_id: U32) -> VecRegion<T>
+  requires v.len <= v.capacity
+  requires region_id >= 0
+  ensures result.len == v.len + 1
+  ensures result.capacity >= result.len
+{
+  # Real: reallocate if at capacity, push new item
+  VecRegion { 
+    region: region_id,
+    capacity: if v.len >= v.capacity then v.capacity * 2 + 1 else v.capacity,
+    len: v.len + 1,
+    _data: ()
+  }
+}
+
+## Get element from vector (verified bounds check)
+pub fn vec_get<T>(v: VecRegion<T>, idx: U64) -> Option<T>
+  requires idx >= 0
+  ensures idx < v.len => result != none
+  ensures idx >= v.len => result == none
+{
+  if idx < v.len then
+    some(v.at(idx))
+  else
+    none
+}
+
+## Region-allocated hashmap
+## Keys must be hashable; values stored in region
+pub fn hashmap_new<K, V>(region_id: U32, capacity_hint: U32) -> HashmapRegion<K, V>
+  requires region_id >= 0
+  requires capacity_hint > 0
+  ensures result.len == 0
+  ensures result.capacity >= capacity_hint
+{
+  HashmapRegion {
+    region: region_id,
+    capacity: capacity_hint,
+    len: 0,
+    _buckets: (),
+  }
+}
+
+## Insert key-value into region hashmap
+pub fn hashmap_insert<K, V>(
+  m: HashmapRegion<K, V>,
+  key: K,
+  value: V,
+  region_id: U32
+) -> HashmapRegion<K, V>
+  requires region_id >= 0
+  requires m.len <= m.capacity
+  ensures result.len >= m.len
+  ensures result.capacity >= m.len
+{
+  # Real: hash key, probe, insert or update
+  HashmapRegion {
+    region: region_id,
+    capacity: if m.len >= m.capacity then m.capacity * 2 else m.capacity,
+    len: if key_exists(m, key) then m.len else m.len + 1,
+    _buckets: (),
+  }
+}
+
+## Lookup in hashmap (verified success/miss)
+pub fn hashmap_get<K, V>(m: HashmapRegion<K, V>, key: K) -> Option<V>
+{
+  # Real: hash key, probe, return value or none
+  none
+}
+
+# Placeholder: real type definitions would need language support for generics
+# with region tracking at compile time

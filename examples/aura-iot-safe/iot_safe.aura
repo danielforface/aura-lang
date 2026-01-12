@@ -1,4 +1,4 @@
-import aura::hw
+import aura::iot
 
 cell main() ->:
     val cap = hw.open("SPI_CTRL")

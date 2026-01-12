@@ -1,0 +1,5 @@
+import onnxruntime
+
+cell main():
+    val io = "io"
+    io.println("onnx_demo: onnxruntime imported")

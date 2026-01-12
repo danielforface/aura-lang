@@ -1,0 +1,18 @@
+[bridge]
+headers = [
+    "../../tools/onnxruntime_bridge.h",
+]
+
+[linking]
+lib_dirs = [
+    "../../deps",
+    "../../tools",
+]
+libs = ["onnxruntime.lib"]
+
+[project]
+name = "AuraVisionSafe"
+
+plugins = [
+    { name = "aura-ai", trusted = true },
+]

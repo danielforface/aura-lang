@@ -53,6 +53,21 @@
 # Editor
 .vscode/
 
+# Build tools / SDKs (skip large external dependencies)
+.tools/android-sdk/
+.tools/gradle/
+.tools/cmake/
+.tools/jdk/
+.tools/ndk/
+.tools/flutter/
+.tools/go/
+.tools/nodejs/
+.tools/python/
+.tools/llvm/
+tools/android-sdk/
+tools/gradle/
+tools/cmake/
+
 # OS
 .DS_Store
 Thumbs.db

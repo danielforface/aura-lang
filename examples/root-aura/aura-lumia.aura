@@ -1,0 +1,19 @@
+#lumina_test.aura - הבדיקה הראשונה של Aura-Lumina
+import aura::lumina
+
+cell main():
+    val mut counter: u32 = 0
+    val io = "io"
+    
+    # הצהרת המבנה - כאן נכנסים ה-Stmt::Layout ו-Stmt::Render
+    layout:
+        render:
+            io.println("Aura Sentinel: Active")
+            
+        render:
+            # לולאה פשוטה שמדגימה state + invariant (Z3 path later)
+            while counter < 3 invariant counter < 1000:
+                counter = counter + 1
+            io.println("Counter loop done")
+
+    io.println("Done")
