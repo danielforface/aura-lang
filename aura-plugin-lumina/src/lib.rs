@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use aura_nexus::{AuraPlugin, NexusContext, NexusDiagnostic, PluginCapability, UiNode, UiRuntimeFeedback};
+use aura_nexus::{AuraPlugin, NexusContext, NexusDiagnostic, PluginCapability, UiNode, UiRuntimeFeedback, UiTextInputEvent};
 
 #[cfg(not(feature = "raylib"))]
 use aura_nexus::format_ui_tree;
@@ -78,6 +78,24 @@ struct LuminaWindow {
 
     // Minimal tween state: animate the last-clicked callback for a short duration.
     click_anim: Option<(u64, f64)>,
+
+    focused_input: Option<FocusedTextInput>,
+}
+
+#[cfg(feature = "raylib")]
+#[derive(Clone, Debug)]
+struct FocusedTextInput {
+    on_change: u64,
+    on_submit: Option<u64>,
+    buffer: String,
+    caret: usize,
+}
+
+#[cfg(feature = "raylib")]
+#[derive(Default)]
+struct ClickState {
+    clicked_cb: Option<u64>,
+    hit_text_input: bool,
 }
 
 #[cfg(feature = "raylib")]
@@ -203,6 +221,29 @@ impl AuraPlugin for AuraLuminaPlugin {
             let clicked = win.rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
             let now = win.rl.get_time();
 
+            // Keyboard sampling must happen before begin_drawing (borrow rules).
+            let backspace = win.rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE);
+            let delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
+            let left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
+            let right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
+                || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
+            let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+
+            let mut typed = String::new();
+            loop {
+                let c = win.rl.get_char_pressed();
+                if c == 0 {
+                    break;
+                }
+                if let Some(ch) = char::from_u32(c as u32) {
+                    // Basic filtering: accept printable chars; keep newline out.
+                    if ch != '\n' && ch != '\r' {
+                        typed.push(ch);
+                    }
+                }
+            }
+
             let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
 
             let mut d = rl.begin_drawing(thread);
@@ -210,7 +251,8 @@ impl AuraPlugin for AuraLuminaPlugin {
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
             d.clear_background(app_bg);
 
-            let click_cb = render_node(
+            let mut click_state = ClickState::default();
+            render_node(
                 &mut d,
                 tree,
                 Rectangle::new(0.0, 0.0, SCREEN_W as f32, SCREEN_H as f32),
@@ -219,9 +261,87 @@ impl AuraPlugin for AuraLuminaPlugin {
                 now,
                 sdf,
                 win.click_anim,
+                &mut click_state,
+                &mut win.focused_input,
             );
 
+            let click_cb = click_state.clicked_cb;
+
             fb.clicked_callback_id = click_cb;
+
+            // Blur on click outside any text input.
+            if clicked && !click_state.hit_text_input {
+                win.focused_input = None;
+            }
+
+            // Apply keyboard edits for the currently focused input and emit events.
+            if let Some(fi) = &mut win.focused_input {
+                let mut changed = false;
+
+                if escape {
+                    win.focused_input = None;
+                } else {
+                    if left {
+                        fi.caret = fi.caret.saturating_sub(1);
+                    }
+                    if right {
+                        fi.caret = (fi.caret + 1).min(fi.buffer.chars().count());
+                    }
+
+                    if backspace {
+                        if fi.caret > 0 {
+                            let mut chars: Vec<char> = fi.buffer.chars().collect();
+                            let idx = fi.caret - 1;
+                            if idx < chars.len() {
+                                chars.remove(idx);
+                                fi.buffer = chars.into_iter().collect();
+                                fi.caret = fi.caret.saturating_sub(1);
+                                changed = true;
+                            }
+                        }
+                    }
+
+                    if delete {
+                        let mut chars: Vec<char> = fi.buffer.chars().collect();
+                        if fi.caret < chars.len() {
+                            chars.remove(fi.caret);
+                            fi.buffer = chars.into_iter().collect();
+                            changed = true;
+                        }
+                    }
+
+                    if !typed.is_empty() {
+                        let mut chars: Vec<char> = fi.buffer.chars().collect();
+                        let insert: Vec<char> = typed.chars().collect();
+                        let mut idx = fi.caret.min(chars.len());
+                        for ch in insert {
+                            chars.insert(idx, ch);
+                            idx += 1;
+                        }
+                        fi.buffer = chars.into_iter().collect();
+                        fi.caret = idx;
+                        changed = true;
+                    }
+
+                    if changed {
+                        fb.text_input_events.push(UiTextInputEvent {
+                            callback_id: fi.on_change,
+                            text: fi.buffer.clone(),
+                            submitted: false,
+                        });
+                    }
+
+                    if enter {
+                        if let Some(cb) = fi.on_submit {
+                            fb.text_input_events.push(UiTextInputEvent {
+                                callback_id: cb,
+                                text: fi.buffer.clone(),
+                                submitted: true,
+                            });
+                        }
+                    }
+                }
+            }
 
             if let Some(id) = click_cb {
                 win.click_anim = Some((id, now));
@@ -394,6 +514,11 @@ fn measure_node(node: &UiNode) -> (f32, f32) {
             let h = size;
             (w, h)
         }
+        "TextInput" => {
+            let w = prop_i32(node, "width").unwrap_or(360) as f32;
+            let h = prop_i32(node, "height").unwrap_or(46) as f32;
+            (w, h)
+        }
         _ => {
             // Containers default to available space.
             (0.0, 0.0)
@@ -411,7 +536,9 @@ fn render_node(
     now: f64,
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
-) -> Option<u64> {
+    click_state: &mut ClickState,
+    focused_input: &mut Option<FocusedTextInput>,
+) {
     // Optional absolute positioning: if a node provides `x`/`y` props, render it at that position.
     // This enables simple "game-ish" demos (moving objects) without adding a full canvas API yet.
     let mut bounds = bounds;
@@ -425,9 +552,8 @@ fn render_node(
     match node.kind.as_str() {
         "App" => {
             // App is just a root container.
-            let mut clicked: Option<u64> = None;
             for child in &node.children {
-                clicked = clicked.or(render_node(
+                render_node(
                     d,
                     child,
                     bounds,
@@ -436,9 +562,10 @@ fn render_node(
                     now,
                     sdf,
                     click_anim,
-                ));
+                    click_state,
+                    focused_input,
+                );
             }
-            clicked
         }
         "VStack" => {
             let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
@@ -446,8 +573,6 @@ fn render_node(
             let alignment = prop_string(node, "alignment").unwrap_or("start");
 
             let mut y = bounds.y + padding;
-            let mut clicked: Option<u64> = None;
-
             for child in &node.children {
                 let (cw, ch) = measure_node(child);
                 let x = if alignment == "center" && cw > 0.0 {
@@ -457,7 +582,7 @@ fn render_node(
                 };
 
                 let child_bounds = Rectangle::new(x, y, if cw > 0.0 { cw } else { bounds.width }, ch);
-                clicked = clicked.or(render_node(
+                render_node(
                     d,
                     child,
                     child_bounds,
@@ -466,22 +591,21 @@ fn render_node(
                     now,
                     sdf,
                     click_anim,
-                ));
+                    click_state,
+                    focused_input,
+                );
                 y += ch + spacing;
             }
-            clicked
         }
         "HStack" => {
             let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
             let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
 
             let mut x = bounds.x + padding;
-            let mut clicked: Option<u64> = None;
-
             for child in &node.children {
                 let (cw, ch) = measure_node(child);
                 let child_bounds = Rectangle::new(x, bounds.y + padding, cw, ch);
-                clicked = clicked.or(render_node(
+                render_node(
                     d,
                     child,
                     child_bounds,
@@ -490,10 +614,11 @@ fn render_node(
                     now,
                     sdf,
                     click_anim,
-                ));
+                    click_state,
+                    focused_input,
+                );
                 x += cw + spacing;
             }
-            clicked
         }
         "Text" => {
             let size = prop_i32(node, "size").unwrap_or(20);
@@ -502,7 +627,98 @@ fn render_node(
                 .or_else(|| prop_string(node, "content"))
                 .unwrap_or("");
             d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
-            None
+        }
+        "TextInput" => {
+            let w = prop_i32(node, "width").unwrap_or(360) as f32;
+            let h = prop_i32(node, "height").unwrap_or(46) as f32;
+            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+
+            let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")).or(Some("#0D1117")));
+            let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
+            let placeholder_c = parse_color(Some("#8B949E"));
+            let border = parse_color(prop_string(node, "border").or(Some("#30363D")));
+            let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
+
+            // Determine identity via callbacks.
+            let on_change = parse_callback_id(prop_string(node, "on_change"));
+            let on_submit = parse_callback_id(prop_string(node, "on_submit"));
+
+            let mut is_focused = false;
+            if let (Some(fi), Some(cb)) = (focused_input.as_ref(), on_change) {
+                if fi.on_change == cb {
+                    is_focused = true;
+                }
+            }
+
+            // Background.
+            if radius > 0.0 {
+                let min_dim = rect.width.min(rect.height).max(1.0);
+                let rect_u = [rect.x, rect.y, rect.width, rect.height];
+                let radius_u = radius.min(min_dim * 0.5);
+                let softness_u = 1.25_f32;
+                let border_w_u = 2.0_f32;
+
+                sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
+                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
+                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
+                sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
+                sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
+                sdf.shader.set_shader_value(sdf.loc_border_width, border_w_u);
+
+                let mut sd = d.begin_shader_mode(&mut sdf.shader);
+                sd.draw_rectangle_rec(rect, Color::WHITE);
+            } else {
+                d.draw_rectangle_rec(rect, bg);
+                d.draw_rectangle_lines_ex(rect, 2.0, border);
+            }
+
+            // Click-to-focus.
+            if mouse_clicked && point_in_rect(mouse, rect) {
+                click_state.hit_text_input = true;
+                if let Some(cb) = on_change {
+                    let value = prop_string(node, "value")
+                        .or_else(|| prop_string(node, "text"))
+                        .unwrap_or("")
+                        .to_string();
+                    *focused_input = Some(FocusedTextInput {
+                        on_change: cb,
+                        on_submit,
+                        buffer: value,
+                        caret: value.chars().count(),
+                    });
+                    is_focused = true;
+                }
+            }
+
+            // Display value (controlled input).
+            let value = if is_focused {
+                focused_input
+                    .as_ref()
+                    .map(|fi| fi.buffer.as_str())
+                    .unwrap_or("")
+            } else {
+                prop_string(node, "value")
+                    .or_else(|| prop_string(node, "text"))
+                    .unwrap_or("")
+            };
+
+            let placeholder = prop_string(node, "placeholder").unwrap_or("");
+            let display = if value.is_empty() { placeholder } else { value };
+            let display_color = if value.is_empty() { placeholder_c } else { fg };
+
+            let ts = prop_i32(node, "size").unwrap_or(18);
+            let pad_x = 12.0_f32;
+            let pad_y = (rect.height - ts as f32) / 2.0;
+            d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
+
+            // Caret (end-of-text only, MVP).
+            if is_focused {
+                let est_w = (value.chars().count() as f32) * (ts as f32 * 0.6);
+                let cx = rect.x + pad_x + est_w + 1.0;
+                let cy0 = rect.y + 10.0;
+                let cy1 = rect.y + rect.height - 10.0;
+                d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+            }
         }
         "Rect" => {
             let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
@@ -532,7 +748,6 @@ fn render_node(
                 d.draw_rectangle_rec(rect, fill);
             }
 
-            None
         }
         "Button" => {
             let w = prop_i32(node, "width").unwrap_or(200) as f32;
@@ -589,16 +804,15 @@ fn render_node(
             d.draw_text(label, tx as i32, ty as i32, ts, fg);
 
             if mouse_clicked && point_in_rect(mouse, rect) {
-                return parse_callback_id(prop_string(node, "on_click"));
+                click_state.clicked_cb = click_state
+                    .clicked_cb
+                    .or_else(|| parse_callback_id(prop_string(node, "on_click")));
             }
-
-            None
         }
         _ => {
             // Unknown nodes: traverse children.
-            let mut clicked: Option<u64> = None;
             for child in &node.children {
-                clicked = clicked.or(render_node(
+                render_node(
                     d,
                     child,
                     bounds,
@@ -607,9 +821,10 @@ fn render_node(
                     now,
                     sdf,
                     click_anim,
-                ));
+                    click_state,
+                    focused_input,
+                );
             }
-            clicked
         }
     }
 }

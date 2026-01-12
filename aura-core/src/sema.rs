@@ -275,12 +275,85 @@ impl Checker {
             },
         );
 
+        // --- ui (prototype) ---
+        checker.functions.insert(
+            "ui.event_text".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "ui.get_text".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "key".to_string(),
+                    ty: Type::String,
+                }],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "ui.set_text".to_string(),
+            FnSig {
+                params: vec![
+                    FnParam {
+                        name: "key".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "value".to_string(),
+                        ty: Type::String,
+                    },
+                ],
+                ret: Type::Unit,
+            },
+        );
+
         // AVM-only persistence + app-state helpers (prototype)
         checker.functions.insert(
             "shop.path".to_string(),
             FnSig {
                 params: vec![],
                 ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.select".to_string(),
+            FnSig {
+                params: vec![FnParam {
+                    name: "index".to_string(),
+                    ty: Type::U32,
+                }],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.selection_status".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::String,
+            },
+        );
+        checker.functions.insert(
+            "shop.clear_selection".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Unit,
+            },
+        );
+        checker.functions.insert(
+            "shop.has_selection".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::Bool,
+            },
+        );
+        checker.functions.insert(
+            "shop.selected_index".to_string(),
+            FnSig {
+                params: vec![],
+                ret: Type::U32,
             },
         );
         checker.functions.insert(
@@ -346,6 +419,26 @@ impl Checker {
             FnSig {
                 params: vec![],
                 ret: Type::U32,
+            },
+        );
+        checker.functions.insert(
+            "shop.upsert".to_string(),
+            FnSig {
+                params: vec![
+                    FnParam {
+                        name: "name".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "qty".to_string(),
+                        ty: Type::String,
+                    },
+                    FnParam {
+                        name: "notes".to_string(),
+                        ty: Type::String,
+                    },
+                ],
+                ret: Type::Unit,
             },
         );
         checker.functions.insert(

@@ -13,6 +13,28 @@ from typing import Iterable, Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES_DIR = REPO_ROOT / "examples"
 DIST_AURA_EXE = REPO_ROOT / "dist-release" / "bin" / "aura.exe"
+DEBUG_AURA_EXE = REPO_ROOT / "target" / "debug" / "aura.exe"
+
+
+def _resolve_aura_exe() -> Path:
+    """Pick an Aura binary that matches the current source tree.
+
+    We prefer a locally built debug binary when available because dist-release
+    can easily drift behind the workspace (and then fail on new syntax like
+    hex colors in string literals).
+    """
+
+    env = os.environ.get("AURA_EXE")
+    if env:
+        return Path(env)
+
+    if DEBUG_AURA_EXE.exists():
+        return DEBUG_AURA_EXE
+
+    if DIST_AURA_EXE.exists():
+        return DIST_AURA_EXE
+
+    return Path("aura")
 
 
 @dataclass(frozen=True)
@@ -178,7 +200,7 @@ def _default_aura_command_for_file(aura_file: Path, workdir: Path) -> Example:
             command_ps_lines=cmd,
         )
 
-    aura_exe = DIST_AURA_EXE if DIST_AURA_EXE.exists() else Path("aura")
+    aura_exe = _resolve_aura_exe()
 
     if _file_has_main(aura_file) and not _file_uses_iot_hw_contracts(aura_file):
         cmd = [f'& "{aura_exe}" run "{aura_file.name}" --mode avm']
@@ -259,7 +281,7 @@ def discover_examples() -> list[Example]:
         aura_files = sorted([p for p in verification.glob("*.aura") if p.is_file()], key=lambda p: p.name.lower())
         for f in aura_files:
             # Force verify for this folder
-            aura_exe = DIST_AURA_EXE if DIST_AURA_EXE.exists() else Path("aura")
+            aura_exe = _resolve_aura_exe()
             smt = " --smt-profile thorough" if _file_uses_quantifiers(f) else ""
             examples.append(
                 Example(

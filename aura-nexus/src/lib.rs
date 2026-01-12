@@ -231,6 +231,17 @@ pub trait UiPluginDispatch {
 pub struct UiRuntimeFeedback {
     pub close_requested: bool,
     pub clicked_callback_id: Option<u64>,
+
+    // Text input events (e.g., TextInput on_change / on_submit).
+    #[allow(dead_code)]
+    pub text_input_events: Vec<UiTextInputEvent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct UiTextInputEvent {
+    pub callback_id: u64,
+    pub text: String,
+    pub submitted: bool,
 }
 
 pub fn take_ui_feedback(nexus: &mut NexusContext) -> UiRuntimeFeedback {

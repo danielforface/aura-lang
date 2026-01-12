@@ -156,6 +156,10 @@ pub struct Avm {
     // Minimal built-in app state for interactive AVM demos/tools.
     shop: ShopState,
 
+    // Minimal UI state for controlled inputs (prototype).
+    ui_event_text: String,
+    ui_text_state: HashMap<String, String>,
+
     // Background stdin reader so UI callbacks don't block the render loop.
     stdin_rx: Option<mpsc::Receiver<String>>,
 
@@ -174,6 +178,8 @@ struct ShopItem {
 struct ShopState {
     path: Option<String>,
     items: Vec<ShopItem>,
+
+    selected: Option<usize>,
 
     pending: Option<ShopPending>,
     status: String,
@@ -213,6 +219,26 @@ impl ShopState {
         let p = Self::default_path();
         self.path = Some(p.clone());
         p
+    }
+
+    fn select(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.selected = Some(index);
+        } else {
+            self.selected = None;
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
+    fn has_selection(&self) -> bool {
+        self.selected.is_some()
+    }
+
+    fn selected_index_u32(&self) -> u32 {
+        self.selected.unwrap_or(0) as u32
     }
 
     fn load_from_path(&mut self, path: &str) -> miette::Result<()> {
@@ -421,6 +447,51 @@ impl ShopState {
 }
 
 impl Avm {
+    fn ui_set_event_text(&mut self, s: impl Into<String>) {
+        self.ui_event_text = s.into();
+    }
+
+    fn builtin_ui_dispatch(&mut self, name: &str, args: &[CallArg]) -> miette::Result<AvmValue> {
+        match name {
+            "ui.event_text" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: ui.event_text expects 0 arguments"));
+                }
+                Ok(AvmValue::Str(self.ui_event_text.clone()))
+            }
+            "ui.get_text" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: ui.get_text expects 1 argument"));
+                }
+                let k = self.eval_expr(call_arg_value(&args[0]))?;
+                let AvmValue::Str(key) = k else {
+                    return Err(miette::miette!("AVM: ui.get_text expects string key"));
+                };
+                Ok(AvmValue::Str(
+                    self.ui_text_state.get(&key).cloned().unwrap_or_default(),
+                ))
+            }
+            "ui.set_text" => {
+                if args.len() != 2 {
+                    return Err(miette::miette!("AVM: ui.set_text expects 2 arguments"));
+                }
+                let k = self.eval_expr(call_arg_value(&args[0]))?;
+                let v = self.eval_expr(call_arg_value(&args[1]))?;
+                let AvmValue::Str(key) = k else {
+                    return Err(miette::miette!("AVM: ui.set_text expects string key"));
+                };
+                let AvmValue::Str(val) = v else {
+                    return Err(miette::miette!("AVM: ui.set_text expects string value"));
+                };
+                self.ui_text_state.insert(key, val);
+                Ok(AvmValue::Unit)
+            }
+            _ => Err(miette::miette!("AVM: unknown ui builtin '{name}'")),
+        }
+    }
+}
+
+impl Avm {
     pub fn new(cfg: AvmConfig) -> Self {
         let debug = cfg.debug.clone();
 
@@ -450,6 +521,8 @@ impl Avm {
             hot: HashMap::new(),
             stdout: String::new(),
             shop: ShopState::default(),
+            ui_event_text: String::new(),
+            ui_text_state: HashMap::new(),
             stdin_rx: Some(rx),
             debug,
         }
@@ -520,6 +593,61 @@ impl Avm {
         };
 
         match name {
+            "shop.selection_status" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!(
+                        "AVM: shop.selection_status expects 0 arguments"
+                    ));
+                }
+                let s = if let Some(sel) = self.shop.selected {
+                    if let Some(it) = self.shop.items.get(sel) {
+                        if it.name.trim().is_empty() {
+                            format!("Editing item #{sel}")
+                        } else {
+                            format!("Editing: {}", it.name.trim())
+                        }
+                    } else {
+                        "Editing item".to_string()
+                    }
+                } else {
+                    "Add item".to_string()
+                };
+                Ok(AvmValue::Str(s))
+            }
+            "shop.select" => {
+                if args.len() != 1 {
+                    return Err(miette::miette!("AVM: shop.select expects 1 argument"));
+                }
+                let idx = match eval1(self, 0)? {
+                    AvmValue::Int(i) => i,
+                    _ => return Err(miette::miette!("AVM: shop.select expects integer index")),
+                };
+                if idx < 0 {
+                    self.shop.clear_selection();
+                    return Ok(AvmValue::Unit);
+                }
+                self.shop.select(idx as usize);
+                Ok(AvmValue::Unit)
+            }
+            "shop.clear_selection" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.clear_selection expects 0 arguments"));
+                }
+                self.shop.clear_selection();
+                Ok(AvmValue::Unit)
+            }
+            "shop.has_selection" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.has_selection expects 0 arguments"));
+                }
+                Ok(AvmValue::Bool(self.shop.has_selection()))
+            }
+            "shop.selected_index" => {
+                if !args.is_empty() {
+                    return Err(miette::miette!("AVM: shop.selected_index expects 0 arguments"));
+                }
+                Ok(AvmValue::Int(self.shop.selected_index_u32() as i64))
+            }
             "shop.status" => {
                 if !args.is_empty() {
                     return Err(miette::miette!("AVM: shop.status expects 0 arguments"));
@@ -671,6 +799,76 @@ impl Avm {
                 let _ = self.shop.save_to_path(&path);
                 Ok(AvmValue::Unit)
             }
+            "shop.upsert" => {
+                if args.len() < 1 || args.len() > 3 {
+                    return Err(miette::miette!(
+                        "AVM: shop.upsert expects 1..3 arguments (name, qty?, notes?)"
+                    ));
+                }
+
+                let name_s = match eval1(self, 0)? {
+                    AvmValue::Str(s) => s,
+                    _ => return Err(miette::miette!("AVM: shop.upsert expects string name")),
+                };
+                let qty_s = if args.len() >= 2 {
+                    match eval1(self, 1)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!("AVM: shop.upsert expects string qty")),
+                    }
+                } else {
+                    "".to_string()
+                };
+                let notes_s = if args.len() >= 3 {
+                    match eval1(self, 2)? {
+                        AvmValue::Str(s) => s,
+                        _ => return Err(miette::miette!(
+                            "AVM: shop.upsert expects string notes"
+                        )),
+                    }
+                } else {
+                    "".to_string()
+                };
+
+                if name_s.trim().is_empty() {
+                    return Ok(AvmValue::Unit);
+                }
+
+                let qty_trim = qty_s.trim();
+                let notes_trim = notes_s.trim();
+
+                if let Some(sel) = self.shop.selected {
+                    if sel < self.shop.items.len() {
+                        let new_name = name_s.trim().to_string();
+                        let new_qty = if qty_trim.is_empty() {
+                            self.shop.items[sel].qty.clone()
+                        } else {
+                            qty_trim.to_string()
+                        };
+                        let new_notes = notes_trim.to_string();
+
+                        let it = &mut self.shop.items[sel];
+                        it.name = new_name;
+                        it.qty = new_qty;
+                        it.notes = new_notes;
+                    }
+                    self.shop.selected = None;
+                } else {
+                    self.shop.items.push(ShopItem {
+                        name: name_s.trim().to_string(),
+                        qty: if qty_trim.is_empty() {
+                            "1".to_string()
+                        } else {
+                            qty_trim.to_string()
+                        },
+                        notes: notes_trim.to_string(),
+                        purchased: false,
+                    });
+                }
+
+                let path = self.shop.ensure_path();
+                let _ = self.shop.save_to_path(&path);
+                Ok(AvmValue::Unit)
+            }
             "shop.remove" | "shop.toggle" => {
                 if args.len() != 1 {
                     return Err(miette::miette!("AVM: {} expects 1 argument", name));
@@ -689,6 +887,14 @@ impl Avm {
 
                 if name == "shop.remove" {
                     self.shop.items.remove(i);
+
+                    if let Some(sel) = self.shop.selected {
+                        if sel == i {
+                            self.shop.selected = None;
+                        } else if sel > i {
+                            self.shop.selected = Some(sel - 1);
+                        }
+                    }
                 } else {
                     let it = &mut self.shop.items[i];
                     it.purchased = !it.purchased;
@@ -754,6 +960,7 @@ impl Avm {
                     return Err(miette::miette!("AVM: shop.clear expects 0 arguments"));
                 }
                 self.shop.items.clear();
+                self.shop.selected = None;
                 let path = self.shop.ensure_path();
                 let _ = self.shop.save_to_path(&path);
                 Ok(AvmValue::Unit)
@@ -763,6 +970,13 @@ impl Avm {
                     return Err(miette::miette!("AVM: shop.clear_completed expects 0 arguments"));
                 }
                 self.shop.items.retain(|x| !x.purchased);
+
+                if let Some(sel) = self.shop.selected {
+                    if sel >= self.shop.items.len() {
+                        self.shop.selected = None;
+                    }
+                }
+
                 let path = self.shop.ensure_path();
                 let _ = self.shop.save_to_path(&path);
                 Ok(AvmValue::Unit)
@@ -1248,6 +1462,13 @@ impl Avm {
                             let _ = self.exec_block(&body, ui_plugins, nexus)?;
                         }
                     }
+
+                    for ev in fb.text_input_events {
+                        self.ui_set_event_text(ev.text);
+                        if let Some(body) = self.callbacks.get(&ev.callback_id).cloned() {
+                            let _ = self.exec_block(&body, ui_plugins, nexus)?;
+                        }
+                    }
                 }
                 Ok(AvmValue::Unit)
             }
@@ -1300,6 +1521,13 @@ impl Avm {
 
                     if let Some(cb) = fb.clicked_callback_id {
                         if let Some(body) = self.callbacks.get(&cb).cloned() {
+                            let _ = self.exec_block(&body, ui_plugins, nexus)?;
+                        }
+                    }
+
+                    for ev in fb.text_input_events {
+                        self.ui_set_event_text(ev.text);
+                        if let Some(body) = self.callbacks.get(&ev.callback_id).cloned() {
                             let _ = self.exec_block(&body, ui_plugins, nexus)?;
                         }
                     }
@@ -1459,6 +1687,7 @@ impl Avm {
                     // without requiring `val io = "io"` pre-bindings.
                     "io" => Some(AvmValue::Str("io".to_string())),
                     "shop" => Some(AvmValue::Str("shop".to_string())),
+                    "ui" => Some(AvmValue::Str("ui".to_string())),
                     _ => None,
                 })
                 .ok_or_else(|| miette::miette!("AVM: unknown identifier '{}'", id.node)),
@@ -1562,6 +1791,8 @@ impl Avm {
                     self.builtin_io_write_text(&path, &text)
                 } else if name.starts_with("shop.") {
                     self.builtin_shop_dispatch(&name, args)
+                } else if name.starts_with("ui.") {
+                    self.builtin_ui_dispatch(&name, args)
                 } else if is_ui_call(&name, trailing.is_some()) {
                     let mut node = UiNode::new(name);
 
@@ -1890,6 +2121,7 @@ fn is_ui_call(name: &str, has_trailing: bool) -> bool {
             | "VStack"
             | "HStack"
             | "Text"
+            | "TextInput"
             | "Button"
             | "Spacer"
             | "Rect"
