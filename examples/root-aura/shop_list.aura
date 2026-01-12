@@ -9,7 +9,7 @@ import aura::lumina
 
 cell main():
     val title: String = "SHOP LIST"
-    val subtitle: String = "Add, remove, edit — clean and fast"
+    val subtitle: String = "Add, remove, edit - clean and fast"
 
     val item_1: String = "Oat milk"
     val item_2: String = "Eggs"
@@ -25,7 +25,7 @@ cell main():
             render: Text(text: subtitle, style: Style { fg: "Gold", size: 18 })
 
             render:
-                VStack(spacing: 12, acknowledge: "card") {
+                VStack(spacing: 12) {
                     render: Text(text: "Today", style: Style { fg: "White", size: 22 })
 
                     render:
