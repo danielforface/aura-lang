@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package halm;
+
+option java_package = "com.aura.halm";
+option go_package = "github.com/aura-lsp/halm/proto";
+
+// ═══════════════════════════════════════════════════════════════════
+// HALM Bridge Protocol — Neural-LSP gRPC Interface
+//
+// Defines the contract between the Python HALM Intelligence Layer
+// and the Rust aura-lsp Language Server. The HALM server receives
+// partial ASTs and logical objectives, runs an internal active
+// inference loop (forward → Z3 verify → rollback if UNSAT → retry),
+// and returns only SAT-verified AST patches to the LSP client.
+// ═══════════════════════════════════════════════════════════════════
+
+service HALMBridge {
+  // Primary RPC: Submit a partial AST and logical objective.
+  // The server enters an active inference loop internally:
+  //   1. Forward pass through CausalReasoner + G2LCompiler
+  //   2. Dispatch to Z3 VerificationQueue
+  //   3. If UNSAT → Rollback via HALMOptimizer, apply ζ penalty, retry
+  //   4. If SAT   → Return the verified AST patch
+  //
+  // This call blocks until a SAT result is achieved or max_retries is exhausted.
+  rpc SynthesizeVerifiedLogic (SynthesisRequest) returns (SynthesisResponse);
+
+  // Health check for monitoring and orchestration.
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Request / Response Messages
+// ─────────────────────────────────────────────────────────────────
+
+message SynthesisRequest {
+  // The current partial AST or set of logical premises as raw text.
+  // For SMT-LIB mode this is a partial .smt2 file.
+  // For Rust/code mode this is the source buffer up to the cursor.
+  string partial_ast = 1;
+
+  // The target logical objective — what the HALM engine should
+  // attempt to prove, synthesize, or complete.
+  // Examples: "prove memory safety for fn alloc()",
+  //           "(assert (forall ((x Int)) (>= (* x x) 0)))"
+  string target_objective = 2;
+
+  // Context variables that constrain the synthesis space.
+  // Keys are variable names, values are type annotations or bounds.
+  map<string, string> context_variables = 3;
+
+  // Maximum number of internal HALM loop retries before returning
+  // a best-effort (unverified) result. Default: 10.
+  int32 max_retries = 4;
+
+  // Unique request ID for tracing across the Rust LSP ↔ HALM boundary.
+  string request_id = 5;
+}
+
+message SynthesisResponse {
+  // The verified AST patch — guaranteed to have passed Z3 SAT check
+  // (unless status indicates otherwise).
+  string verified_ast_patch = 1;
+
+  // Full compilation trace from the Z3/compiler subprocess.
+  // Includes stdout and stderr from the final successful verification.
+  CompilationTrace compilation_trace = 2;
+
+  // Confidence score [0.0, 1.0] — the optimizer's EMA of SAT rate
+  // at the time this response was generated.
+  float confidence_score = 3;
+
+  // Synthesis status.
+  SynthesisStatus status = 4;
+
+  // Number of internal HALM loop iterations consumed.
+  int32 iterations_used = 5;
+
+  // Total wall-clock time spent in the active inference loop (ms).
+  float total_latency_ms = 6;
+
+  // Current ζ (soft penalty) weight — indicates how "strict" the
+  // engine is being. Higher values = more conservative generation.
+  float zeta_weight = 7;
+
+  // Echo back the request ID for client-side correlation.
+  string request_id = 8;
+}
+
+message CompilationTrace {
+  // Raw stdout from the compiler/Z3 subprocess.
+  string stdout = 1;
+
+  // Raw stderr from the compiler/Z3 subprocess.
+  string stderr = 2;
+
+  // Process exit code. 0 = success.
+  int32 return_code = 3;
+
+  // Subprocess execution time in milliseconds.
+  float exec_time_ms = 4;
+
+  // The SMT-LIB string that was actually verified (for audit trail).
+  string smt2_source = 5;
+}
+
+enum SynthesisStatus {
+  // Z3 returned SAT — the patch is formally verified.
+  SYNTHESIS_SAT = 0;
+
+  // Max retries exhausted without achieving SAT.
+  // The best-effort patch is returned but NOT verified.
+  SYNTHESIS_EXHAUSTED = 1;
+
+  // Internal engine error (e.g., VRAM OOM, subprocess crash).
+  SYNTHESIS_ERROR = 2;
+
+  // The partial AST was too broken to translate into SMT-LIB.
+  // The Rust LSP should wait for more keystrokes before retrying.
+  SYNTHESIS_INCOMPLETE_AST = 3;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Health Check
+// ─────────────────────────────────────────────────────────────────
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string device = 2;
+  float vram_usage_gb = 3;
+  float current_zeta = 4;
+  float confidence_ema = 5;
+  int64 total_requests_served = 6;
+  int64 total_rollbacks = 7;
+}
