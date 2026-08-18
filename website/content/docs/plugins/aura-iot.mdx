@@ -1,11 +1,17 @@
 ---
 title: Aura IoT Plugin
-description: Hardware/MMIO safety checks (capabilities, offsets, bitmasks).
+description: IoT/MMIO-oriented Nexus integration with verification-aware capability and register checks.
 ---
 
-## Enable
+## Scope
 
-Add this to your `aura.toml`:
+IoT/MMIO-oriented Nexus integration with verification-aware capability and register checks.
+
+- The repository contains a dedicated aura-plugin-iot workspace component.
+- Plugin diagnostics can carry verification-oriented offset/bitmask information where the configured model supports it.
+- Hardware behavior and trusted native/platform boundaries remain outside a universal proof claim.
+
+## Enable
 
 ```toml
 plugins = [
@@ -13,10 +19,7 @@ plugins = [
 ]
 ```
 
-## What it verifies
-
-- Emits informational proof diagnostics for verified bitmask/offset facts.
-- Uses the nearest aura.toml [hardware] manifest to learn register masks.
+Marking a plugin as `trusted` places its trusted behavior inside the project trust boundary; it does not automatically prove external hardware or native libraries.
 
 ## Example
 
@@ -30,4 +33,4 @@ cell main() ->:
 
 ## Editor feedback
 
-When verification succeeds, the LSP publishes informational diagnostics tagged with the plugin id (`aura-iot`). Aura Sentinel uses these to render gutter icons, hovers, and inlay hints.
+Where verification/plugin diagnostics are produced, `aura-lsp` can expose plugin-attributed information to Aura-aware clients such as Sentinel. Exact diagnostics depend on the current plugin implementation and configured project model.

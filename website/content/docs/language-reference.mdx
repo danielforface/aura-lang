@@ -1,105 +1,160 @@
+﻿---
+title: "Language Reference"
+description: "A conservative snapshot of the current implemented/reference-backed Aura language surface."
 ---
-title: Language Reference
-description: The core syntax and semantics of Aura (current prototype).
----
 
-<KeywordTable />
+This page is intentionally conservative. When documentation conflicts with the current compiler, use this precedence:
 
-<OperatorTable />
+1. current implementation,
+2. `sdk/docs/reference.md`,
+3. focused current verifier/protocol docs,
+4. historical roadmap/design/completion documents.
 
-## Program structure
+## Lexical structure
 
-An Aura program is a list of top-level statements. The most common entry point is a <K>cell</K>.
-
-<Syntax title="Entry point">
-
-<Op>cell</Op> <Lit>name</Lit>() <Op>-></Op> <Ty>Type</Ty><Op>:</Op>
-  <Lit>statements...</Lit>
-
-</Syntax>
-
-<Semantics title="Why cells?">
-Cells are a unit of execution and verification: the compiler checks types, the verifier proves safety obligations, and the runtime evaluates the body.
-</Semantics>
+Indentation is significant. The lexer models structural indentation/newline tokens rather than treating whitespace as presentation only.
 
 ```aura
-cell main() -> u32:
-  val x: u32 = 42
-  yield x
+cell main():
+    val x: u32 = 1
+    if x == 1:
+        log("one")
 ```
 
-## Statements
+## Modules
 
-<Syntax title="Common statement forms">
+```aura
+import std::io
+import aura::tensor
+```
 
-- <K>val</K> name<Op>:</Op> <Ty>Type</Ty> <Op>=</Op> expr
-- <K>mut</K> name<Op>:</Op> <Ty>Type</Ty> <Op>=</Op> expr
-- name <Op>=</Op> expr
-- <K>if</K> cond<Op>:</Op> ... <K>else</K><Op>:</Op> ...
-- <K>while</K> cond <K>invariant</K> (expr)<Op>:</Op> ...
-- <K>yield</K> expr
+SDK installs may inject default standard modules based on imports.
 
-</Syntax>
+## Bindings
 
-<Semantics title="Yield and blocks">
-<K>yield</K> returns a value from a block (and must be the last statement in that block).
-</Semantics>
+```aura
+val answer: u32 = 42
+val mut index: u32 = 0
+index = index + 1
+```
 
-## Expressions
+## Cells
 
-Aura supports integer and string literals, identifiers, unary/binary operators, and calls.
+```aura
+cell add(a: u32, b: u32) -> u32:
+    a + b
+```
 
-Member calls like `model.infer(x)` are lowered by the checker/verifier into well-known calls (e.g. `ai.infer(model, x)`), enabling proof rules.
+Foreign declarations:
 
-<Semantics title="Lowering (important for plugins)">
-When syntax looks like a member call, the compiler can lower it into a canonical function call so the verifier/plugin system can attach rules to a single name.
-</Semantics>
+```aura
+extern cell native_read(fd: u32) -> u32
+trusted extern cell audited_clock() -> u32
+```
+
+Trust metadata is not proof of the external implementation.
+
+## Current built-in type snapshot
+
+The compact reference currently names:
+
+- `u32`
+- `bool`
+- `String`
+- `Unit`
+- `Tensor<Elem, [d0, d1, ...]>`
+- `Model`
+- `Style`
+
+This is not a frozen pre-1.0 type-system promise.
+
+## Refinements
+
+Range refinement syntax is documented for `u32`:
+
+```aura
+val percent: u32[0..100] = 75
+```
+
+## Contracts and proof statements
+
+```aura
+cell inc(x: u32) -> u32:
+    requires x < 100
+    ensures result == x + 1
+
+    val next = x + 1
+    assert next <= 100
+    next
+```
+
+`assume` intentionally adds trusted information to proof reasoning and should be used carefully.
+
+## Loops
+
+```aura
+val mut i: u32 = 0
+while i < n invariant i <= n decreases n - i:
+    i = i + 1
+```
+
+The verifier guide also documents quantifiers. Repository verification examples note that quantifiers are accepted only under the `thorough` SMT profile in that path.
+
+## Control flow
+
+Current reference includes:
+
+- `if`
+- `match`
+- `while`
+
+Precise pattern grammar should come from current parser behavior, not old design prose.
 
 ## Flow operators
 
-Aura includes a flow operator family used to model capability transfer and sequencing:
-
-- <Op>-></Op> (sync flow)
-- <Op>~></Op> (async flow)
-
-They behave like “do left, then right”, and the verifier uses them to enforce capability rules (e.g. no unsafe reuse).
-
-<Example title="Flow sequencing">
-
 ```aura
-cell main() -> u32:
-  val a: u32 = 1
-  val b: u32 = 2
-  val out: u32 = a -> b
-  yield out
+left -> right
+left ~> right
 ```
 
-</Example>
+The compact reference distinguishes synchronous (`->`) and asynchronous (`~>`) flow.
 
-## Types (prototype)
+## Resource moves
 
-You’ll see these commonly:
+For resource-like types such as `Tensor`, `Model` and `Style`, the current reference documents move behavior on identifier binding/assignment. Broader ownership/linear/capability infrastructure exists in the compiler, but the stable language guarantee is not yet frozen.
 
-- <Ty>u32</Ty>, <Ty>bool</Ty>, <Ty>string</Ty>, <Ty>()</Ty>
-- Tensor types like <Ty>Tensor&lt;u32, [2, 2, 3]&gt;</Ty>
+## Async capture safety
 
-Type aliases are supported:
+Current reference states that async lambdas may not capture mutable outer bindings.
 
-```aura
-type Pixels = Tensor<u32, [2,2,3]>
-```
+## Unsafe and FFI
 
-## Imports
-
-Imports are currently used as **module placeholders** (they tell the checker/verifier which namespaces are in scope):
+Untrusted external calls require an explicit unsafe boundary in the current model:
 
 ```aura
-import aura::tensor
-import aura::io
+unsafe:
+    native_read(fd)
 ```
 
-See the “Stdlib, Modules, and Imports” doc for details.
+## UI syntax
 
-<Note>
-In the current prototype, <K>import</K> is also used by tooling (including the Nexus/plugin pipeline) to decide which domains are active.
-</Note>
+Current reference includes `layout:` and `render:` statements used by the evolving Lumina layer.
+
+```aura
+cell main():
+    layout:
+        VStack(alignment: "center") {
+            render: Text(text: "Aura")
+        }
+```
+
+## Not a stable promise yet
+
+Do not infer today that Aura provides:
+
+- a complete Rust-equivalent borrow checker,
+- a frozen generic/trait model,
+- a stable ABI,
+- frozen UI DSL semantics,
+- universal no-segfault guarantees,
+- source compatibility across every future pre-1.0 revision.

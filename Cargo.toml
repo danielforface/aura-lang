@@ -27,6 +27,10 @@ version = "0.2.0"
 # Diagnostics
 miette = { version = "7.6", features = ["fancy"] }
 thiserror = "2.0"
+# SMT solver.
+# Statically linked so a fresh Aura checkout does not depend on a
+# machine-local Z3 installation or vendored binary distribution.
+z3 = { version = "0.12.1", default-features = false, features = ["static-link-z3"] }
 
 # Lexer
 logos = "0.15"

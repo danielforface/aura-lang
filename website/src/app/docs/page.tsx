@@ -1,5 +1,3 @@
-import { redirect } from "next/navigation";
-
-export default function DocsIndexPage() {
-  redirect("/docs/getting-started");
-}
+import Link from "next/link";
+import { DOC_GROUPS } from "@/lib/siteData";
+export default function DocsIndexPage(){return <div><div className="eyebrow">Documentation</div><h1>Read Aura from the language outward.</h1><p className="lead">Start with the current language and verification model, then move into toolchain, plugins, Lumina and examples. Documentation is grouped by product concept instead of one long flat list.</p><div className="two-col">{DOC_GROUPS.map(group=><section className="content-card" key={group.label}><h2 style={{marginTop:0}}>{group.label}</h2>{group.items.map(([slug,title])=><Link className="button-text" style={{display:"flex",justifyContent:"space-between"}} key={slug} href={`/docs/${slug}`}>{title}<span>→</span></Link>)}</section>)}</div></div>}

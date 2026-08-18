@@ -1,0 +1,36 @@
+﻿---
+title: "Cookbook: Lumina UI Patterns"
+description: "Small patterns for the current evolving Lumina application layer."
+---
+
+These examples are patterns, not a frozen UI specification.
+
+## Stack content vertically
+
+```aura
+layout:
+    VStack(spacing: 12, alignment: "center") {
+        render: Text(text: "Title")
+        render: Button(label: "Action") {
+            on_click: ~> { log("action") }
+        }
+    }
+```
+
+## Grid content
+
+```aura
+render:
+    Grid(columns: 2, gap: 16) {
+        render: Box(...)
+        render: Box(...)
+    }
+```
+
+## Async callbacks
+
+The current examples use `~>` in UI callbacks, matching Auraâ€™s reference distinction between sync and async flow.
+
+## Review trust/runtime assumptions
+
+Lumina uses native/runtime integration including Raylib-backed paths. Application authors should keep foreign/native dependencies inside their explicit platform trust model.

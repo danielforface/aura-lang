@@ -1,43 +1,48 @@
+﻿---
+title: "LSP + Aura Sentinel"
+description: "Auraâ€™s language server and desktop IDE are first-class parts of the proof-driven developer loop."
 ---
-title: LSP + Aura Sentinel (VS Code)
-description: Plugin-aware diagnostics, overlays, and live proof feedback in the editor.
----
 
-## Components
+`aura-lsp` is more than a syntax server. Its source tree includes proof result extraction, counterexample transport, caches, performance-tuning infrastructure, debugger protocol layers and CI/differential integration work.
 
-- **`aura-lsp`** computes diagnostics by parsing, type-checking, then verifying with Z3.
-- **Aura Sentinel** (VS Code extension) runs `aura-lsp` and renders additional UX.
+## Aura protocol version
 
-Protocol reference: `/docs/sentinel-protocol`.
+Aura-specific LSP extensions are versioned separately. The documented current Aura protocol version is:
 
-See also: **Lumina Sentinel** for proof-driven UI rendering and span-accurate geometry failures: `/docs/lumina-sentinel`.
+```text
+1
+```
 
-## Plugin-aware diagnostics
+Clients should gate Aura-specific behavior on that protocol version rather than assuming every server revision exposes identical experimental fields.
 
-When verification succeeds, plugins may emit **informational** diagnostics that attribute the proof to a plugin id and (optionally) include:
+## Sentinel
 
-- exact SMT formula used in the proof
-- related information pointing to the enabling `aura.toml` entry
-- structured fields like `mask` and `range`
+`editors/sentinel-app` is the dedicated desktop environment:
 
-## Sentinel overlays
+- Tauri 2
+- CodeMirror 6
+- TypeScript
+- Vite
+- Vitest
 
-Aura Sentinel renders Nexus proof diagnostics as:
+Run from source:
 
-- gutter icons for verified lines (IoT chip / AI neural)
-- hover text showing mask/range + SMT
-- a sidebar “Nexus Plugins” view listing active plugins and trust state
-- inlay hints for IoT verified ranges
+```bash
+cd editors/sentinel-app
+npm install
+npm run tauri:dev
+```
 
-## How to run (dev)
+## Why a dedicated IDE layer matters
 
-In this repo:
+Generic diagnostics are not always enough for formal reasoning. Aura-specific UX can represent:
 
-- VS Code extension: `editors/vscode`
-- LSP binary: built from the workspace (`cargo build -p aura-lsp`)
+- a running proof phase,
+- counterexample trees,
+- relevant bindings,
+- source injections/ghost text,
+- proof traces,
+- debugger state,
+- verification/performance telemetry.
 
-Typical workflow:
-
-1. Open `editors/vscode` in VS Code
-2. Run “Run and Debug” (Extension Development Host)
-3. Open an `.aura` file in the new window
+The goal is to turn proof failures into inspectable program feedback without requiring the developer to read raw SMT models as the primary interface.

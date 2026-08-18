@@ -1,6 +1,16 @@
 #![forbid(unsafe_code)]
 
-use aura_nexus::{AuraPlugin, NexusContext, NexusDiagnostic, PluginCapability, UiNode, UiRuntimeFeedback};
+use aura_nexus::{
+    AuraPlugin,
+    NexusContext,
+    NexusDiagnostic,
+    PluginCapability,
+    UiNode,
+    UiRuntimeFeedback,
+};
+
+#[cfg(feature = "raylib")]
+use aura_nexus::UiTextInputEvent;
 
 #[cfg(not(feature = "raylib"))]
 use aura_nexus::format_ui_tree;

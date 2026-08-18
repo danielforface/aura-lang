@@ -1,42 +1,32 @@
+﻿---
+title: "Stdlib, Modules & Imports"
+description: "How modules, SDK injection, runtime and the standard-library surface fit into Aura today."
 ---
-title: Stdlib, Modules, and Imports
-description: How Aura uses imports and module namespaces in the current prototype.
----
 
-## Imports as module placeholders
+Auraâ€™s standard-library and module story spans the compiler, `aura-stdlib`, `aura-sdk`, runtime crates and the top-level `sdk/` distribution tree.
 
-Today, Aura uses `import` primarily to register well-known module namespaces.
-
-When installed as the AuraSDK, Aura also uses `import aura::...` as a trigger to
-auto-inject the corresponding stdlib module from `AURA_HOME/std` (or, in the dev
-repo, `sdk/std`). This keeps beginner workflows simple while preserving stable
-diagnostic spans.
-
-Examples:
+## Imports
 
 ```aura
-import aura::io
+import std::io
 import aura::tensor
-import aura::hw
 ```
 
-This enables expressions like:
+SDK installations can augment source with default standard modules based on imports. That behavior is part of SDK ergonomics, not a reason to hide module boundaries from the language model.
 
-- `io.display(x)`
-- `tensor::new<u32>(n)`
-- `hw.open("SPI_CTRL")`
+## Runtime layers
 
-## Known namespaces
+The workspace separates:
 
-Common built-ins:
+- `aura-rt` â€” runtime support,
+- `aura-rt-native` â€” native-oriented runtime support,
+- `aura-stdlib` â€” standard-library surface,
+- `aura-sdk` / `sdk/` â€” developer-facing SDK content and docs.
 
-- `io`: printing/display
-- `tensor`: tensor construction and element ops
-- `ai`: model loading and inference (usually via the `aura-ai` plugin)
-- `hw`: hardware/capability operations (via the `aura-iot` plugin)
+## Compatibility status
 
-## Bridge modules
+The stdlib is meaningful implementation, but Aura is still pre-stable. A future stable release should publish explicit compatibility guarantees for stdlib APIs separately from compiler package versioning.
 
-When using the Universal Bridge, you may import modules that are backed by native headers/libraries declared in `aura.toml`.
+## Verification-aware collections work
 
-See “The Universal Bridge” for how headers and linking are configured.
+Verifier-related modules include region/collection verification infrastructure. Public docs should distinguish those implementation modules from a claim that every stdlib operation is formally verified end-to-end.

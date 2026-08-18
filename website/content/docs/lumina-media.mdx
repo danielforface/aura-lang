@@ -1,0 +1,22 @@
+﻿---
+title: "Lumina Media"
+description: "Image/audio/media-oriented work in the evolving Lumina application layer."
+---
+
+Luminaâ€™s media surface is evolving alongside layout and input support. The repository contains recent work and examples around image fit behavior and audio controls.
+
+## Example vertical slice
+
+`examples/grid_image_audio.aura` demonstrates a combined UI slice with:
+
+- `Grid` layout,
+- `Box` containers,
+- buttons and async callbacks,
+- image-fit-oriented UI work,
+- audio control flow.
+
+The example is useful evidence that these pieces have been assembled. It is not a guarantee that every media format/platform/backend is stable or production-complete.
+
+## Keep media outside the core guarantee
+
+Media APIs depend on native libraries, runtime behavior and platform capabilities. Aura should continue to keep those trust/platform boundaries explicit rather than presenting plugin integrations as automatically verified core semantics.

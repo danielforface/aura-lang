@@ -1,26 +1,39 @@
+﻿---
+title: "REPL & AVM"
+description: "Auraâ€™s development execution model and why it remains distinct from native-oriented backends."
 ---
-title: REPL + AVM Interpreter
-description: The Aura Virtual Machine and the Z3 safety gate.
----
 
-## AVM
+`aura-interpret` provides Auraâ€™s development VM/interpreter path and debugging infrastructure.
 
-`aura-interpret` provides a lightweight execution engine (AVM) for rapid iteration.
+## Run
 
-It supports:
+```bash
+cargo run -p aura -- run main.aura
+```
 
-- evaluating Aura source from stdin
-- returning a JSON result for editor integration
+The primary CLI exposes modes including `avm`, `llvm` and `hybrid`.
 
-## Z3 safety gate
+## What AVM is for
 
-By default, the interpreter uses a Z3-backed verification step as a hard gate: if the program doesn’t verify, it won’t execute.
+The AVM is the low-friction development path. It is useful for:
 
-## Dynamic plugin loading
+- fast edit/run iteration,
+- development execution,
+- debugger integration,
+- serving as one execution surface for compatibility/differential work.
 
-The interpreter can enable plugins dynamically based on imports in the source:
+## What hybrid is not
 
-- `import aura-ai` enables the AI plugin checks
-- `import aura-iot` enables the IoT plugin checks
+Current source explicitly says automatic promotion from AVM execution into LLVM inside the AVM is **not yet implemented**.
 
-If no plugin imports are present, the interpreter defaults to running with both built-in plugins.
+Therefore:
+
+```text
+hybrid selector â‰  production JIT
+```
+
+until an actual promotion path exists and is tested.
+
+## Native paths
+
+C-oriented and LLVM IR backends remain separate compiler surfaces. Keeping them separate is architecturally valuable: proof results, IR validation and backend parity can be reasoned about without hiding differences behind one runtime mode.

@@ -1,0 +1,2 @@
+import Link from "next/link";
+export default function NotFound(){return <section className="subpage-hero"><div className="page-shell"><div className="eyebrow">404</div><h1>This surface is not in the current Aura map.</h1><p>The documentation and language are still evolving. Return to the current public navigation rather than relying on an old route.</p><div className="hero-actions"><Link href="/" className="button-primary">Aura home</Link><Link href="/docs/getting-started" className="button-secondary">Documentation</Link></div></div></section>}

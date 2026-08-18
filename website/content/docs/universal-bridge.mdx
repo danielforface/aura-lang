@@ -1,14 +1,33 @@
+﻿---
+title: "Universal Bridge"
+description: "Auraâ€™s FFI and C/C++ header-bridging path, with explicit trust boundaries."
 ---
-title: The Universal Bridge
-description: How Aura swallows C/C++ libraries via generated extern shims.
----
 
-## Bridging
+Aura provides native interoperability through `aura-bridge`, linker inputs and the primary CLIâ€™s bootstrap `bindgen` command.
 
-Aura can generate extern shims from C headers.
+## Generate bindings
 
-- Declare the header(s) in `aura.toml`
-- Aura generates a bridge module during build
-- The linker pulls only the requested artifacts
+```bash
+aura bindgen --header demo.h --out build/bindgen
+```
 
-This keeps the project “git clone → aura run” self-healing.
+Best-effort refinement mapping:
+
+```bash
+aura bindgen   --header demo.h   --out build/bindgen   --refine-types
+```
+
+## Link inputs
+
+Build/run commands can receive bridge headers, library search directories and libraries. The bridge layer allows Aura to integrate native ecosystems without pretending that foreign implementations become verified automatically.
+
+## Trust model
+
+```aura
+extern cell native_call(x: u32) -> u32
+trusted extern cell audited_call(x: u32) -> u32
+```
+
+An untrusted foreign call requires an explicit `unsafe:` boundary in the current reference. A trusted external declaration is an audit/trust assertion and becomes part of the trusted computing base.
+
+Generated bindings should therefore be reviewed as trust-boundary code, especially when best-effort refined type mapping is used.

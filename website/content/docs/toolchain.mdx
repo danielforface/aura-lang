@@ -1,58 +1,79 @@
+﻿---
+title: "Toolchain & Project Layout"
+description: "The code-backed Aura command surface, execution modes, backends and 22-crate workspace architecture."
 ---
-title: Toolchain & Project Layout
-description: How Aura projects are structured and how the compiler toolchain fits together.
----
 
-## Workspace overview
+Auraâ€™s primary orchestration executable is the `aura` crate.
 
-Aura is a Rust workspace composed of multiple crates that together form the language and its tooling:
-
-- **Compiler CLI**: `aura` (build/run/pkg)
-- **Parser**: `aura-lex`, `aura-parse`, `aura-ast`
-- **Semantic checker**: `aura-core`
-- **Verifier**: `aura-verify` (Z3-backed)
-- **Plugin system**: `aura-nexus` + plugins like `aura-plugin-ai`, `aura-plugin-iot`
-- **Interpreter**: `aura-interpret` (AVM)
-- **Language Server**: `aura-lsp`
-- **VS Code extension**: Aura Sentinel (`editors/vscode`)
-
-## Build modes and features
-
-Aura uses Cargo features to enable heavier components:
-
-- `z3`: enables verification using Z3 (hard safety gate)
-- `llvm`: enables LLVM backend (when present)
-
-Common patterns:
-
-```sh
-# Verify + build (no LLVM needed)
-cargo run -p aura --features z3 -- build path/to/file.aura --mode avm --backend c
-
-# Run (when configured)
-cargo run -p aura --features z3 -- run path/to/file.aura
+```bash
+cargo run -p aura -- --help
 ```
 
-## Project configuration: `aura.toml`
+## Core commands
 
-Aura looks for an `aura.toml` by searching upward from the source file directory.
+Current code-backed primary commands include:
 
-Typical sections:
-
-- `project`: human-readable project metadata
-- `plugins`: Nexus plugin enablement (and trust gating)
-- `hardware`: IoT register manifest (used by `aura-iot`)
-- `bridge` / `linking`: native integration via the Universal Bridge
-
-Example plugin enablement:
-
-```toml
-plugins = [
-  { name = "aura-iot", trusted = true },
-  { name = "aura-ai", trusted = true },
-]
+```text
+build
+run
+verify
+test
+lint
+pkg
+init
+fmt
+bindgen
 ```
 
-## Z3 installation notes
+## Profiles
 
-Verification requires Z3 to be available to the verifier (the exact method depends on your OS/toolchain). If Z3 is missing or disabled, Aura can still type-check and run in development mode, but verification-backed features won’t be available.
+```text
+dev
+release
+verify
+```
+
+Profiles select defaults for optimization and SMT behavior.
+
+## Execution modes
+
+```text
+avm
+llvm
+hybrid
+```
+
+**Important:** current source explicitly notes that automatic AVM â†’ LLVM promotion inside the AVM is not yet implemented. Hybrid is not a production JIT today.
+
+## Backend labels
+
+```text
+c       C23-oriented emission path
+llvm    feature-gated LLVM IR path
+wasm    WASI/toolchain-mediated path
+```
+
+Backend maturity is not uniform. The C-oriented path is the default surface. LLVM IR emission is implemented and evolving; source still labels part of it as phase/skeleton work.
+
+## Build and run
+
+```bash
+aura build main.aura
+aura run main.aura
+```
+
+The CLI also supports bridge headers, library search paths/libraries, optimization selection, SMT profiles and hot source monitoring in relevant commands.
+
+## Verify
+
+```bash
+aura verify main.aura --smt-profile ci
+```
+
+With Z3 linking available, build the `aura` crate with the `z3` feature.
+
+## Workspace architecture
+
+The Rust workspace contains 22 members spanning frontend, semantics, IR, verifier, AVM, backends, runtimes, package manager, LSP, SDK, bridge and plugins.
+
+That separation is intentional: Aura is a language-platform monorepo rather than one compiler binary.

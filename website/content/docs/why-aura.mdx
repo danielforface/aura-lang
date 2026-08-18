@@ -1,29 +1,73 @@
 ---
-title: Why Aura?
-description: In 2026, memory safety is not enough — we need logical safety for AI.
+title: "Why Aura?"
+description: "The design problem Aura is trying to solve: keep semantics, proof, execution and developer feedback aligned."
 ---
 
-## The claim
+Most language toolchains treat these as separate workflows:
 
-In 2026, *memory safety is not enough*.
+1. write the program,
+2. run or compile the program,
+3. optionally invoke a verifier,
+4. decipher solver output somewhere else.
 
-Memory safety helps prevent classes of crashes and exploits, but AI systems fail in ways that are logically valid from the CPU’s perspective:
+Aura’s central idea is that **proof should participate in the same developer loop as compilation and execution**.
 
-- Silent shape mismatches
-- Invariant violations that only manifest under rare inputs
-- “Works on my machine” dependencies that subtly change behavior
+## Proof-driven, not proof-washed
 
-Aura’s thesis is simple:
+Aura exposes correctness intent directly in source:
 
-> If a property matters, you should be able to prove it.
+```aura
+cell withdraw(balance: u32, amount: u32) -> u32:
+    requires amount <= balance
+    ensures result <= balance
 
-## What Aura adds
+    val next = balance - amount
+    assert next <= balance
+    next
+```
 
-- **Logical safety**: Z3-backed proofs for invariants and contracts.
-- **AI-native semantics**: tensor types with shape, verified at compile time where possible.
-- **LLVM backend**: fast codegen with optimization hooks (including AI inference tagging).
-- **Universal Bridge + ACPM**: native dependencies auto-install with transparency.
+The verification layer can turn contracts and assertions into proof obligations. When a model/counterexample exists, Aura’s verifier and LSP infrastructure can carry structured data back toward source-level tooling.
 
-## Practical outcome
+That is a stronger and more useful claim than saying “the compiler is formally verified.” **The repository does not establish an end-to-end formally verified compiler**, so Aura does not claim one.
 
-You spend less time discovering failures at runtime and more time shipping code that is correct by construction.
+## One semantic center
+
+The architecture is organized around a common language pipeline:
+
+```text
+source
+  → lexer / parser / AST
+  → semantic core
+  → Aura IR
+     ├─ verification
+     ├─ AVM
+     ├─ C-oriented backend
+     └─ evolving LLVM IR backend
+```
+
+The goal is not to blur verification and execution together. It is to keep them adjacent enough that they can be compared, diagnosed and reasoned about coherently.
+
+## Trust should remain visible
+
+Foreign code is not automatically proved by crossing an Aura boundary.
+
+```aura
+extern cell native_read(fd: u32) -> u32
+trusted extern cell audited_clock() -> u32
+```
+
+The current reference requires an explicit `unsafe:` boundary for untrusted extern calls. A `trusted extern cell` is an explicit trust declaration — a way to expose the trusted computing base, not a magical proof annotation.
+
+## Developer tooling is part of the language platform
+
+Aura’s repository includes:
+
+- `aura-lsp` with proof-stream and counterexample infrastructure,
+- Aura Sentinel, a Tauri/CodeMirror desktop environment,
+- package and release tooling,
+- FFI/bindgen support,
+- Nexus plugins,
+- Lumina application/UI work,
+- Android integration paths.
+
+This is why Aura is best understood as a **language platform monorepo**, not one compiler executable.

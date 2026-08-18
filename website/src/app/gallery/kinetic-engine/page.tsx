@@ -1,19 +1,4 @@
-export default function KineticEnginePage() {
-  return (
-    <div className="space-y-4">
-      <h1 className="text-3xl font-semibold tracking-tight">Kinetic Engine</h1>
-      <p className="max-w-2xl text-sm leading-6 text-zinc-700 dark:text-zinc-300">
-        A Raylib-powered demo that proves Aura can swallow native libraries through the Universal
-        Bridge and run with zero-config dependency setup.
-      </p>
-      <div className="rounded-2xl border border-black/10 bg-white/60 p-6 dark:border-white/10 dark:bg-black/40">
-        <div className="text-sm font-medium">Highlights</div>
-        <ul className="mt-3 list-disc pl-5 text-sm text-zinc-700 dark:text-zinc-300">
-          <li>Header-driven extern generation</li>
-          <li>Manifest-based linking via aura.toml</li>
-          <li>Native artifacts auto-installed into deps/</li>
-        </ul>
-      </div>
-    </div>
-  );
-}
+import Link from "next/link";
+export const metadata = { title: "Kinetic Engine example", description: "Aura native bridge and Raylib-oriented integration example with explicit trust boundaries." };
+
+export default function KineticEnginePage(){return <section className="subpage-hero"><div className="page-shell"><div className="eyebrow">Repository example</div><h1>Kinetic Engine</h1><p>A Raylib-oriented integration example around Aura’s native bridge and linking surfaces. It is useful as an interoperability vertical slice; it is not presented as proof that arbitrary native dependencies are zero-config or automatically verified.</p><div className="two-col" style={{marginTop:36}}><article className="content-card"><h3>What it demonstrates</h3><ul><li>header-driven extern generation direction</li><li>manifest/link inputs</li><li>native library integration through Aura’s bridge/toolchain</li></ul></article><article className="content-card"><h3>Trust boundary</h3><p>Native library behavior remains outside Aura’s automatically proved semantics unless explicitly modeled/audited. Generated FFI belongs in the trusted boundary.</p><Link href="/docs/universal-bridge" className="button-text">Read the bridge model →</Link></article></div></div></section>}

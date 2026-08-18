@@ -1,49 +1,26 @@
+﻿---
+title: "Nexus Plugin Architecture"
+description: "How Aura extends domain behavior without forcing every integration into the core language."
 ---
-title: Nexus Plugin Architecture
-description: How Aura keeps domain semantics (IoT, AI) out of the verifier core.
----
 
-## Why plugins?
+`aura-nexus` is a workspace component for plugin manifests and integration. The primary CLI resolves plugin information and can make plugins visible to build/verification paths.
 
-Aura’s verifier is intentionally small and generic. Domain-specific meaning (like MMIO rules or tensor shape contracts) is implemented in **Nexus plugins**, not hard-coded into the verifier.
+## Why a plugin layer
 
-This makes the system:
+A systems language quickly accumulates domain pressure: UI, AI, IoT, platform integrations and external libraries. Nexus provides a route for those capabilities without making each one a permanent core grammar commitment.
 
-- easier to extend
-- easier to audit
-- safer to gate (trust)
+Current workspace plugin surfaces include:
 
-## Built-in plugins
-
-This repository includes two built-ins:
-
-- `aura-iot`: hardware/MMIO safety (caps, offsets, masks)
-- `aura-ai`: tensor/ONNX shape checks
-
-Plugin docs:
-
-- `/docs/plugins/aura-iot`
-- `/docs/plugins/aura-ai`
-
-## Enabling plugins (`aura.toml`)
-
-Plugins are enabled via `aura.toml` and are **trust-gated**:
-
-```toml
-plugins = [
-  { name = "aura-iot", trusted = true },
-  { name = "aura-ai", trusted = true },
-]
+```text
+aura-plugin-lumina
+aura-plugin-ai
+aura-plugin-iot
 ```
 
-If a plugin is listed but not trusted, the LSP/CLI will refuse to run it.
+## Verification-aware extensions
 
-## Proof notes → editor feedback
+Auraâ€™s `z3` feature wiring also enables verifier-related plugin features in the AI/IoT paths. Public claims should remain tied to the concrete plugin/module/example rather than implying that every possible domain program is automatically verified.
 
-Plugins can record **successful proof facts** (not only failures). The verifier returns them in a verification report, and the LSP publishes them as informational diagnostics.
+## Stability
 
-Aura Sentinel uses this metadata to show:
-
-- gutter icons per plugin
-- hovers with mask/range and the SMT formula (when available)
-- inlay hints for inferred ranges
+Nexus is a meaningful implementation surface, but Aura remains pre-stable. Plugin manifest/protocol compatibility should be treated as evolving until a stable release contract is published.
