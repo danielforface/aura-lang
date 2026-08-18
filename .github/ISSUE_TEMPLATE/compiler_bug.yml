@@ -1,0 +1,58 @@
+name: Compiler bug
+description: Parser, semantic, IR, runtime or backend behavior that differs from the current contract.
+title: "[compiler] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thank you. Please provide a minimal `.aura` reproduction and exact commit/version."
+  - type: input
+    id: commit
+    attributes:
+      label: Aura commit/version
+      placeholder: "git rev-parse HEAD / aura --version"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - lexer/parser
+        - type/semantic core
+        - Aura IR
+        - AVM/interpreter
+        - C backend
+        - LLVM backend
+        - runtime
+        - FFI/bindgen
+        - unknown
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal Aura source
+      render: aura
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / diagnostics
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      render: shell
+    validations:
+      required: true

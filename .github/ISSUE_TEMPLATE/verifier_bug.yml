@@ -1,0 +1,53 @@
+name: Verifier bug
+description: Incorrect proof result, counterexample, solver behavior, cache behavior or trust-boundary issue.
+title: "[verifier] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "A false proof can be security/significance critical. If exploitation or private code is involved, use the Security Advisory flow instead."
+  - type: input
+    id: commit
+    attributes:
+      label: Aura commit/version
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Incorrect result class
+      options:
+        - invalid property reported as proved
+        - valid property rejected
+        - incorrect counterexample/model
+        - timeout/unknown misreported
+        - stale/cache-related result
+        - ownership/capability/region/race analysis
+        - proof streaming/LSP transport
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal Aura source
+      render: aura
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and solver profile
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Expected proof semantics vs actual output
+    validations:
+      required: true
+  - type: input
+    id: z3
+    attributes:
+      label: Z3 version (if enabled)

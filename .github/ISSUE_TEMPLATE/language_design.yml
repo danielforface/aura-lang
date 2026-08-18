@@ -1,0 +1,46 @@
+name: Language design proposal
+description: Propose a syntax, type-system, semantics, verification, ABI or edition change.
+title: "[design] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: "Large language changes should define semantics and migration, not only syntax."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What developer or semantic problem cannot be solved cleanly today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed semantics
+      description: Define behavior precisely. Include syntax examples if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: verifier
+    attributes:
+      label: Verification / safety impact
+      description: How does this affect proof obligations, ownership, effects, unsafe/trusted boundaries or solver complexity?
+    validations:
+      required: true
+  - type: textarea
+    id: backend
+    attributes:
+      label: IR / backend / runtime impact
+    validations:
+      required: true
+  - type: textarea
+    id: compat
+    attributes:
+      label: Edition and compatibility plan
+      description: Is this gated? Breaking? How does existing code migrate?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
