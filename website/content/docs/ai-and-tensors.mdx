@@ -1,43 +1,30 @@
+﻿---
+title: "AI & Tensors"
+description: "The current AI/tensor language and plugin direction, separated from broader â€œAI-nativeâ€ marketing claims."
 ---
-title: AI & Tensors
-description: ONNX Runtime integration and shape-safe inference.
----
 
-## Shape-safe tensors
+Auraâ€™s current compact reference includes resource-like types such as `Tensor` and `Model`, and the workspace contains `aura-plugin-ai`, `aura-ai-opt` plus ONNX Runtime bridge assets/examples.
 
-Aura supports tensor types that carry shape information.
+## Shape-aware direction
 
-<Example title="A tensor with a static shape">
+Tensor shapes can be represented in type syntax such as:
 
-```aura
-import aura::tensor
-
-val input: Tensor<u32, [2, 2, 3]> = tensor::new<u32>(12)
+```text
+Tensor<Elem, [d0, d1, ...]>
 ```
 
-</Example>
+This gives the language and verifier a place to represent shape information rather than treating every tensor as an opaque runtime pointer.
 
-<Semantics title="What gets proven">
-The checker treats <Ty>Tensor&lt;T, [d1, d2, ...]&gt;</Ty> as a value whose shape is part of the type. Verification can then prove that reshape / inference calls never mismatch shapes.
-</Semantics>
+## ONNX integration
 
-## ONNX inference
+The repository contains an Aura Vision example tree plus ONNX Runtime bridge headers/source. That is evidence of a real integration path.
 
-Load a model and infer:
+It does **not** automatically establish that every ONNX operation/model is verified, optimized or production-supported by Aura.
 
-<Example title="Inference with a shape-safe output">
+## AI plugin
 
-```aura
-import onnxruntime
+`aura-plugin-ai` is an optional domain plugin. Public documentation should describe concrete builtins/examples supported by current code, not elevate the presence of the plugin into a universal AI framework claim.
 
-val model: Model = ai.load_model("identity_u32_2x2x3.onnx")
-val out: Tensor<u32, [2, 2, 3]> = model.infer(input)
-```
+## Resource semantics
 
-</Example>
-
-The verifier checks that the model’s expected input shape matches the provided tensor shape.
-
-<Note>
-This page describes the high-level surface syntax. The plugin-aware verifier emits informational diagnostics like “verified by aura-ai” in the editor (Aura Sentinel).
-</Note>
+`Tensor` and `Model` are included among resource-like types in the current referenceâ€™s move-oriented MVP rules. Broader ownership/linearity infrastructure exists in the compiler and verifier, but those guarantees remain pre-stable.

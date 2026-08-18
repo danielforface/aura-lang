@@ -1,24 +1,77 @@
+﻿---
+title: "Proof System"
+description: "Contracts, proof obligations, Z3 profiles, counterexamples and trust boundaries in Aura."
 ---
-title: The Proof System
-description: A deep dive into Z3, invariants, and what “Proven” means.
----
 
-## Z3 and `invariant`
+Auraâ€™s identity is **proof-driven development**. The proof system integrates source-level intent, solver-backed verification and editor-facing feedback.
 
-Aura’s verification pipeline treats proofs as a first-class stage.
+## Source vocabulary
 
-A loop without an explicit invariant can still verify in some cases, but the safest pattern is to write an invariant.
+- `requires` â€” precondition
+- `ensures` â€” postcondition
+- `assert` â€” proof obligation
+- `assume` â€” explicit trusted assumption
+- `invariant` â€” loop invariant
+- `decreases` â€” termination-oriented hint
+- range refinements such as `u32[0..100]`
+- quantifiers where supported
 
-```aura
-cell sum_to(n: u32) -> u32:
-  mut i: u32 = 0
-  mut acc: u32 = 0
+## Z3 path
 
-  while i < n invariant (acc >= 0):
-    acc = acc + i
-    i = i + 1
+Z3 support is feature-gated:
 
-  yield acc
+```bash
+cargo run -p aura --features z3 -- verify main.aura
 ```
 
-When the solver finds a counterexample, the editor/CLI should surface the mathematical reason.
+SMT profiles:
+
+```text
+fast
+ci
+thorough
+```
+
+Optional incremental mode:
+
+```bash
+AURA_Z3_INCREMENTAL=1 cargo run -p aura --features z3 -- verify main.aura
+```
+
+The existence of performance tuning/caching code does not by itself prove a universal `<200ms` latency result.
+
+## Result semantics
+
+A verification run can produce more than a binary â€œgreen/redâ€ answer. A timeout or solver `unknown` must never be presented as proof.
+
+Conceptually:
+
+```text
+obligation
+  â†’ solver
+     â”œâ”€ proved
+     â”œâ”€ counterexample/model
+     â”œâ”€ unknown
+     â””â”€ timeout/error
+  â†’ structured diagnostics
+  â†’ LSP / editor
+```
+
+## Counterexample mapping
+
+The documented `aura.counterexample.v2` schema can carry:
+
+- binding name/value,
+- value kind,
+- Aura type where known,
+- relevance,
+- source range,
+- source-anchored injections.
+
+This is how a solver model can become a developer message such as â€œthis assertion fails when `x = 12` hereâ€ rather than raw SMT output.
+
+## Trust
+
+Aura does not claim that the compiler itself is formally verified end-to-end. Proofs about modeled source semantics still depend on a trusted/dependently validated stack including solver assumptions, compiler/backend correctness, runtime/platform behavior and explicitly trusted FFI.
+
+See [Sentinel Protocol](/docs/sentinel-protocol) for how proof results travel to tooling.

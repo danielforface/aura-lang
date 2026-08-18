@@ -1,31 +1,36 @@
+﻿---
+title: "Demos & Examples"
+description: "Repository examples as evidence of integration, with explicit limits on what each example proves."
 ---
-title: Demos
-description: End-to-end examples that exercise verification, plugins, and tooling.
----
 
-## IoT: bitmask-safe MMIO
+Auraâ€™s examples are useful because they show which vertical slices have actually been assembled.
 
-Demo: `examples/aura-iot-safe`
+## Verification
 
-- Uses `aura-iot` and a `hardware.registers` manifest in `aura.toml`.
-- Verifies that `hw.write_u32` stays within the declared register bitmask.
+`examples/verification/verify_features.aura` exercises contracts, invariants, `decreases` and quantifier syntax.
 
-Run:
+## Resource / move safety
 
-```sh
-cd examples/aura-iot-safe
-cargo run -p aura --features z3 -- build iot_safe.aura --mode avm --backend c
-```
+`examples/aura-move/` exercises move/resource-oriented language work.
 
-## AI: shape-safe inference
+## Networking
 
-Demo: `examples/aura-vision-safe`
+`examples/tcp_echo_server.aura` provides a compact networking-facing example.
 
-- Uses ONNX Runtime bridge + `aura-ai` plugin.
-- Proves tensor shapes match the model contract.
+## IoT and vision
 
-Run:
+`examples/aura-iot-safe/` and `examples/aura-vision-safe/` exercise domain integrations and native/plugin directions.
 
-```sh
-cargo run -p aura --features z3 -- build examples/aura-vision-safe/vision_safe.aura --mode avm --backend c
-```
+## Lumina
+
+`examples/grid_image_audio.aura` demonstrates an evolving application slice with grid/layout, Box/Button and media-oriented work.
+
+## How to read examples
+
+The existence of an example means the repository contains an integration path. It does **not** by itself establish:
+
+- stable 1.0 language semantics,
+- universal backend parity,
+- complete domain-framework support,
+- production readiness on every platform,
+- formal verification of every foreign/native dependency.

@@ -1,12 +1,6 @@
-[env]
-# z3-sys 0.8.x uses bindgen and needs a direct header path.
-Z3_SYS_Z3_HEADER = { value = "tools/z3/dist/z3-4.15.4-x64-win/include/z3.h", relative = true }
-LLVM_SYS_211_PREFIX = "C:/Program Files/LLVM"
-
-[target.x86_64-pc-windows-msvc]
-# z3-sys links against `libz3.lib` on Windows.
-rustflags = ["-Lnative=tools/z3/dist/z3-4.15.4-x64-win/bin"]
-
-[target.x86_64-pc-windows-gnu]
-# Keep in sync for GNU toolchains too.
-rustflags = ["-Lnative=tools/z3/dist/z3-4.15.4-x64-win/bin"]
+﻿[env]
+# z3-sys 0.8.x vendors an older Z3 CMake project.
+# CMake 4 removed compatibility policies older than 3.5.
+# Keep the dependency build reproducible on modern CMake without requiring
+# developers to configure this environment variable manually.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

@@ -1,19 +1,4 @@
-export default function AuraVisionPage() {
-  return (
-    <div className="space-y-4">
-      <h1 className="text-3xl font-semibold tracking-tight">Aura Vision</h1>
-      <p className="max-w-2xl text-sm leading-6 text-zinc-700 dark:text-zinc-300">
-        An ONNX Runtime demo that validates the “AI-native” promise: tensor shapes are part of the
-        type, ONNX model IO shapes are extracted, and Z3 enforces shape equality for inference.
-      </p>
-      <div className="rounded-2xl border border-black/10 bg-white/60 p-6 dark:border-white/10 dark:bg-black/40">
-        <div className="text-sm font-medium">Highlights</div>
-        <ul className="mt-3 list-disc pl-5 text-sm text-zinc-700 dark:text-zinc-300">
-          <li>ai.load_model reads the ONNX contract</li>
-          <li>model.infer(x) is verifier-enforced shape-safe</li>
-          <li>Inference callsites are tagged for AI optimization</li>
-        </ul>
-      </div>
-    </div>
-  );
-}
+import Link from "next/link";
+export const metadata = { title: "Aura Vision example", description: "Aura ONNX/tensor/plugin integration example with precise capability boundaries." };
+
+export default function AuraVisionPage(){return <section className="subpage-hero"><div className="page-shell"><div className="eyebrow">Repository example</div><h1>Aura Vision</h1><p>An ONNX-oriented integration example connecting Aura’s tensor/model direction, AI plugin work and native ONNX Runtime bridge assets. The example demonstrates a concrete integration path; it does not imply that all ONNX operators/models are formally verified or production-supported.</p><div className="two-col" style={{marginTop:36}}><article className="content-card"><h3>Relevant platform surfaces</h3><ul><li>`Tensor` / `Model` language types</li><li>`aura-plugin-ai` and `aura-ai-opt`</li><li>ONNX Runtime bridge assets</li><li>shape-aware verification direction</li></ul></article><article className="content-card"><h3>Claim boundary</h3><p>Shape information can participate in Aura’s type/verifier model where the current implementation supports it. Native runtime correctness and unsupported model behavior remain separate concerns.</p><Link href="/docs/ai-and-tensors" className="button-text">AI & tensors documentation →</Link></article></div></div></section>}

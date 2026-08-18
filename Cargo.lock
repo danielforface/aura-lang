@@ -3940,6 +3940,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7cf70fdbc0de3f42b404f49b0d4686a82562254ea29ff0a155eef2f5430f4b0"
 dependencies = [
  "bindgen 0.66.1",
+ "cmake",
 ]
 
 [[package]]

@@ -1,38 +1,103 @@
+﻿---
+title: "Getting Started"
+description: "Build, run and verify Aura from the public repository without assuming unpublished binary artifacts."
 ---
-title: Getting Started
-description: Build Aura from this repo and run your first verified program.
----
+
+Aura is an active, pre-stable programming-language platform. The most reliable way to start today is from the repository source.
 
 ## Prerequisites
 
-- Rust toolchain (stable)
-- Z3 (if you want verification enabled)
+For the core compiler and AVM path:
 
-## First run
+- a current stable Rust toolchain,
+- Git,
+- a C compiler / Clang for C-backed native and compatibility paths.
 
-Create a file:
+Optional integrations require additional toolchains:
+
+- **Z3** for solver-backed verification,
+- **LLVM** for the feature-gated LLVM IR path,
+- **Node.js / npm + Tauri prerequisites** for Aura Sentinel,
+- **Java + Android SDK/NDK** for Android tooling.
+
+## Clone the repository
+
+```bash
+git clone https://github.com/danielforface/aura-lang.git
+cd aura-lang
+```
+
+Inspect the primary command surface rather than relying on historical docs:
+
+```bash
+cargo run -p aura -- --help
+```
+
+## Write a small Aura program
 
 ```aura
-cell main() -> u32:
-  val x: u32 = 42
-  yield x
+cell bounded_inc(x: u32[0..99]) -> u32:
+    requires x < 100
+    ensures result <= 100
+
+    val next: u32 = x + 1
+    assert next <= 100
+    next
 ```
 
-Then run:
+Aura uses significant indentation. Current language syntax is summarized in the [Language Reference](/docs/language-reference).
 
-```sh
-cargo run -p aura --features z3 -- build main.aura --mode avm --backend c
+## Build
+
+```bash
+cargo run -p aura -- build main.aura
 ```
 
-If Z3 is enabled, verification is a hard gate.
+The primary CLI exposes build profiles (`dev`, `release`, `verify`) and execution modes (`avm`, `llvm`, `hybrid`). Backend maturity is not uniform; see [Toolchain & Project Layout](/docs/toolchain).
 
-## Projects and `aura.toml`
+## Run in the development path
 
-Aura looks for an `aura.toml` by searching upward from the source file. This is where you enable Nexus plugins:
-
-```toml
-plugins = [
-  { name = "aura-ai", trusted = true },
-  { name = "aura-iot", trusted = true },
-]
+```bash
+cargo run -p aura -- run main.aura
 ```
+
+The AVM / development VM is the clearest low-friction execution path. Current source explicitly notes that automatic AVM â†’ LLVM promotion in hybrid execution is **not yet implemented**, so hybrid should not be interpreted as a production JIT.
+
+## Verify with Z3
+
+With the Z3 feature/toolchain available:
+
+```bash
+cargo run -p aura --features z3 -- verify main.aura --smt-profile fast
+```
+
+Profiles exposed by the CLI:
+
+- `fast` â€” interactive/low-latency-oriented,
+- `ci` â€” CI-oriented,
+- `thorough` â€” deeper verification.
+
+Optional incremental solver state inside a run:
+
+```bash
+AURA_Z3_INCREMENTAL=1 cargo run -p aura --features z3 -- verify main.aura
+```
+
+A latency target such as `<200ms P95` is **not** a universal website benchmark unless a reproducible measurement artifact accompanies it.
+
+## Test, lint and format
+
+```bash
+cargo run -p aura -- test .
+cargo run -p aura -- lint main.aura
+cargo run -p aura -- fmt main.aura --check
+cargo run -p aura -- fmt main.aura --write
+```
+
+## Continue
+
+- [Why Aura?](/docs/why-aura)
+- [Language Reference](/docs/language-reference)
+- [Proof System](/docs/proof-system)
+- [LSP + Sentinel](/docs/lsp-and-sentinel)
+- [Toolchain & Project Layout](/docs/toolchain)

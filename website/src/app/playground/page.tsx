@@ -1,77 +1,13 @@
 "use client";
-
 import { useState } from "react";
 
-const proven = `cell main() -> u32:
-  val x: u32 = 42
-  yield x
-`;
-
-const unsafe = `cell main() -> u32:
-  type Percentage = u32[0..100]
-  val p: Percentage = 180
-  yield p
-`;
-
-export default function PlaygroundPage() {
-  const [mode, setMode] = useState<"proven" | "unsafe">("proven");
-
-  const isProven = mode === "proven";
-  const code = isProven ? proven : unsafe;
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-semibold tracking-tight">Interactive Playground (Stub)</h1>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setMode("proven")}
-            className={
-              "h-10 rounded-full px-4 text-sm " +
-              (isProven
-                ? "bg-foreground text-background"
-                : "border border-black/10 text-foreground dark:border-white/15")
-            }
-          >
-            Proven
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("unsafe")}
-            className={
-              "h-10 rounded-full px-4 text-sm " +
-              (!isProven
-                ? "bg-foreground text-background"
-                : "border border-black/10 text-foreground dark:border-white/15")
-            }
-          >
-            Unsafe
-          </button>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-black/10 bg-white/60 p-6 dark:border-white/10 dark:bg-black/40">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Z3 Prover</div>
-          <div
-            className={
-              "rounded-full px-3 py-1 text-xs font-medium " +
-              (isProven
-                ? "bg-black/5 text-foreground dark:bg-white/10"
-                : "bg-black/5 text-foreground dark:bg-white/10")
-            }
-          >
-            {isProven ? "Verified" : "Proof Failed"}
-          </div>
-        </div>
-        <pre className="mt-4 overflow-x-auto rounded-xl bg-black/5 p-4 text-sm text-foreground dark:bg-white/10">
-          <code>{code}</code>
-        </pre>
-        <p className="mt-4 text-sm text-zinc-700 dark:text-zinc-300">
-          This is a UI stub: it simulates how the editor will show “Proven” vs “Unsafe” code.
-        </p>
-      </div>
-    </div>
-  );
-}
+const cases={
+ contract:{label:"Contract",code:`cell inc(x: u32[0..99]) -> u32:\n    requires x < 100\n    ensures result == x + 1\n\n    val next = x + 1\n    assert next <= 100\n    next`,notes:["requires establishes a precondition","ensures describes the result contract","assert becomes a proof obligation","u32 range refinement carries bound information"]},
+ loop:{label:"Loop",code:`cell sum_to(n: u32) ->:\n    requires n <= 10\n\n    val mut i: u32 = 0\n    val mut acc: u32 = 0\n\n    while i < n invariant i <= n decreases n - i:\n        acc = acc + i\n        i = i + 1\n\n    assert i == n\n    yield acc`,notes:["invariant is visible to the verifier","decreases is a termination-oriented hint","mutable state remains explicit","this example mirrors a repository verification fixture"]},
+ trust:{label:"FFI trust",code:`extern cell native_read(fd: u32) -> u32\ntrusted extern cell audited_clock() -> u32\n\ncell read(fd: u32) -> u32:\n    unsafe:\n        native_read(fd)`,notes:["untrusted extern calls require an unsafe boundary","trusted extern is an explicit trust declaration","trusted does not mean automatically proved","FFI remains part of the trusted computing base"]},
+} as const;
+type Key=keyof typeof cases;
+export default function PlaygroundPage(){const [active,setActive]=useState<Key>("contract");const item=cases[active];return <>
+<section className="subpage-hero"><div className="page-shell subpage-hero-grid"><div><div className="eyebrow">Language explorer</div><h1>Read Aura syntax with its proof semantics beside it.</h1><p>This is an interactive documentation explorer, not a browser-hosted Aura compiler or Z3 session. It intentionally demonstrates syntax and reasoning vocabulary without fabricating verification results.</p></div><aside className="subpage-summary"><dl><div><dt>Mode</dt><dd>documentation explorer</dd></div><div><dt>Compiler execution</dt><dd>no</dd></div><div><dt>Examples</dt><dd>reference/repo aligned</dd></div><div><dt>Goal</dt><dd>learn semantics</dd></div></dl></aside></div></section>
+<section className="page-section compact"><div className="page-shell explorer-shell"><div className="explorer-head"><strong>Aura source explorer</strong><span>not a live compiler</span></div><div className="explorer-tabs">{(Object.keys(cases) as Key[]).map(k=><button type="button" onClick={()=>setActive(k)} className={k===active?"is-active":""} key={k}>{cases[k].label}</button>)}</div><div className="explorer-body"><div className="explorer-code"><pre><code>{item.code}</code></pre></div><div className="explorer-notes"><div className="eyebrow">What to notice</div><div className="explorer-points">{item.notes.map(n=><div key={n}>{n}</div>)}</div></div></div></div></section>
+</>}

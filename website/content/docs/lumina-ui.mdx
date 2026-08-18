@@ -1,0 +1,40 @@
+﻿---
+title: "Lumina UI"
+description: "Auraâ€™s evolving application/UI plugin: layout, input, styling and Raylib-backed rendering work."
+---
+
+Lumina is represented by the substantial `aura-plugin-lumina` workspace component plus current examples and docs. It is an **evolving application layer**, not a frozen core-language GUI specification.
+
+## Language surface
+
+The compact reference includes `layout:` and `render:` statements. Lumina builds application primitives on that surface.
+
+```aura
+import aura::lumina
+
+cell main():
+    layout:
+        VStack(spacing: 16, alignment: "center") {
+            render: Text(text: "Aura")
+            render: Button(label: "Verify") {
+                on_click: ~> { log("clicked") }
+            }
+        }
+```
+
+## Repository-backed work
+
+Recent implementation/examples cover areas including:
+
+- Raylib-backed rendering support,
+- application theming/color parsing,
+- input handling,
+- `TextInput`,
+- `Box`,
+- grid layout,
+- image fit modes,
+- audio controls.
+
+## Stability boundary
+
+Lumina should not redefine the stability contract of Auraâ€™s core language. UI syntax/runtime details can evolve independently while the compiler/verifier semantics converge toward a stable edition.

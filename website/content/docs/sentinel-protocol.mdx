@@ -1,76 +1,46 @@
+﻿---
+title: "Sentinel Protocol"
+description: "The custom proof-stream and counterexample contract between aura-lsp and Aura-aware editor clients."
 ---
-title: Aura Sentinel Protocol (LSP Extensions)
-description: Custom JSON-RPC methods used by Aura Sentinel for deterministic, proof-backed UX.
----
 
-Aura Sentinel uses standard LSP for editing features and adds a small set of **custom JSON-RPC methods** (served by `aura-lsp`) for proof-driven UX.
+Aura Sentinel communicates with `aura-lsp` through a custom proof-stream protocol layered on LSP.
 
-Design goals:
+## Start and cancel
 
-- **Deterministic**: responses are derived from parser/sema/verifier/AVM trace, not heuristics.
-- **Span-accurate**: every item is anchored to source ranges.
-- **Forward-compatible**: methods and payloads are versioned conservatively.
-
-## Transport
-
-- Protocol: LSP over stdio (VS Code) with JSON-RPC 2.0.
-- Custom methods are invoked via the client’s `sendRequest(method, params)`.
-
-## Method: `aura/proofs`
-
-Returns the current proof/diagnostic set for a single document. This is the backing API for the “Aura Sentinel: Show Proofs” panel.
-
-### Params
-
-```json
-{
-  "uri": "file:///C:/path/to/project/main.aura"
-}
+```text
+aura/proofsStreamStart
+aura/proofsStreamCancel
 ```
 
-### Result
+A start request returns a stream identifier so the UI can correlate later notifications and cancellation.
 
-```json
-{
-  "uri": "file:///C:/path/to/project/main.aura",
-  "diagnostics": [
-    {
-      "range": {
-        "start": { "line": 0, "character": 0 },
-        "end": { "line": 0, "character": 10 }
-      },
-      "severity": 1,
-      "code": "aura::parse",
-      "source": "aura",
-      "message": "parse error: expected Newline"
-    }
-  ]
-}
+## States
+
+```text
+start
+phase
+done
+error
+cancelled
 ```
 
-Notes:
+Common phase labels include:
 
-- `diagnostics` uses standard LSP `Diagnostic` objects.
-- It may include:
-  - parse errors (`code: aura::parse`)
-  - semantic errors (`code: aura::sema`)
-  - verification failures (`code: aura::verify`)
-  - proof notes emitted by Nexus plugins (`source: aura-nexus`, informational severity)
+```text
+parse
+sema
+normalize
+z3
+```
 
-### Determinism & caching
+The protocol is designed so proof work can remain non-blocking and cancellable.
 
-- The server prefers **in-memory** document content when the file is open, otherwise it falls back to reading from disk.
-- Clients may call this method on save or on demand; responses are safe to cache by `(uri, documentVersion)`.
+## Counterexample v2
 
-## Compatibility
+When available, verification diagnostics can contain `aura.counterexample.v2` structured data with bindings, type information, relevance, source ranges and source-anchored injections.
 
-- Current stability level: **experimental**.
-- Breaking changes should bump the method name (e.g. `aura/proofsV2`) or add fields without removing existing ones.
+Consumers should ignore unknown fields so the schema can evolve compatibly within the protocol contract.
 
-## Roadmap: structured obligations
+## Stability
 
-The long-term target is a richer payload that separates proofs from editor diagnostics, for example:
-
-- `obligations[]`: `{ id, kind, status, span, dependsOn[], counterexample? }`
-- `counterexample`: model values + minimal failing path
-- `pluginAttribution`: structured `plugin`, `mask`, `range`, `smt` fields
+The repositoryâ€™s LSP stability document currently identifies Aura protocol version `1`. Breaking Aura-specific extension changes should bump that protocol version rather than silently changing client assumptions.
