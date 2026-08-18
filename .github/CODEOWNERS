@@ -1,0 +1,16 @@
+# Repository owner / default reviewer
+* @danielforface
+
+# High-risk semantic surfaces
+/aura-lex/ @danielforface
+/aura-parse/ @danielforface
+/aura-ast/ @danielforface
+/aura-core/ @danielforface
+/aura-ir/ @danielforface
+/aura-verify/ @danielforface
+/aura-backend-c/ @danielforface
+/aura-backend-llvm/ @danielforface
+/aura-rt/ @danielforface
+/aura-pkg/ @danielforface
+/aura-lsp/ @danielforface
+/.github/workflows/ @danielforface

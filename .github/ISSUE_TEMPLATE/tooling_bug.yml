@@ -1,0 +1,43 @@
+name: Tooling / ecosystem bug
+description: LSP, Sentinel, package manager, SDK, release, Lumina or Android tooling issue.
+title: "[tooling] "
+labels: ["bug"]
+body:
+  - type: input
+    id: commit
+    attributes:
+      label: Aura commit/version
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - aura-lsp
+        - Aura Sentinel
+        - VS Code integration
+        - aura-pkg / package manager
+        - SDK/release tooling
+        - Lumina
+        - Android/APK tooling
+        - other
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS / platform
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Logs / output
+      render: text

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use Aura in research or technical work, please cite the repository and the exact commit you evaluated."
+title: "Aura: A Proof-Driven Systems Programming Language and Developer Platform"
+type: software
+authors:
+  - family-names: Cohen
+    given-names: Daniel
+    alias: danielforface
+repository-code: "https://github.com/danielforface/aura-lang"
+url: "https://aura.geniuses.team/"
+license: MIT
+keywords:
+  - programming language
+  - compiler
+  - formal methods
+  - program verification
+  - Z3
+  - systems programming
+  - language server
+  - Rust

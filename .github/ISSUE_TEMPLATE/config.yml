@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/danielforface/aura-lang/security
+    about: Please report security-sensitive issues privately.
+  - name: Aura documentation index
+    url: https://github.com/danielforface/aura-lang/blob/main/docs/README.md
+    about: Check the current documentation map before filing a documentation issue.
