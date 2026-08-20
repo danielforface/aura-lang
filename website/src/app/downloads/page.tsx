@@ -62,7 +62,7 @@ export default function DownloadsPage() {
             <div className="eyebrow">Aura distribution</div>
             <h1>Get the language. Get the proof tools. Get Sentinel.</h1>
             <p>
-              Aura's repository contains a real release pipeline for a portable SDK, the language server,
+              Aura&apos;s repository contains a real release pipeline for a portable SDK, the language server,
               the Sentinel VS Code extension and standalone desktop artifacts. This page is the public
               distribution surface for those artifacts while keeping their actual deployment state visible.
             </p>

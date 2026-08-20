@@ -1,0 +1,87 @@
+name: Website Static Export
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-export:
+    name: Build and verify static site
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: website
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build static export
+        run: npm run build
+
+      - name: Verify required exported routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            "out/index.html"
+            "out/docs/index.html"
+            "out/docs/getting-started/index.html"
+            "out/language/index.html"
+            "out/verification/index.html"
+            "out/manifest.webmanifest"
+            "out/sitemap.xml"
+            "out/robots.txt"
+          )
+
+          for file in "${required[@]}"; do
+            test -f "$file" || {
+              echo "Missing static export file: $file"
+              exit 1
+            }
+            echo "PASS $file"
+          done
+
+      - name: Verify static-export configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq 'output:[[:space:]]*"export"' next.config.ts
+          grep -Eq 'trailingSlash:[[:space:]]*true' next.config.ts
+          echo "PASS output=export"
+          echo "PASS trailingSlash=true"
+
+      - name: Upload verified static export
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-website-static-${{ github.sha }}
+          path: website/out/
+          if-no-files-found: error
+          retention-days: 7

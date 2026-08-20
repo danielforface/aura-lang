@@ -1,24 +1,63 @@
-name: ci
+name: Core CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
-  test:
+  workspace:
+    name: Rust workspace
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install clang
-        run: sudo apt-get update && sudo apt-get install -y clang
-      - name: Cargo test (workspace)
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            libclang-dev \
+            cmake \
+            ninja-build \
+            pkg-config
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate workspace metadata
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+
+      - name: Test workspace without optional default integrations
         env:
           AURA_DIFFERENTIAL_REQUIRE_C: "1"
-        run: cargo test
+        run: cargo test --workspace --locked --no-default-features
 
-      - name: Compat suite (Aura CLI)
+      - name: Verify portable Z3 feature path
+        run: cargo check -p aura --locked --no-default-features --features z3
+
+      - name: Compatibility suite
         run: bash tools/compat/run.sh
 
-      - name: Trusted core audit (baseline diff)
+      - name: Trusted-core baseline audit
         run: bash tools/trusted-core/check.sh

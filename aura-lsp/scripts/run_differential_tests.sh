@@ -1,127 +1,142 @@
-#!/bin/bash
-# Differential Testing Script for CI Gate
-# Runs test suite on GDB and LLDB, comparing results
+#!/usr/bin/env bash
+# Debugger compatibility smoke tests used by CI.
+#
+# This script does NOT claim semantic equivalence between Aura backends.
+# It compiles the checked-in C debugger fixtures and requires the selected
+# debugger(s) to launch each fixture, break at main, and inspect the frame
+# without returning an error.
 
-set -e
+set -Eeuo pipefail
 
-BACKEND=${1:-"both"}
-TIMEOUT=${2:-60}
-VERBOSE=${3:-""}
+BACKEND="${1:-both}"
+TIMEOUT_SECONDS="${2:-60}"
 
-echo "🧪 Differential Testing Suite"
-echo "   Backend: $BACKEND"
-echo "   Timeout: ${TIMEOUT}s"
-echo ""
+if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "Invalid timeout: $TIMEOUT_SECONDS" >&2
+    exit 2
+fi
 
-# Check if debuggers are installed
-check_debugger() {
-    if ! command -v $1 &> /dev/null; then
-        echo "❌ Error: $1 is not installed"
-        exit 1
-    fi
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LSP_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+PROGRAM_DIR="$LSP_ROOT/tests/programs"
+RESULT_DIR="$LSP_ROOT/results/debugger"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aura-debugger-smoke.XXXXXX")"
+
+cleanup() {
+    rm -rf "$BUILD_DIR"
+}
+trap cleanup EXIT
+
+mkdir -p "$RESULT_DIR"
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Missing required command: $1" >&2
+        exit 3
+    }
 }
 
-# Run tests on GDB
-run_gdb_tests() {
-    echo "Running GDB tests..."
-    
-    # Compile test programs
-    if [ -d "tests/programs" ]; then
-        for test_file in tests/programs/*.c; do
-            filename=$(basename "$test_file" .c)
-            echo "  Compiling $filename with debug symbols..."
-            gcc -g -o "tests/programs/$filename" "$test_file"
-        done
-    fi
-    
-    # Run GDB tests
-    for test_binary in tests/programs/*; do
-        if [ -f "$test_binary" ] && [ -x "$test_binary" ]; then
-            echo "  Running $test_binary with GDB..."
-            
-            if [ -n "$VERBOSE" ]; then
-                timeout $TIMEOUT gdb -batch \
-                    -ex "break main" \
-                    -ex "run" \
-                    -ex "frame variable" \
-                    -ex "quit" \
-                    "$test_binary" || true
-            else
-                timeout $TIMEOUT gdb -batch \
-                    -ex "break main" \
-                    -ex "run" \
-                    -ex "frame variable" \
-                    -ex "quit" \
-                    "$test_binary" > /dev/null 2>&1 || true
-            fi
-            
-            echo "    ✅ GDB test passed"
+require_command timeout
+
+mapfile -t SOURCES < <(find "$PROGRAM_DIR" -maxdepth 1 -type f -name '*.c' -print | sort)
+
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+    echo "No debugger fixtures found in $PROGRAM_DIR" >&2
+    exit 4
+fi
+
+run_gdb() {
+    require_command gcc
+    require_command gdb
+
+    local source name binary log
+    mkdir -p "$RESULT_DIR/gdb"
+
+    for source in "${SOURCES[@]}"; do
+        name="$(basename "$source" .c)"
+        binary="$BUILD_DIR/${name}-gdb"
+        log="$RESULT_DIR/gdb/${name}.log"
+
+        echo "[GDB] compile $name"
+        gcc -g -O0 -Wall -Wextra -o "$binary" "$source"
+
+        echo "[GDB] inspect $name"
+        if ! timeout "${TIMEOUT_SECONDS}s" \
+            gdb -q -batch \
+                -ex "set pagination off" \
+                -ex "break main" \
+                -ex "run" \
+                -ex "info locals" \
+                -ex "quit" \
+                --args "$binary" >"$log" 2>&1; then
+            cat "$log" >&2 || true
+            echo "GDB smoke failed for $name" >&2
+            return 1
         fi
+
+        grep -q "Breakpoint" "$log" || {
+            cat "$log" >&2 || true
+            echo "GDB did not reach a breakpoint for $name" >&2
+            return 1
+        }
+
+        echo "[GDB] PASS $name"
     done
 }
 
-# Run tests on LLDB
-run_lldb_tests() {
-    echo "Running LLDB tests..."
-    
-    # Compile test programs
-    if [ -d "tests/programs" ]; then
-        for test_file in tests/programs/*.c; do
-            filename=$(basename "$test_file" .c)
-            echo "  Compiling $filename with debug symbols..."
-            clang -g -o "tests/programs/$filename" "$test_file"
-        done
-    fi
-    
-    # Run LLDB tests
-    for test_binary in tests/programs/*; do
-        if [ -f "$test_binary" ] && [ -x "$test_binary" ]; then
-            echo "  Running $test_binary with LLDB..."
-            
-            if [ -n "$VERBOSE" ]; then
-                timeout $TIMEOUT lldb -b \
-                    -o "breakpoint set -n main" \
-                    -o "run" \
-                    -o "frame variable" \
-                    -o "quit" \
-                    "$test_binary" || true
-            else
-                timeout $TIMEOUT lldb -b \
-                    -o "breakpoint set -n main" \
-                    -o "run" \
-                    -o "frame variable" \
-                    -o "quit" \
-                    "$test_binary" > /dev/null 2>&1 || true
-            fi
-            
-            echo "    ✅ LLDB test passed"
+run_lldb() {
+    require_command clang
+    require_command lldb
+
+    local source name binary log
+    mkdir -p "$RESULT_DIR/lldb"
+
+    for source in "${SOURCES[@]}"; do
+        name="$(basename "$source" .c)"
+        binary="$BUILD_DIR/${name}-lldb"
+        log="$RESULT_DIR/lldb/${name}.log"
+
+        echo "[LLDB] compile $name"
+        clang -g -O0 -Wall -Wextra -o "$binary" "$source"
+
+        echo "[LLDB] inspect $name"
+        if ! timeout "${TIMEOUT_SECONDS}s" \
+            lldb --batch \
+                -o "breakpoint set --name main" \
+                -o "run" \
+                -o "frame variable" \
+                -o "quit" \
+                -- "$binary" >"$log" 2>&1; then
+            cat "$log" >&2 || true
+            echo "LLDB smoke failed for $name" >&2
+            return 1
         fi
+
+        if ! grep -Eq 'stop reason = breakpoint|stopped.*breakpoint|Breakpoint' "$log"; then
+            cat "$log" >&2 || true
+            echo "LLDB did not reach a breakpoint for $name" >&2
+            return 1
+        fi
+
+        echo "[LLDB] PASS $name"
     done
 }
 
-# Main execution
-case $BACKEND in
+case "$BACKEND" in
     gdb)
-        check_debugger gdb
-        run_gdb_tests
+        run_gdb
         ;;
     lldb)
-        check_debugger lldb
-        run_lldb_tests
+        run_lldb
         ;;
     both)
-        check_debugger gdb
-        check_debugger lldb
-        run_gdb_tests
-        echo ""
-        run_lldb_tests
+        run_gdb
+        run_lldb
         ;;
     *)
-        echo "❌ Unknown backend: $BACKEND"
-        echo "Usage: $0 [gdb|lldb|both] [timeout] [verbose]"
-        exit 1
+        echo "Usage: $0 [gdb|lldb|both] [timeout-seconds]" >&2
+        exit 2
         ;;
 esac
 
-echo ""
-echo "✅ All differential tests completed"
+echo "Debugger compatibility smoke passed: backend=$BACKEND fixtures=${#SOURCES[@]}"
