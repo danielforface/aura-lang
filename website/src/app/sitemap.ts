@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
 import { DOC_GROUPS } from "@/lib/siteData";
+export const dynamic = "force-static";
+
 const base="https://aura.geniuses.team";
 export default function sitemap():MetadataRoute.Sitemap{
   const pages=["","/language","/verification","/toolchain","/ecosystem","/status","/downloads","/releases","/gallery","/playground"];
