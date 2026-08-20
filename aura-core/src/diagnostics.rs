@@ -530,7 +530,7 @@ mod tests {
             ViolationKind::UseAfterMove,
             "test error".to_string(),
         )
-        .with_suggestion("fix this".to_string())
+        .suggestion("fix this".to_string())
         .build();
         
         assert_eq!(diag.severity, Severity::Error);
