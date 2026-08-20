@@ -3,7 +3,6 @@ name: Dependency Review
 on:
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,22 +15,14 @@ concurrency:
 jobs:
   dependency-review:
     name: Block newly introduced high-risk dependencies
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Review dependency changes
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
-
-  manual-noop:
-    name: Manual workflow sanity
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Dependency Review is enforced on pull requests."

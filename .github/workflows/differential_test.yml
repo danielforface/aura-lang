@@ -58,10 +58,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install aura-interpret native dependencies
+        if: matrix.package == 'aura-interpret'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -76,7 +82,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -88,6 +94,7 @@ jobs:
             build-essential \
             clang \
             libclang-dev \
+            libasound2-dev \
             cmake \
             ninja-build \
             pkg-config
