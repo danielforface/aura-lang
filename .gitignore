@@ -33,6 +33,9 @@
 /website/public/downloads/
 /website/website.zip
 
+/website/out/
+aura-site-*.zip
+
 /editors/sentinel-app/src-tauri/bin/
 /editors/vscode/*.exe
 /editors/vscode/*.vsix
@@ -81,3 +84,5 @@ samples/**/gradle/gradle-*/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+
