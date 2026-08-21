@@ -19,7 +19,7 @@ cell main() ->:
     let program = aura_parse::parse_source(src).expect("parse");
     let err = Checker::new().check_program(&program).expect_err("expected sema error");
     assert!(
-        err.message.contains("use after move"),
+        err.message.contains("used after move"),
         "unexpected error: {}",
         err.message
     );
