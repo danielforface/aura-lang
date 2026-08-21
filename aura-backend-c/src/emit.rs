@@ -24,7 +24,18 @@ pub struct CArtifacts {
 
 pub fn emit_module(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<CArtifacts, CBackendError> {
     let mut module = module.clone();
-    aura_ir::optimize_module(&mut module);
+
+    // The current IR keeps string interpolation as a ConstString template, so
+    // `{ident}` references are not explicit SSA dependency edges yet. Running
+    // DCE on such a function can remove bindings that the C emitter still needs
+    // to reproduce AVM interpolation semantics. Keep those functions intact
+    // until interpolation dependencies become first-class IR; optimize all
+    // other functions normally.
+    for function in module.functions.values_mut() {
+        if !function_has_string_interpolation(function) {
+            aura_ir::optimize_function(function);
+        }
+    }
 
     if let Err(e) = aura_ir::validate_module(&module) {
         return Err(CBackendError {
@@ -153,6 +164,20 @@ fn c_escape_string_literal(s: &str) -> String {
     out
 }
 
+fn function_has_string_interpolation(function: &FunctionIR) -> bool {
+    function.blocks.iter().any(|block| {
+        block.insts.iter().any(|inst| {
+            matches!(
+                &inst.kind,
+                InstKind::BindStrand {
+                    expr: RValue::ConstString(template),
+                    ..
+                } if template.contains('{') && template.contains('}')
+            )
+        })
+    })
+}
+
 fn emit_line_directive(out: &mut String, debug: Option<&DebugSource>, span: aura_ast::Span) {
     let Some(dbg) = debug else { return };
     let lc = dbg.line_col(span);
@@ -201,10 +226,20 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
     }
     out.push_str(") {\n");
 
-    // Value table: ValueId -> (ctype, name)
+    // Value table: ValueId -> (ctype, generated C name)
     let mut values: HashMap<ValueId, (CType, String)> = HashMap::new();
+
+    // Preserve source-level names for AVM-compatible `{ident}` interpolation.
+    let mut named_values: HashMap<String, (CType, String)> = HashMap::new();
+
+    // Keep the raw template associated with a string SSA value so io.println
+    // can lower interpolation instead of forwarding literal braces.
+    let mut string_literals: HashMap<ValueId, String> = HashMap::new();
+
     for p in &f.params {
-        values.insert(p.value, (map_type_to_ctype(&p.ty), c_ident(&p.name)));
+        let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
+        named_values.insert(p.name.clone(), binding.clone());
+        values.insert(p.value, binding);
     }
 
     // Precompute Phi injections: (pred, target) -> [(dest, incoming)]
@@ -262,11 +297,51 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 InstKind::BindStrand { name, expr } => {
                     if let Some(dest) = inst.dest {
-                        let (ct, decl) = emit_rvalue_decl(dest, name, expr);
+                        // RValue::Local is an alias, so its C type must be the
+                        // source value's type. The old prototype hard-coded
+                        // Tensor here, which is incorrect for u32/bool/string.
+                        let (ct, decl) = match expr {
+                            RValue::Local(source) => {
+                                let (source_ct, source_name) = values
+                                    .get(source)
+                                    .cloned()
+                                    .unwrap_or((CType::Tensor, format!("v{}", source.0)));
+                                (
+                                    source_ct,
+                                    format!(
+                                        "const {} v{} = {};",
+                                        map_ctype_decl(source_ct),
+                                        dest.0,
+                                        source_name
+                                    ),
+                                )
+                            }
+                            _ => emit_rvalue_decl(dest, name, expr),
+                        };
+
                         out.push_str("  ");
                         out.push_str(&decl);
                         out.push('\n');
-                        values.insert(dest, (ct, format!("v{}", dest.0)));
+
+                        let binding = (ct, format!("v{}", dest.0));
+                        values.insert(dest, binding.clone());
+                        named_values.insert(name.clone(), binding);
+
+                        match expr {
+                            RValue::ConstString(template) => {
+                                string_literals.insert(dest, template.clone());
+                            }
+                            RValue::Local(source) => {
+                                if let Some(template) = string_literals.get(source).cloned() {
+                                    string_literals.insert(dest, template);
+                                } else {
+                                    string_literals.remove(&dest);
+                                }
+                            }
+                            _ => {
+                                string_literals.remove(&dest);
+                            }
+                        }
                     }
                 }
 
@@ -308,7 +383,16 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 }
 
                 InstKind::Call { callee, args } => {
-                    emit_call(out, inst.dest, callee, args, &mut values, ret_map);
+                    emit_call(
+                        out,
+                        inst.dest,
+                        callee,
+                        args,
+                        &mut values,
+                        ret_map,
+                        &string_literals,
+                        &named_values,
+                    );
                 }
                 InstKind::ComputeKernel { callee, args } => {
                     emit_kernel(out, inst.dest, callee, args, &mut values);
@@ -417,6 +501,85 @@ fn emit_rvalue_decl(dest: ValueId, _name: &str, rv: &RValue) -> (CType, String) 
     }
 }
 
+fn push_c_printf_literal(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '%' => out.push_str("%%"),
+            _ => out.push(ch),
+        }
+    }
+}
+
+fn emit_interpolated_println(
+    out: &mut String,
+    template: &str,
+    named_values: &HashMap<String, (CType, String)>,
+) -> bool {
+    let mut format_string = String::with_capacity(template.len() + 8);
+    let mut arguments: Vec<String> = Vec::new();
+    let mut cursor = 0usize;
+    let mut replaced_any = false;
+
+    while cursor < template.len() {
+        let Some(open_rel) = template[cursor..].find('{') else {
+            push_c_printf_literal(&mut format_string, &template[cursor..]);
+            cursor = template.len();
+            break;
+        };
+
+        let open = cursor + open_rel;
+        push_c_printf_literal(&mut format_string, &template[cursor..open]);
+
+        let after_open = open + 1;
+        let Some(close_rel) = template[after_open..].find('}') else {
+            push_c_printf_literal(&mut format_string, &template[open..]);
+            cursor = template.len();
+            break;
+        };
+
+        let close = after_open + close_rel;
+        let key = &template[after_open..close];
+
+        let replacement = named_values.get(key).and_then(|(ct, c_name)| match *ct {
+            CType::U32 => Some(("%u", format!("(unsigned int)({c_name})"))),
+            CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
+            CType::CString => Some(("%s", format!("({c_name})"))),
+            _ => None,
+        });
+
+        if let Some((specifier, argument)) = replacement {
+            format_string.push_str(specifier);
+            arguments.push(argument);
+            replaced_any = true;
+        } else {
+            // Match AVM behavior: unknown/unsupported identifiers remain
+            // visible as their original `{ident}` text.
+            push_c_printf_literal(&mut format_string, &template[open..close + 1]);
+        }
+
+        cursor = close + 1;
+    }
+
+    if !replaced_any {
+        return false;
+    }
+
+    out.push_str("  printf(\"");
+    out.push_str(&format_string);
+    out.push_str("\\n\"");
+    for argument in arguments {
+        out.push_str(", ");
+        out.push_str(&argument);
+    }
+    out.push_str(");\n");
+    true
+}
+
 fn emit_call(
     out: &mut String,
     dest: Option<ValueId>,
@@ -424,8 +587,19 @@ fn emit_call(
     args: &[ValueId],
     values: &mut HashMap<ValueId, (CType, String)>,
     ret_map: &HashMap<String, CType>,
+    string_literals: &HashMap<ValueId, String>,
+    named_values: &HashMap<String, (CType, String)>,
 ) {
     let c_fn = map_callee(callee);
+
+    if c_fn == "aura_io_println" && args.len() == 1 {
+        if let Some(template) = string_literals.get(&args[0]) {
+            if emit_interpolated_println(out, template, named_values) {
+                return;
+            }
+        }
+    }
+
     let ret = ret_map.get(callee).copied().unwrap_or_else(|| builtin_return_ctype(&c_fn));
 
     if let Some(d) = dest {

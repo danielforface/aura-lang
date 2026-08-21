@@ -68,18 +68,54 @@ fn wait_for_response(
     }
 }
 
+fn wait_for_response_buffering(
+    rx: &mpsc::Receiver<serde_json::Value>,
+    id: i64,
+    timeout: Duration,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut buffered = Vec::new();
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            panic!("timed out waiting for response id={id}");
+        }
+
+        let msg = match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(msg) => msg,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(err) => panic!("LSP receive channel closed while waiting for id={id}: {err}"),
+        };
+
+        if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
+            return (msg, buffered);
+        }
+
+        buffered.push(msg);
+    }
+}
+
 fn wait_for_proofs_stream_done(
     rx: &mpsc::Receiver<serde_json::Value>,
     stream_id: i64,
     timeout: Duration,
+    initial_messages: Vec<serde_json::Value>,
 ) -> (Vec<String>, serde_json::Value) {
     let deadline = std::time::Instant::now() + timeout;
     let mut phases: Vec<String> = Vec::new();
+    let mut initial_messages = initial_messages.into_iter();
     loop {
         if std::time::Instant::now() >= deadline {
             panic!("timed out waiting for proofs stream done id={stream_id}; phases={phases:?}");
         }
-        let msg = rx.recv_timeout(Duration::from_millis(250)).unwrap();
+        let msg = match initial_messages.next() {
+            Some(msg) => msg,
+            None => match rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(msg) => msg,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(err) => panic!("proofs stream receive channel closed: {err}"),
+            },
+        };
         if msg.get("method").and_then(|m| m.as_str()) != Some("aura/proofsStream") {
             continue;
         }
@@ -579,14 +615,22 @@ fn aura_lsp_proofs_stream_phases_include_normalize() {
         }),
     );
 
-    let resp = wait_for_response(&rx, 2, Duration::from_secs(10));
+    // JSON-RPC notifications may legally arrive before the response to
+    // proofsStreamStart. Buffer them so an early "parse" phase is not lost.
+    let (resp, buffered_before_response) =
+        wait_for_response_buffering(&rx, 2, Duration::from_secs(10));
     let stream_id = resp
         .get("result")
         .and_then(|r| r.get("id"))
         .and_then(|v| v.as_i64())
         .expect("proofsStreamStart result id");
 
-    let (phases, done_params) = wait_for_proofs_stream_done(&rx, stream_id, Duration::from_secs(20));
+    let (phases, done_params) = wait_for_proofs_stream_done(
+        &rx,
+        stream_id,
+        Duration::from_secs(20),
+        buffered_before_response,
+    );
     assert!(phases.contains(&"parse".to_string()), "missing parse phase: {phases:?}");
     assert!(phases.contains(&"sema".to_string()), "missing sema phase: {phases:?}");
     assert!(phases.contains(&"normalize".to_string()), "missing normalize phase: {phases:?}");
