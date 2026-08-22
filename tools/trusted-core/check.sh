@@ -12,7 +12,7 @@ OUT="$OUTDIR/compat-smoke.trusted-core.json"
 mkdir -p "$OUTDIR"
 
 # Generate a trusted-core report (works with or without Z3; with Z3 it includes proof summaries).
-cargo run -p aura -- verify --report "$OUT" "$TARGET"
+cargo run -p aura --locked --no-default-features -- verify --report "$OUT" "$TARGET"
 
 if [[ ! -f "$BASELINE" ]]; then
   echo "baseline missing: $BASELINE" >&2

@@ -21,7 +21,7 @@ fi
 
 for f in "${FILES[@]}"; do
   echo "-- build (avm): $f"
-  cargo run -q -p aura -- build "$f" --mode avm
+  cargo run -q -p aura --locked --no-default-features -- build "$f" --mode avm
 done
 
 echo "OK"
