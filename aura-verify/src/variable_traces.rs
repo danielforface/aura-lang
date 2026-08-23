@@ -272,7 +272,10 @@ mod tests {
         let traces = collector.traces();
         assert_eq!(traces.len(), 2);
         
-        let x_trace = &traces[0];
+        let x_trace = traces
+            .iter()
+            .find(|trace| trace.name == "x")
+            .expect("x trace should be present");
         assert_eq!(x_trace.name, "x");
         assert_eq!(x_trace.assignments.len(), 2);
     }
