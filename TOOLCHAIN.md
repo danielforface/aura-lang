@@ -218,17 +218,23 @@ python tools/release/release.py --help
 
 The release tool can stage an SDK and create deterministic artifacts.
 
-## Workspace CI baseline
+## Continuous Integration Matrix
 
-The straightforward CI workflow currently runs:
+The repository CI architecture includes 7 automated GitHub Actions workflows:
 
-```bash
-cargo test
-bash tools/compat/run.sh
-bash tools/trusted-core/check.sh
-```
-
-This is the cleanest CI surface to advertise once a passing run is linked.
+1. **Core CI (`ci.yml`)**:
+   ```bash
+   cargo test --workspace --locked --no-default-features
+   cargo check -p aura --locked --no-default-features --features z3
+   bash tools/compat/run.sh
+   bash tools/trusted-core/check.sh
+   ```
+2. **Backend Matrix (`ci-gate.yml`)**: Differential tests across `aura-ir`, `aura-backend-c`, `aura-backend-llvm`, `aura-interpret`, and CLI build profiles.
+3. **Android (`android.yml`)**: Rust Android cross-compilation (`aarch64` / `armv7`) & sample APK build.
+4. **LSP and Debugger Compatibility (`differential_test.yml`)**: Aura LSP tests, debugger fixture smoke & variable trace.
+5. **Website Static Export (`website.yml`)**: Next.js production static export and documentation encoding verification.
+6. **Release Tooling Validation (`release-validation.yml`)**: Portable SDK packaging & release artifact verification.
+7. **Dependency Review (`security.yml`)**: Supply-chain dependency vulnerability and licensing screening.
 
 ## Recommended local verification before a PR
 

@@ -1,18 +1,18 @@
-﻿---
+---
 title: "Proof System"
 description: "Contracts, proof obligations, Z3 profiles, counterexamples and trust boundaries in Aura."
 ---
 
-Auraâ€™s identity is **proof-driven development**. The proof system integrates source-level intent, solver-backed verification and editor-facing feedback.
+Aura's identity is **proof-driven development**. The proof system integrates source-level intent, solver-backed verification and editor-facing feedback.
 
 ## Source vocabulary
 
-- `requires` â€” precondition
-- `ensures` â€” postcondition
-- `assert` â€” proof obligation
-- `assume` â€” explicit trusted assumption
-- `invariant` â€” loop invariant
-- `decreases` â€” termination-oriented hint
+- `requires` — precondition
+- `ensures` — postcondition
+- `assert` — proof obligation
+- `assume` — explicit trusted assumption
+- `invariant` — loop invariant
+- `decreases` — termination-oriented hint
 - range refinements such as `u32[0..100]`
 - quantifiers where supported
 
@@ -42,19 +42,19 @@ The existence of performance tuning/caching code does not by itself prove a univ
 
 ## Result semantics
 
-A verification run can produce more than a binary â€œgreen/redâ€ answer. A timeout or solver `unknown` must never be presented as proof.
+A verification run can produce more than a binary "green/red" answer. A timeout or solver `unknown` must never be presented as proof.
 
 Conceptually:
 
 ```text
 obligation
-  â†’ solver
-     â”œâ”€ proved
-     â”œâ”€ counterexample/model
-     â”œâ”€ unknown
-     â””â”€ timeout/error
-  â†’ structured diagnostics
-  â†’ LSP / editor
+  → solver
+     ├── proved
+     ├── counterexample/model
+     ├── unknown
+     └── timeout/error
+  → structured diagnostics
+  → LSP / editor
 ```
 
 ## Counterexample mapping
@@ -68,7 +68,7 @@ The documented `aura.counterexample.v2` schema can carry:
 - source range,
 - source-anchored injections.
 
-This is how a solver model can become a developer message such as â€œthis assertion fails when `x = 12` hereâ€ rather than raw SMT output.
+This is how a solver model can become a developer message such as "this assertion fails when `x = 12` here" rather than raw SMT output.
 
 ## Trust
 

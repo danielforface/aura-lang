@@ -43,6 +43,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Verify documentation encoding hygiene
+        run: npm run check:encoding
+
       - name: Build static export
         run: npm run build
 

@@ -21,6 +21,8 @@
 
 # Repo-root build output
 /dist/
+.z3-trace
+**/.z3-trace
 
 # Large release artifacts / binary blobs (keep sources; rebuild/download these)
 /vendor.zip

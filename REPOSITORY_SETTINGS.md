@@ -63,11 +63,19 @@ Recommended ruleset:
 - require conversation resolution,
 - allow repository owner to recover/administer rules appropriately.
 
-### Status checks
+### Status checks / Required Branch Protection
 
-Do **not** immediately require every existing differential workflow.
+Following the CI architecture refresh (PR #5), all 7 workflows are validated and passing.
 
-First repair/validate CI integrity. The simple `ci` workflow is the best candidate for a required check once a clean run is confirmed.
+Because some workflows are path-filtered (e.g. `Backend Matrix`, `Android`, `LSP and Debugger Compatibility`), they run automatically when their relevant subsystems are modified, but are skipped on docs-only changes.
+
+**Recommended Required Status Checks for `main` (always-triggering checks):**
+
+1. `Core CI / Rust workspace` (runs on all PRs)
+2. `Website Static Export / Build and verify static site` (runs on all PRs)
+3. `Dependency Review / Block newly introduced high-risk dependencies` (runs on all PRs)
+
+When pull requests touch compiler backends, Android runtime, or LSP/editor tooling, their respective specialized workflows (`Backend Matrix`, `Android`, `LSP and Debugger Compatibility`, `Release Tooling Validation`) must pass prior to merge.
 
 ## Merge strategy
 

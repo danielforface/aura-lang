@@ -1,9 +1,9 @@
-﻿---
+---
 title: "Toolchain & Project Layout"
 description: "The code-backed Aura command surface, execution modes, backends and 22-crate workspace architecture."
 ---
 
-Auraâ€™s primary orchestration executable is the `aura` crate.
+Aura's primary orchestration executable is the `aura` crate.
 
 ```bash
 cargo run -p aura -- --help
@@ -43,7 +43,7 @@ llvm
 hybrid
 ```
 
-**Important:** current source explicitly notes that automatic AVM â†’ LLVM promotion inside the AVM is not yet implemented. Hybrid is not a production JIT today.
+**Important:** current source explicitly notes that automatic AVM → LLVM promotion inside the AVM is not yet implemented. Hybrid is not a production JIT today.
 
 ## Backend labels
 

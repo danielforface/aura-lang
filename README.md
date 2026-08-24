@@ -207,21 +207,22 @@ Core development:
 
 Optional features:
 
-- Z3 for solver-backed verification
-- LLVM/toolchain support for the LLVM path
+- Z3 solver-backed verification (feature-gated; statically linked via `static-link-z3`, requires C/C++/CMake build tools)
+- LLVM/toolchain support for the LLVM path (requires system LLVM)
 - Node.js/npm + Tauri prerequisites for Aura Sentinel
 - Android SDK/NDK + Java for Android tooling
 
 ### Inspect the CLI
 
 ```bash
-cargo run -p aura -- --help
+cargo build -p aura --locked --no-default-features
+cargo run -p aura --locked --no-default-features -- --help
 ```
 
 ### Build
 
 ```bash
-cargo run -p aura -- build main.aura
+cargo run -p aura --locked --no-default-features -- build main.aura
 ```
 
 The CLI exposes build profiles (`dev`, `release`, `verify`) and execution modes (`avm`, `llvm`, `hybrid`). The default backend is the C-oriented path; LLVM support is feature-gated and remains an evolving backend.
@@ -229,7 +230,7 @@ The CLI exposes build profiles (`dev`, `release`, `verify`) and execution modes 
 ### Run in the development VM / hybrid entry path
 
 ```bash
-cargo run -p aura -- run main.aura
+cargo run -p aura --locked --no-default-features -- run main.aura
 ```
 
 Important: current source explicitly notes that automatic AVM → LLVM promotion inside hybrid execution is **not yet implemented**. “Hybrid” should therefore not be interpreted as a production JIT.

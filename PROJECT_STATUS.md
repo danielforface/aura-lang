@@ -2,8 +2,9 @@
 
 This file is the public status reconciliation layer for Aura. It exists because the repository contains multiple version namespaces and historical milestone documents that should not be collapsed into a single marketing version.
 
-**Audit date:** 2026-08-18  
-**Audit basis:** `main@70fefa4c6d570a4bb73aef0fe766eb610ae697a1`
+**Audit date:** 2026-08-24  
+**Audit basis:** `main@74e0708ac33e622ffbb512c7baba68296c38be0b`  
+**PR #5 validation head:** `3d1eed1e33b24de34638615ba3d78e8abefbbbf4`
 
 ## Executive status
 
@@ -154,9 +155,19 @@ For public communication:
 
 ## CI status and evidence integrity
 
-The simple workspace CI definition is meaningful: it runs workspace tests, a compatibility suite and trusted-core baseline checks.
+Following the CI architecture refresh (PR #5), the repository enforces a 7-workflow automated validation matrix on GitHub Actions:
 
-Some differential CI definitions currently contain stale references or optimistic reporting paths. They should be repaired before being used as proof for “100% backend agreement.” See the delivery-only `CI_INTEGRITY_AUDIT.md` included with the wrapper package.
+| Workflow | Scope / Gate | Result (PR #5 / Audit Basis) |
+|---|---|---|
+| **Core CI** | Workspace tests, portable Z3 feature path, compatibility suite, trusted-core audit | PASS |
+| **Backend Matrix** | IR oracle, C backend, LLVM backend, AVM interpreter, CLI build profiles | PASS |
+| **Android** | Rust Android cross-compilation (aarch64/armv7) & sample APK build | PASS |
+| **LSP / Debugger** | LSP smoke/trace test suite, debugger fixture smoke & variable trace | PASS |
+| **Website Static Export** | Next.js production static export and doc verification | PASS |
+| **Release Tooling Validation**| Cross-platform package tooling & artifact generation | PASS |
+| **Dependency Review** | Supply-chain dependency vulnerability & license screening | PASS |
+
+Note: Passing these automated gates establishes that the implemented features, parser rules, and differential test suites pass in the automated environment. It is evidence of engineering hygiene and active gating, not a claim of complete formal compiler correctness or 100% backend equivalence across all unexercised programs.
 
 ## What “ready” means today
 
