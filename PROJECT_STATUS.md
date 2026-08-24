@@ -3,8 +3,9 @@
 This file is the public status reconciliation layer for Aura. It exists because the repository contains multiple version namespaces and historical milestone documents that should not be collapsed into a single marketing version.
 
 **Audit date:** 2026-08-24  
-**Audit basis:** `main@74e0708ac33e622ffbb512c7baba68296c38be0b`  
-**PR #5 validation head:** `3d1eed1e33b24de34638615ba3d78e8abefbbbf4`
+**Audit basis:** `main@cd2faee90f701c64ec39ae397c768fb3a4d64ea4`  
+**PR #5 & #6 validation:** Passed (100% CI Gates)  
+**1.0 Program:** [AURA_1_0_QUALIFICATION_PROGRAM.md](AURA_1_0_QUALIFICATION_PROGRAM.md) · [AURA_1_0_CAPABILITY_INVENTORY.md](AURA_1_0_CAPABILITY_INVENTORY.md)
 
 ## Executive status
 
