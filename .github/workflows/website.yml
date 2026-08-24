@@ -26,12 +26,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
@@ -79,7 +79,7 @@ jobs:
           echo "PASS trailingSlash=true"
 
       - name: Upload verified static export
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: aura-website-static-${{ github.sha }}
           path: website/out/

@@ -40,3 +40,12 @@ cell main() ->:
 "#;
     parse_source(src).expect("new 0.3 syntax should parse");
 }
+
+#[test]
+fn extern_cell_supports_arrow_and_colon() {
+    let src1 = "trusted extern cell println(text: String) -> Unit\n";
+    parse_source(src1).expect("extern cell with arrow should parse");
+
+    let src2 = "extern cell native_read(fd: u32): u32\n";
+    parse_source(src2).expect("extern cell with colon should parse");
+}

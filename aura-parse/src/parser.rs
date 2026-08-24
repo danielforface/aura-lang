@@ -1123,7 +1123,14 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LParen)?;
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen)?;
-        self.expect(TokenKind::Colon)?;
+        if self.at(TokenKind::Arrow) || self.at(TokenKind::Colon) {
+            self.next();
+        } else {
+            return Err(ParseError {
+                message: "expected ':' or '->' before return type in extern cell declaration".to_string(),
+                span: self.peek_span().unwrap_or_else(|| span_between(0, 0)),
+            });
+        }
         let ret = self.parse_type_ref()?;
         self.expect_stmt_terminator()?;
         let span = join(start.span, ret.span);

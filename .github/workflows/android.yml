@@ -36,16 +36,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Cache Android SDK
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\aura-android-sdk
           key: aura-android-sdk-win-${{ hashFiles('sdk/android/setup-android.ps1') }}
@@ -72,7 +72,7 @@ jobs:
           Get-Item $apk | Format-List FullName,Length,LastWriteTime
 
       - name: Upload APK
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: AuraSentinelSample-debug-apk
           path: dist/android/AuraSentinelSample-debug.apk
@@ -86,7 +86,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Install Rust Android targets
         uses: dtolnay/rust-toolchain@stable
@@ -94,13 +94,13 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi
 
       - name: Set up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Cache Android SDK
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\aura-android-sdk
           key: aura-android-sdk-win-${{ hashFiles('sdk/android/setup-android.ps1') }}
