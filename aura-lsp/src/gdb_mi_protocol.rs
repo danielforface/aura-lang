@@ -320,6 +320,19 @@ impl GDBMIProtocol {
     }
 
     fn parse_error(s: &str) -> Result<String, String> {
+        // GDB/MI error results normally arrive as named result fields:
+        //   2^error,msg="Not confirmed."
+        // `split_result` passes the text after `error,` here. Parse those fields
+        // first so `msg=` is not accidentally preserved in the error string.
+        let fields = Self::parse_tuple_content(s)?;
+
+        if let Some((_, value)) = fields.iter().find(|(key, _)| key == "msg") {
+            if let Some(message) = value.as_string() {
+                return Ok(message);
+            }
+        }
+
+        // Defensive fallback for non-standard scalar debugger output.
         let value = Self::parse_value(s)?;
         match value {
             MIValue::CString(msg) => Ok(msg),

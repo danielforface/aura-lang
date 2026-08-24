@@ -1,7 +1,7 @@
 import std::collections
 import std::io
 
-cell main() ->:
+cell main():
   val mut v: Tensor = collections::vector_new(4)
   collections::vector_set(v, 0, 7)
   val a: u32 = collections::vector_get(v, 0)

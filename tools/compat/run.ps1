@@ -18,7 +18,7 @@ try {
 
   foreach ($f in $files) {
     Write-Host "-- build (avm): $f"
-    cargo run -q -p aura -- build "$f" --mode avm
+    cargo run -q -p aura --locked --no-default-features -- build "$f" --mode avm
   }
 
   Write-Host "OK"

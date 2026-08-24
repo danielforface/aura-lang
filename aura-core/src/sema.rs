@@ -21,7 +21,7 @@ const U32_MAX: u64 = 0xFFFF_FFFF;
 /// move semantics and prevent use-after-move errors.
 ///
 /// Example progression:
-/// ```
+/// ```text
 /// let model = ai.load();        // Owned
 /// ai.infer(model, data);        // Consumed (moved into function)
 /// ai.infer(model, data);        // ERROR: Consumed already

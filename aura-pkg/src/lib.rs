@@ -198,16 +198,22 @@ pub fn add_package(project_root: &Path, opts: &AddOptions) -> Result<InstallResu
     fs::create_dir_all(&layout.include_dir).into_diagnostic()?;
     fs::create_dir_all(&layout.cache_dir).into_diagnostic()?;
 
+    // Registry packages are metadata-driven and are already implemented using
+    // local/http artifact download, checksum/signature verification, lockfile
+    // handling, and archive extraction. They do not require the Stage 18
+    // Windows-only legacy native-package discovery path.
+    if opts.registry.is_some() {
+        return install_from_registry(&layout, opts);
+    }
+
+    // Stage 18's host restriction applies only to the legacy hardcoded native
+    // packages below (raylib / onnxruntime), whose automatic artifact discovery
+    // is currently implemented only for Windows x64.
     let host = detect_host();
     if host != HostKind::WindowsX64Msvc {
         return Err(pkg_msg(
             "Stage 18: only Windows x64 artifact retrieval is implemented",
         ));
-    }
-
-    // If a registry is provided, use the registry workflow.
-    if opts.registry.is_some() {
-        return install_from_registry(&layout, opts);
     }
 
     // Back-compat: legacy, hardcoded native packages with discovery.

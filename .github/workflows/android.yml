@@ -1,24 +1,42 @@
-name: android
+name: Android
 
 on:
   workflow_dispatch:
   pull_request:
+    branches: [main]
     paths:
       - "sdk/android/**"
       - "samples/android/**"
+      - "aura-rt/**"
       - ".github/workflows/android.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
   push:
+    branches: [main]
     paths:
       - "sdk/android/**"
       - "samples/android/**"
+      - "aura-rt/**"
       - ".github/workflows/android.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   apk:
-    name: Build sample APK (Windows)
+    name: Build sample APK
     runs-on: windows-latest
+    timeout-minutes: 60
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -29,34 +47,49 @@ jobs:
       - name: Cache Android SDK
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}\\aura-android-sdk
+          path: ${{ runner.temp }}\aura-android-sdk
           key: aura-android-sdk-win-${{ hashFiles('sdk/android/setup-android.ps1') }}
 
-      - name: Install Android SDK/NDK
+      - name: Install Android SDK and NDK
         shell: pwsh
         run: |
-          $SdkRoot = "${{ runner.temp }}\\aura-android-sdk"
+          $SdkRoot = "${{ runner.temp }}\aura-android-sdk"
           ./sdk/android/setup-android.ps1 -InstallRoot $SdkRoot -AcceptLicenses
 
-      - name: Build APK
+      - name: Build debug APK
         shell: pwsh
         run: |
-          $SdkRoot = "${{ runner.temp }}\\aura-android-sdk"
+          $SdkRoot = "${{ runner.temp }}\aura-android-sdk"
           ./sdk/android/build-apk.ps1 -SdkRoot $SdkRoot
 
-      - name: Upload APK artifact
+      - name: Verify APK
+        shell: pwsh
+        run: |
+          $apk = "dist/android/AuraSentinelSample-debug.apk"
+          if (-not (Test-Path $apk)) {
+            throw "Expected APK not found: $apk"
+          }
+          Get-Item $apk | Format-List FullName,Length,LastWriteTime
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AuraSentinelSample-debug-apk
           path: dist/android/AuraSentinelSample-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 
   rust-cross:
-    name: Rust cross-compile (Android targets)
+    name: Rust Android cross-compile
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 60
 
-      - uses: dtolnay/rust-toolchain@stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Android targets
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
 
@@ -69,29 +102,29 @@ jobs:
       - name: Cache Android SDK
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}\\aura-android-sdk
+          path: ${{ runner.temp }}\aura-android-sdk
           key: aura-android-sdk-win-${{ hashFiles('sdk/android/setup-android.ps1') }}
 
-      - name: Install Android SDK/NDK
+      - name: Install Android SDK and NDK
         shell: pwsh
         run: |
-          $SdkRoot = "${{ runner.temp }}\\aura-android-sdk"
+          $SdkRoot = "${{ runner.temp }}\aura-android-sdk"
           ./sdk/android/setup-android.ps1 -InstallRoot $SdkRoot -AcceptLicenses
 
       - name: Build aura-rt for aarch64-linux-android
         shell: pwsh
         run: |
-          $SdkRoot = "${{ runner.temp }}\\aura-android-sdk"
-          . "$SdkRoot\\aura-android-env.ps1"
-          $prebuilt = Join-Path $env:ANDROID_NDK_HOME "toolchains\\llvm\\prebuilt\\windows-x86_64\\bin"
+          $SdkRoot = "${{ runner.temp }}\aura-android-sdk"
+          . "$SdkRoot\aura-android-env.ps1"
+          $prebuilt = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86_64\bin"
           $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = Join-Path $prebuilt "aarch64-linux-android21-clang.cmd"
-          cargo build -p aura-rt --target aarch64-linux-android
+          cargo build -p aura-rt --locked --target aarch64-linux-android
 
       - name: Build aura-rt for armv7-linux-androideabi
         shell: pwsh
         run: |
-          $SdkRoot = "${{ runner.temp }}\\aura-android-sdk"
-          . "$SdkRoot\\aura-android-env.ps1"
-          $prebuilt = Join-Path $env:ANDROID_NDK_HOME "toolchains\\llvm\\prebuilt\\windows-x86_64\\bin"
+          $SdkRoot = "${{ runner.temp }}\aura-android-sdk"
+          . "$SdkRoot\aura-android-env.ps1"
+          $prebuilt = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86_64\bin"
           $env:CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = Join-Path $prebuilt "armv7a-linux-androideabi21-clang.cmd"
-          cargo build -p aura-rt --target armv7-linux-androideabi
+          cargo build -p aura-rt --locked --target armv7-linux-androideabi

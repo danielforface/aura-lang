@@ -77,10 +77,29 @@ pub fn run_avm(src: &str) -> Result<RunOutcome> {
     }
 }
 
+fn prepare_output_dir(out_dir: &Path) -> Result<PathBuf> {
+    let requested = if out_dir.is_absolute() {
+        out_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .into_diagnostic()?
+            .join(out_dir)
+    };
+
+    std::fs::create_dir_all(&requested).into_diagnostic()?;
+
+    // Canonicalize only after creation. Every compiler input/output path
+    // derived from this directory is absolute, so changing the child process
+    // cwd cannot accidentally prefix the relative build path a second time.
+    requested.canonicalize().into_diagnostic()
+}
+
 pub fn compile_and_run_c(case_name: &str, src: &str, out_dir: &Path) -> Result<Option<RunOutcome>> {
     let Some(cc) = find_c_compiler() else {
         return Ok(None);
     };
+
+    let out_dir = prepare_output_dir(out_dir)?;
 
     let src_aug = match aura_sdk::augment_source_with_default_std(src).into_diagnostic() {
         Ok(s) => s,
@@ -127,7 +146,6 @@ pub fn compile_and_run_c(case_name: &str, src: &str, out_dir: &Path) -> Result<O
     let debug = DebugSource::new("differential.aura".to_string(), &src_aug);
     let artifacts = aura_backend_c::emit_module(&module_ir, Some(&debug))?;
 
-    std::fs::create_dir_all(out_dir).into_diagnostic()?;
     let module_c = out_dir.join("module.c");
     std::fs::write(out_dir.join("aura_runtime.h"), artifacts.runtime_h).into_diagnostic()?;
     std::fs::write(&module_c, artifacts.module_c).into_diagnostic()?;
@@ -148,7 +166,7 @@ pub fn compile_and_run_c(case_name: &str, src: &str, out_dir: &Path) -> Result<O
         .arg(stdlib_c)
         .arg("-o")
         .arg(&exe)
-        .current_dir(out_dir)
+        .current_dir(&out_dir)
         .status()
         .into_diagnostic()?;
 
@@ -206,6 +224,8 @@ pub fn compile_and_run_llvm(case_name: &str, src: &str, out_dir: &Path) -> Resul
     let Some(clang) = clang else {
         return Ok(None);
     };
+
+    let out_dir = prepare_output_dir(out_dir)?;
 
     let src_aug = match aura_sdk::augment_source_with_default_std(src).into_diagnostic() {
         Ok(s) => s,
@@ -266,7 +286,6 @@ pub fn compile_and_run_llvm(case_name: &str, src: &str, out_dir: &Path) -> Resul
         }
     };
 
-    std::fs::create_dir_all(out_dir).into_diagnostic()?;
     let ll_path = out_dir.join("module.ll");
     std::fs::write(&ll_path, llvm_ir).into_diagnostic()?;
 
@@ -293,7 +312,7 @@ pub fn compile_and_run_llvm(case_name: &str, src: &str, out_dir: &Path) -> Resul
         .arg(stdlib_c)
         .arg("-o")
         .arg(&exe)
-        .current_dir(out_dir)
+        .current_dir(&out_dir)
         .status()
         .into_diagnostic()?;
 

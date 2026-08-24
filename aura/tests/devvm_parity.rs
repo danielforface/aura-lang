@@ -44,7 +44,7 @@ cell main() ->:
     let debug = DebugSource::new("parity.aura".to_string(), &src_aug);
     let artifacts = aura_backend_c::emit_module(&module_ir, Some(&debug))?;
 
-    let out_dir = PathBuf::from("build").join("parity_test");
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("build").join("parity_test");
     std::fs::create_dir_all(&out_dir).into_diagnostic()?;
     let runtime_h = out_dir.join("aura_runtime.h");
     let module_c = out_dir.join("module.c");

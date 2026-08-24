@@ -309,7 +309,12 @@ fn run_function(
                             return Ok((None, false));
                         }
                         rv
-                    } else if module.externs.contains_key(callee) {
+                    } else if module.externs.contains_key(callee)
+                        || is_modeled_runtime_callee(callee)
+                    {
+                        // Some IR producers encode compiler-known runtime builtins as calls
+                        // without materializing them in ModuleIR.externs. Keep this strict:
+                        // only callees explicitly modeled by the oracle may bypass externs.
                         run_extern(callee, &call_args, stdout)?
                     } else {
                         return Err(OracleError {
@@ -445,6 +450,48 @@ fn eval_binary(op: BinOp, l: &OracleValue, r: &OracleValue) -> Result<OracleValu
         _ => Err(OracleError {
             message: format!("oracle: unsupported binary op {:?} for values {:?} and {:?}", op, l, r),
         }),
+    }
+}
+
+fn is_modeled_runtime_callee(callee: &str) -> bool {
+    // Deliberate allowlist: adding a runtime builtin here also requires
+    // implementing its exact semantics in run_extern().
+    matches!(callee, "io.println")
+}
+
+#[cfg(test)]
+mod oracle_runtime_dispatch_tests {
+    use super::{is_modeled_runtime_callee, run_extern, OracleValue};
+
+    #[test]
+    fn modeled_runtime_callee_allowlist_is_exact() {
+        assert!(is_modeled_runtime_callee("io.println"));
+        assert!(!is_modeled_runtime_callee("io.print"));
+        assert!(!is_modeled_runtime_callee("unknown.fn"));
+    }
+
+    #[test]
+    fn modeled_io_println_semantics_are_stable() {
+        let mut stdout = String::new();
+        let result = run_extern(
+            "io.println",
+            &[OracleValue::String("hello".to_string())],
+            &mut stdout,
+        )
+        .expect("io.println must be modeled");
+
+        assert_eq!(result, None);
+        assert_eq!(stdout, "hello\n");
+    }
+
+    #[test]
+    fn unmodeled_runtime_callee_remains_rejected() {
+        let mut stdout = String::new();
+        let err = run_extern("unknown.fn", &[], &mut stdout)
+            .expect_err("unmodeled runtime callee must remain rejected");
+
+        assert_eq!(err.message, "oracle: extern 'unknown.fn' not modeled");
+        assert!(stdout.is_empty());
     }
 }
 
