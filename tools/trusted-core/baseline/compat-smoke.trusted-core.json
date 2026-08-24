@@ -4,7 +4,20 @@
   "ok": true,
   "trusted": {
     "unsafe_blocks": [],
-    "extern_cells_trusted": [],
+    "extern_cells_trusted": [
+      {
+        "offset": 326,
+        "len": 41
+      },
+      {
+        "offset": 377,
+        "len": 38
+      },
+      {
+        "offset": 425,
+        "len": 47
+      }
+    ],
     "extern_cells_untrusted": []
   }
 }
