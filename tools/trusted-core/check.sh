@@ -23,7 +23,7 @@ fi
 # Fail if trusted surface / evidence changes without updating the baseline.
 diff -u "$BASELINE" "$OUT" > "$OUTDIR/trusted-core.diff" || {
   echo "Trusted core report differs from baseline." >&2
-  echo "See: $OUTDIR/trusted-core.diff" >&2
+  cat "$OUTDIR/trusted-core.diff" >&2
   exit 1
 }
 
