@@ -50,6 +50,7 @@ async-trait = "0.1"
 # Cross-compilation target model
 target-lexicon = "0.13"
 
-# NOTE: `inkwell` (LLVM) and `z3` are declared per-crate behind features,
-# because they require system LLVM/Z3 to be installed for linking.
+# NOTE: `inkwell` (LLVM) is declared per-crate behind features because it requires
+# a system LLVM installation. `z3` is feature-gated and statically linked via
+# `static-link-z3` (requiring standard C/C++/CMake build tools, without a separate system Z3 install).
 

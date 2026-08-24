@@ -5,8 +5,9 @@
   "scripts": {
     "gen:grammar": "node scripts/extract-aura-grammar.mjs",
     "gen:plugins": "node scripts/generate-plugin-docs.mjs",
+    "check:encoding": "node scripts/check-encoding.mjs",
     "dev": "npm run gen:grammar && npm run gen:plugins && next dev",
-    "build": "npm run gen:grammar && npm run gen:plugins && next build",
+    "build": "npm run check:encoding && npm run gen:grammar && npm run gen:plugins && next build",
     "start": "next start",
     "lint": "eslint"
   },

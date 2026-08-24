@@ -12,7 +12,7 @@ aura-nexus = { path = "../aura-nexus", default-features = false }
 miette = { workspace = true }
 thiserror = { workspace = true }
 
-# Real SMT solver (requires libz3 installed)
+# Real SMT solver (statically linked via static-link-z3, requires C/C++/CMake build tools)
 z3 = { workspace = true, optional = true }
 
 [features]

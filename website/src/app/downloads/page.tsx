@@ -158,7 +158,7 @@ export default function DownloadsPage() {
             <article className="content-card">
               <div className="eyebrow">Source build</div>
               <h3>Build Aura directly from the repository</h3>
-              <pre className="command-block"><code>{`git clone https://github.com/danielforface/aura-lang.git\ncd aura-lang\n\ncargo build --workspace\ncargo run -p aura -- --help`}</code></pre>
+              <pre className="command-block"><code>{`git clone https://github.com/danielforface/aura-lang.git\ncd aura-lang\n\ncargo build -p aura --locked --no-default-features\ncargo run -p aura --locked --no-default-features -- --help`}</code></pre>
             </article>
             <article className="content-card">
               <div className="eyebrow">Verification</div>

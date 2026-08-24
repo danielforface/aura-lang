@@ -1,4 +1,4 @@
-﻿---
+---
 title: "Getting Started"
 description: "Build, run and verify Aura from the public repository without assuming unpublished binary artifacts."
 ---
@@ -15,8 +15,8 @@ For the core compiler and AVM path:
 
 Optional integrations require additional toolchains:
 
-- **Z3** for solver-backed verification,
-- **LLVM** for the feature-gated LLVM IR path,
+- **Z3 verification** is feature-gated and built through the Rust dependency using `static-link-z3`. A separate system Z3 installation is not required. Building the Z3-enabled path does require the native C/C++/CMake toolchain needed to compile the bundled solver source.
+- **LLVM** for the feature-gated LLVM IR path (requires system LLVM),
 - **Node.js / npm + Tauri prerequisites** for Aura Sentinel,
 - **Java + Android SDK/NDK** for Android tooling.
 
@@ -30,7 +30,8 @@ cd aura-lang
 Inspect the primary command surface rather than relying on historical docs:
 
 ```bash
-cargo run -p aura -- --help
+cargo build -p aura --locked --no-default-features
+cargo run -p aura --locked --no-default-features -- --help
 ```
 
 ## Write a small Aura program
@@ -50,7 +51,7 @@ Aura uses significant indentation. Current language syntax is summarized in the 
 ## Build
 
 ```bash
-cargo run -p aura -- build main.aura
+cargo run -p aura --locked --no-default-features -- build main.aura
 ```
 
 The primary CLI exposes build profiles (`dev`, `release`, `verify`) and execution modes (`avm`, `llvm`, `hybrid`). Backend maturity is not uniform; see [Toolchain & Project Layout](/docs/toolchain).
@@ -58,10 +59,10 @@ The primary CLI exposes build profiles (`dev`, `release`, `verify`) and executio
 ## Run in the development path
 
 ```bash
-cargo run -p aura -- run main.aura
+cargo run -p aura --locked --no-default-features -- run main.aura
 ```
 
-The AVM / development VM is the clearest low-friction execution path. Current source explicitly notes that automatic AVM â†’ LLVM promotion in hybrid execution is **not yet implemented**, so hybrid should not be interpreted as a production JIT.
+The AVM / development VM is the clearest low-friction execution path. Current source explicitly notes that automatic AVM → LLVM promotion in hybrid execution is **not yet implemented**, so hybrid should not be interpreted as a production JIT.
 
 ## Verify with Z3
 
@@ -73,9 +74,9 @@ cargo run -p aura --features z3 -- verify main.aura --smt-profile fast
 
 Profiles exposed by the CLI:
 
-- `fast` â€” interactive/low-latency-oriented,
-- `ci` â€” CI-oriented,
-- `thorough` â€” deeper verification.
+- `fast` — interactive/low-latency-oriented,
+- `ci` — CI-oriented,
+- `thorough` — deeper verification.
 
 Optional incremental solver state inside a run:
 
