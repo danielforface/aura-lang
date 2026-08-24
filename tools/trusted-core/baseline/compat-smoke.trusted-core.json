@@ -6,15 +6,15 @@
     "unsafe_blocks": [],
     "extern_cells_trusted": [
       {
-        "offset": 326,
+        "offset": 320,
         "len": 41
       },
       {
-        "offset": 377,
+        "offset": 371,
         "len": 38
       },
       {
-        "offset": 425,
+        "offset": 419,
         "len": 47
       }
     ],
