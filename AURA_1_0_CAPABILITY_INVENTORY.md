@@ -39,10 +39,10 @@ Every language construct has been inspected across all **13 qualification dimens
 
 | Language Construct | LEX | PARSE | AST | SEMA | IR | VERIFY | AVM | C | LLVM | LSP | DIAG | SPEC | TESTS | 1.0 Disposition |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
-| **Numeric Primitives (`u8..u128`, `i8..i128`, `f32`, `f64`)** | PASS | PASS | PASS | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PASS | PARTIAL | ABSENT | PASS | **[FREEZE & EXPAND]** |
-| **Range Refinements (`T[lo..hi]`)** | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PARTIAL | PASS | PARTIAL | ABSENT | PASS | **[FREEZE]** |
-| **Records / Structs (Named fields)** | PASS | PASS | PASS | PASS | ABSENT | PARTIAL | PARTIAL | ABSENT | ABSENT | PASS | PARTIAL | ABSENT | PASS | **[COMPLETE IN IR & C]** |
-| **Enums (Algebraic Sum Types)** | PASS | PASS | PASS | PASS | ABSENT | PARTIAL | PARTIAL | ABSENT | ABSENT | PASS | PARTIAL | ABSENT | PASS | **[COMPLETE IN IR & C]** |
+| **Numeric Primitives (`u8..u128`, `i8..i128`, `f32`, `f64`)** | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PARTIAL | PASS | PASS | ABSENT | PASS | **[QUALIFIED 1.0]** |
+| **Range Refinements (`T[lo..hi]`)** | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PARTIAL | PASS | PASS | ABSENT | PASS | **[QUALIFIED 1.0]** |
+| **Records / Structs (Named fields)** | PASS | PASS | PASS | PASS | PASS | PARTIAL | PASS | PASS | ABSENT | PASS | PASS | ABSENT | PASS | **[QUALIFIED 1.0]** |
+| **Enums (Algebraic Sum Types)** | PASS | PASS | PASS | PASS | PASS | PARTIAL | PASS | PASS | ABSENT | PASS | PASS | ABSENT | PASS | **[QUALIFIED 1.0]** |
 | **Pattern Matching (`match`)** | PASS | PASS | PASS | PASS | PARTIAL | PARTIAL | PASS | PARTIAL | PARTIAL | PASS | PARTIAL | ABSENT | PASS | **[COMPLETE EXHAUSTIVENESS]** |
 | **Generics & Type Parameters** | PASS | PASS | PASS | PARTIAL | ABSENT | ABSENT | PARTIAL | ABSENT | ABSENT | PARTIAL | PARTIAL | ABSENT | PARTIAL | **[MONOMORPHIZE IN C]** |
 | **Traits / Typeclasses** | PASS | PASS | PASS | PARTIAL | ABSENT | ABSENT | ABSENT | ABSENT | ABSENT | PARTIAL | ABSENT | ABSENT | ABSENT | **[COMPLETE 1.0 MONO]** |

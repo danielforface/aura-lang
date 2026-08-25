@@ -21,8 +21,21 @@ pub struct AvmTerminated;
 #[derive(Clone, Debug, PartialEq)]
 pub enum AvmValue {
     Int(i64),
+    Float(f64),
+    Char(char),
     Bool(bool),
     Str(String),
+    Tuple(Vec<AvmValue>),
+    Record {
+        name: String,
+        fields: BTreeMap<String, AvmValue>,
+    },
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        tag: u32,
+        args: Vec<AvmValue>,
+    },
     Style(BTreeMap<String, AvmValue>),
     Ui(UiNode),
     Unit,
@@ -59,9 +72,15 @@ fn stmt_kind_name(stmt: &Stmt) -> &'static str {
 
 fn estimate_value_bytes(v: &AvmValue) -> u64 {
     match v {
-        AvmValue::Int(_) => 8,
-        AvmValue::Bool(_) => 1,
+        AvmValue::Int(_) | AvmValue::Float(_) => 8,
+        AvmValue::Bool(_) | AvmValue::Char(_) => 4,
         AvmValue::Str(s) => s.len() as u64,
+        AvmValue::Tuple(elems) => elems.iter().map(estimate_value_bytes).sum(),
+        AvmValue::Record { fields, .. } => fields
+            .iter()
+            .map(|(k, vv)| k.len() as u64 + estimate_value_bytes(vv))
+            .sum(),
+        AvmValue::EnumVariant { args, .. } => args.iter().map(estimate_value_bytes).sum(),
         AvmValue::Style(m) => m
             .iter()
             .map(|(k, vv)| k.len() as u64 + estimate_value_bytes(vv))
@@ -86,11 +105,27 @@ struct LiveMemStats {
 fn collect_live_mem(stats: &mut LiveMemStats, v: &AvmValue) {
     stats.values_total += 1;
     match v {
-        AvmValue::Int(_) => stats.ints += 1,
-        AvmValue::Bool(_) => stats.bools += 1,
+        AvmValue::Int(_) | AvmValue::Float(_) => stats.ints += 1,
+        AvmValue::Bool(_) | AvmValue::Char(_) => stats.bools += 1,
         AvmValue::Str(s) => {
             stats.strs += 1;
             stats.string_bytes += s.len() as u64;
+        }
+        AvmValue::Tuple(elems) => {
+            for e in elems {
+                collect_live_mem(stats, e);
+            }
+        }
+        AvmValue::Record { fields, .. } => {
+            for (k, vv) in fields {
+                stats.string_bytes += k.len() as u64;
+                collect_live_mem(stats, vv);
+            }
+        }
+        AvmValue::EnumVariant { args, .. } => {
+            for a in args {
+                collect_live_mem(stats, a);
+            }
         }
         AvmValue::Style(m) => {
             stats.styles += 1;
@@ -1297,10 +1332,23 @@ impl Avm {
                         AvmValue::Int(n) => {
                             let _ = write!(&mut out, "{n}");
                         }
+                        AvmValue::Float(f) => {
+                            let _ = write!(&mut out, "{f}");
+                        }
+                        AvmValue::Char(c) => {
+                            let _ = write!(&mut out, "{c}");
+                        }
                         AvmValue::Bool(b) => {
                             let _ = write!(&mut out, "{b}");
                         }
                         AvmValue::Str(st) => out.push_str(st),
+                        AvmValue::Tuple(_) => out.push_str("<tuple>"),
+                        AvmValue::Record { name, .. } => {
+                            let _ = write!(&mut out, "<{name}>");
+                        }
+                        AvmValue::EnumVariant { variant_name, .. } => {
+                            let _ = write!(&mut out, "{variant_name}");
+                        }
                         AvmValue::Style(_) => out.push_str("<style>"),
                         AvmValue::Ui(_) => out.push_str("<ui>"),
                         AvmValue::Unit => out.push_str("()"),
@@ -1860,14 +1908,16 @@ impl Avm {
                 }
                 Ok(AvmValue::Style(map))
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { name, fields } => {
                 let mut map: BTreeMap<String, AvmValue> = BTreeMap::new();
                 for (k, v) in fields {
                     let vv = self.eval_expr(v)?;
                     map.insert(k.node.clone(), vv);
                 }
-                // MVP runtime representation: treat records like maps.
-                Ok(AvmValue::Style(map))
+                Ok(AvmValue::Record {
+                    name: name.node.clone(),
+                    fields: map,
+                })
             }
             ExprKind::Ident(id) => self
                 .env
@@ -1886,6 +1936,7 @@ impl Avm {
                 let v = self.eval_expr(expr)?;
                 match (op, v) {
                     (UnaryOp::Neg, AvmValue::Int(i)) => Ok(AvmValue::Int(-i)),
+                    (UnaryOp::Neg, AvmValue::Float(f)) => Ok(AvmValue::Float(-f)),
                     (UnaryOp::Not, AvmValue::Bool(b)) => Ok(AvmValue::Bool(!b)),
                     _ => Err(miette::miette!("AVM: unsupported unary op")),
                 }
@@ -1904,12 +1955,15 @@ impl Avm {
                 match b {
                     AvmValue::Str(ns) => Ok(AvmValue::Str(format!("{ns}.{}", member.node))),
                     AvmValue::Unit => Ok(AvmValue::Str(member.node.clone())),
-                    AvmValue::Int(_) | AvmValue::Bool(_) => Err(miette::miette!("AVM: member access unsupported")),
                     AvmValue::Style(map) => map
                         .get(&member.node)
                         .cloned()
                         .ok_or_else(|| miette::miette!("AVM: unknown field '{}'", member.node)),
-                    AvmValue::Ui(_) => Err(miette::miette!("AVM: member access unsupported")),
+                    AvmValue::Record { fields, .. } => fields
+                        .get(&member.node)
+                        .cloned()
+                        .ok_or_else(|| miette::miette!("AVM: unknown field '{}'", member.node)),
+                    _ => Err(miette::miette!("AVM: member access unsupported")),
                 }
             }
             ExprKind::Call { callee, args, trailing } => {
@@ -2104,6 +2158,11 @@ impl Avm {
             (BinOp::Mul, AvmValue::Int(a), AvmValue::Int(b)) => Ok(AvmValue::Int(a * b)),
             (BinOp::Div, AvmValue::Int(a), AvmValue::Int(b)) => Ok(AvmValue::Int(a / b)),
 
+            (BinOp::Add, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Float(a + b)),
+            (BinOp::Sub, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Float(a - b)),
+            (BinOp::Mul, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Float(a * b)),
+            (BinOp::Div, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Float(a / b)),
+
             (BinOp::Eq, a, b) => Ok(AvmValue::Bool(a == b)),
             (BinOp::Ne, a, b) => Ok(AvmValue::Bool(a != b)),
 
@@ -2111,6 +2170,11 @@ impl Avm {
             (BinOp::Gt, AvmValue::Int(a), AvmValue::Int(b)) => Ok(AvmValue::Bool(a > b)),
             (BinOp::Le, AvmValue::Int(a), AvmValue::Int(b)) => Ok(AvmValue::Bool(a <= b)),
             (BinOp::Ge, AvmValue::Int(a), AvmValue::Int(b)) => Ok(AvmValue::Bool(a >= b)),
+
+            (BinOp::Lt, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Bool(a < b)),
+            (BinOp::Gt, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Bool(a > b)),
+            (BinOp::Le, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Bool(a <= b)),
+            (BinOp::Ge, AvmValue::Float(a), AvmValue::Float(b)) => Ok(AvmValue::Bool(a >= b)),
 
             (BinOp::And, AvmValue::Bool(a), AvmValue::Bool(b)) => Ok(AvmValue::Bool(a && b)),
             (BinOp::Or, AvmValue::Bool(a), AvmValue::Bool(b)) => Ok(AvmValue::Bool(a || b)),
@@ -2327,9 +2391,14 @@ fn is_ui_call(name: &str, has_trailing: bool) -> bool {
 fn avm_value_to_prop_string(v: &AvmValue) -> String {
     match v {
         AvmValue::Int(i) => i.to_string(),
+        AvmValue::Float(f) => f.to_string(),
+        AvmValue::Char(c) => c.to_string(),
         AvmValue::Bool(b) => b.to_string(),
         // UI runtimes typically expect raw string payloads (e.g. Color names, labels).
         AvmValue::Str(s) => s.clone(),
+        AvmValue::Tuple(_) => "<tuple>".to_string(),
+        AvmValue::Record { name, .. } => format!("<{name}>"),
+        AvmValue::EnumVariant { variant_name, .. } => variant_name.clone(),
         AvmValue::Style(_) => "<style>".to_string(),
         AvmValue::Ui(n) => format!("<{}>", n.kind),
         AvmValue::Unit => "Unit".to_string(),

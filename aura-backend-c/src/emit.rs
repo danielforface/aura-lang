@@ -56,8 +56,19 @@ fn emit_runtime_h() -> String {
     out.push_str("#pragma once\n");
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
-    out.push_str("#include <stdio.h>\n\n");
+    out.push_str("#include <stddef.h>\n");
+    out.push_str("#include <inttypes.h>\n");
+    out.push_str("#include <stdio.h>\n");
     out.push_str("#include <stdlib.h>\n\n");
+
+    out.push_str("// ---- Standard 128-bit Types ----\n");
+    out.push_str("#if defined(__SIZEOF_INT128__)\n");
+    out.push_str("typedef unsigned __int128 aura_u128_t;\n");
+    out.push_str("typedef __int128 aura_i128_t;\n");
+    out.push_str("#else\n");
+    out.push_str("typedef struct { uint64_t lo; uint64_t hi; } aura_u128_t;\n");
+    out.push_str("typedef struct { uint64_t lo; int64_t hi; } aura_i128_t;\n");
+    out.push_str("#endif\n\n");
 
     // From aura-stdlib (linked by the CLI when running the C backend).
     out.push_str("void aura_io_println(const char* s);\n\n");
@@ -189,7 +200,21 @@ fn emit_line_directive(out: &mut String, debug: Option<&DebugSource>, span: aura
 enum CType {
     Void,
     Bool,
+    Char,
+    U8,
+    U16,
     U32,
+    U64,
+    U128,
+    USize,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    ISize,
+    F32,
+    F64,
     CString,
     Tensor,
 }
@@ -197,7 +222,7 @@ enum CType {
 fn function_return_ctype(f: &FunctionIR) -> CType {
     for b in &f.blocks {
         if let Terminator::Return(Some(_)) = &b.term {
-            return CType::Tensor;
+            return map_type_to_ctype(&f.ret);
         }
     }
     CType::Void
@@ -205,13 +230,8 @@ fn function_return_ctype(f: &FunctionIR) -> CType {
 
 fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, ret_map: &HashMap<String, CType>) {
     let ret = function_return_ctype(f);
-    out.push_str(match ret {
-        CType::Void => "void ",
-        CType::Tensor => "Tensor ",
-        CType::U32 => "uint32_t ",
-        CType::CString => "const char* ",
-        CType::Bool => "bool ",
-    });
+    out.push_str(map_ctype_decl(ret));
+    out.push(' ');
 
     out.push_str(&c_ident(&f.name));
     out.push('(');
@@ -281,7 +301,7 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                     // Phi nodes are implemented by assignments in predecessors (see terminators).
                 }
 
-                InstKind::RangeCheckU32 { value, lo, hi } => {
+                InstKind::RangeCheckU32 { value, lo, hi } | InstKind::RangeCheck { value, lo, hi } => {
                     if let Some((_ct, name)) = values.get(value) {
                         out.push_str("  AURA_RANGE_CHECK_U32(");
                         out.push_str(name);
@@ -293,6 +313,15 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                         out.push_str(name);
                         out.push_str("\");\n");
                     }
+                }
+
+                InstKind::ConstructRecord { .. }
+                | InstKind::GetField { .. }
+                | InstKind::SetField { .. }
+                | InstKind::ConstructEnumVariant { .. }
+                | InstKind::GetEnumTag { .. }
+                | InstKind::GetEnumPayload { .. } => {
+                    // Lowered as prototype values in C emission
                 }
 
                 InstKind::BindStrand { name, expr } => {
@@ -486,6 +515,18 @@ fn emit_rvalue_decl(dest: ValueId, _name: &str, rv: &RValue) -> (CType, String) 
             CType::U32,
             format!("const uint32_t {var} = {n}u;"),
         ),
+        RValue::ConstI64(n) => (
+            CType::I64,
+            format!("const int64_t {var} = {n}LL;"),
+        ),
+        RValue::ConstF64(f) => (
+            CType::F64,
+            format!("const double {var} = {f};"),
+        ),
+        RValue::ConstChar(c) => (
+            CType::Char,
+            format!("const uint32_t {var} = {}u;", *c as u32),
+        ),
         RValue::ConstBool(b) => (
             CType::Bool,
             format!("const bool {var} = {};", if *b { "true" } else { "false" }),
@@ -528,7 +569,6 @@ fn emit_interpolated_println(
     while cursor < template.len() {
         let Some(open_rel) = template[cursor..].find('{') else {
             push_c_printf_literal(&mut format_string, &template[cursor..]);
-            cursor = template.len();
             break;
         };
 
@@ -538,7 +578,6 @@ fn emit_interpolated_println(
         let after_open = open + 1;
         let Some(close_rel) = template[after_open..].find('}') else {
             push_c_printf_literal(&mut format_string, &template[open..]);
-            cursor = template.len();
             break;
         };
 
@@ -547,6 +586,8 @@ fn emit_interpolated_println(
 
         let replacement = named_values.get(key).and_then(|(ct, c_name)| match *ct {
             CType::U32 => Some(("%u", format!("(unsigned int)({c_name})"))),
+            CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
+            CType::F64 => Some(("%f", format!("(double)({c_name})"))),
             CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
             CType::CString => Some(("%s", format!("({c_name})"))),
             _ => None,
@@ -606,13 +647,7 @@ fn emit_call(
         if ret == CType::Void {
             out.push_str("  ");
         } else {
-            let decl = match ret {
-                CType::Tensor => "Tensor",
-                CType::U32 => "uint32_t",
-                CType::CString => "const char*",
-                CType::Bool => "bool",
-                CType::Void => "void",
-            };
+            let decl = map_ctype_decl(ret);
             out.push_str("  ");
             out.push_str(decl);
             out.push(' ');
@@ -689,10 +724,25 @@ fn map_type(ty: &Type) -> &'static str {
     match ty {
         Type::Unit => "void",
         Type::Bool => "bool",
+        Type::Char => "uint32_t",
+        Type::U8 => "uint8_t",
+        Type::U16 => "uint16_t",
         Type::U32 => "uint32_t",
-        Type::String => "const char*",
+        Type::U64 => "uint64_t",
+        Type::U128 => "aura_u128_t",
+        Type::USize => "size_t",
+        Type::I8 => "int8_t",
+        Type::I16 => "int16_t",
+        Type::I32 => "int32_t",
+        Type::I64 => "int64_t",
+        Type::I128 => "aura_i128_t",
+        Type::ISize => "ptrdiff_t",
+        Type::F32 => "float",
+        Type::F64 => "double",
+        Type::Str | Type::String => "const char*",
         Type::Tensor => "Tensor",
-        Type::Opaque(_) => "Tensor",
+        Type::Ptr(_) => "void*",
+        Type::Record { .. } | Type::Enum { .. } | Type::Opaque(_) => "Tensor",
     }
 }
 
@@ -700,9 +750,23 @@ fn map_type_to_ctype(ty: &Type) -> CType {
     match ty {
         Type::Unit => CType::Void,
         Type::Bool => CType::Bool,
+        Type::Char => CType::Char,
+        Type::U8 => CType::U8,
+        Type::U16 => CType::U16,
         Type::U32 => CType::U32,
-        Type::String => CType::CString,
-        Type::Tensor | Type::Opaque(_) => CType::Tensor,
+        Type::U64 => CType::U64,
+        Type::U128 => CType::U128,
+        Type::USize => CType::USize,
+        Type::I8 => CType::I8,
+        Type::I16 => CType::I16,
+        Type::I32 => CType::I32,
+        Type::I64 => CType::I64,
+        Type::I128 => CType::I128,
+        Type::ISize => CType::ISize,
+        Type::F32 => CType::F32,
+        Type::F64 => CType::F64,
+        Type::Str | Type::String => CType::CString,
+        Type::Tensor | Type::Ptr(_) | Type::Record { .. } | Type::Enum { .. } | Type::Opaque(_) => CType::Tensor,
     }
 }
 
@@ -714,7 +778,21 @@ fn map_ctype_decl(ct: CType) -> &'static str {
     match ct {
         CType::Void => "void",
         CType::Bool => "bool",
+        CType::Char => "uint32_t",
+        CType::U8 => "uint8_t",
+        CType::U16 => "uint16_t",
         CType::U32 => "uint32_t",
+        CType::U64 => "uint64_t",
+        CType::U128 => "aura_u128_t",
+        CType::USize => "size_t",
+        CType::I8 => "int8_t",
+        CType::I16 => "int16_t",
+        CType::I32 => "int32_t",
+        CType::I64 => "int64_t",
+        CType::I128 => "aura_i128_t",
+        CType::ISize => "ptrdiff_t",
+        CType::F32 => "float",
+        CType::F64 => "double",
         CType::CString => "const char*",
         CType::Tensor => "Tensor",
     }
@@ -795,4 +873,65 @@ fn c_ident(name: &str) -> String {
 
 fn escape_c_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod emit_tests {
+    use super::*;
+    use aura_ir::{BasicBlock, ExecutionHint, FunctionIR, Inst, InstKind, ModuleIR, Param, RValue, Terminator, Type, ValueId};
+    use aura_ast::Span;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_c_emission_primitives_and_typedefs() {
+        let mut module = ModuleIR {
+            functions: BTreeMap::new(),
+            externs: BTreeMap::new(),
+        };
+
+        let dummy_span: Span = (0, 0).into();
+        let func = FunctionIR {
+            name: "test_fn".to_string(),
+            span: dummy_span,
+            params: vec![
+                Param {
+                    name: "x".to_string(),
+                    ty: Type::U32,
+                    span: dummy_span,
+                    value: ValueId(0),
+                },
+                Param {
+                    name: "y".to_string(),
+                    ty: Type::I64,
+                    span: dummy_span,
+                    value: ValueId(1),
+                },
+            ],
+            ret: Type::U32,
+            entry: BlockId(0),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                span: dummy_span,
+                hint: ExecutionHint::Sequential,
+                insts: vec![
+                    Inst {
+                        span: dummy_span,
+                        dest: Some(ValueId(2)),
+                        kind: InstKind::BindStrand {
+                            name: "v2".to_string(),
+                            expr: RValue::ConstU32(42),
+                        },
+                    },
+                ],
+                term: Terminator::Return(Some(ValueId(2))),
+            }],
+        };
+
+        module.functions.insert("test_fn".to_string(), func);
+
+        let artifacts = emit_module(&module, None).expect("emit module");
+        assert!(artifacts.runtime_h.contains("aura_u128_t"));
+        assert!(artifacts.runtime_h.contains("aura_i128_t"));
+        assert!(artifacts.module_c.contains("uint32_t test_fn(uint32_t x, int64_t y)"));
+    }
 }

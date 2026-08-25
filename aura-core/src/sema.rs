@@ -61,13 +61,18 @@ fn applied_name_and_args(ty: &Type) -> Option<(&str, &[Type])> {
 }
 
 fn is_u32_like(ty: &Type) -> bool {
-    matches!(base_type(ty), Type::U32)
+    base_type(ty).is_integer()
+}
+
+fn is_numeric_like(ty: &Type) -> bool {
+    base_type(ty).is_numeric()
 }
 
 fn u32_bounds(ty: &Type) -> Option<(u64, u64)> {
     match ty {
         Type::U32 => Some((0, U32_MAX)),
-        Type::ConstrainedRange { base, lo, hi } if **base == Type::U32 => Some((*lo, *hi)),
+        Type::ConstrainedRange { lo, hi, .. } => Some((*lo, *hi)),
+        _ if ty.is_integer() => Some((0, U32_MAX)),
         _ => None,
     }
 }
@@ -88,10 +93,10 @@ fn mk_u32_range(lo: u64, hi: u64) -> Type {
 
 fn infer_u32_range_binop(op: &BinOp, lt: &Type, rt: &Type) -> Type {
     let Some((l_lo, l_hi)) = u32_bounds(lt) else {
-        return Type::U32;
+        return base_type(lt).clone();
     };
     let Some((r_lo, r_hi)) = u32_bounds(rt) else {
-        return Type::U32;
+        return base_type(lt).clone();
     };
 
     match op {
@@ -109,14 +114,14 @@ fn infer_u32_range_binop(op: &BinOp, lt: &Type, rt: &Type) -> Type {
         BinOp::Div => {
             // If divisor can be 0, be conservative.
             if r_lo == 0 {
-                return Type::U32;
+                return base_type(lt).clone();
             }
             let lo = l_lo / r_hi.max(1);
             let hi = l_hi / r_lo;
             mk_u32_range(lo, hi)
         }
 
-        _ => Type::U32,
+        _ => base_type(lt).clone(),
     }
 }
 
@@ -1444,15 +1449,21 @@ impl Checker {
 
     fn check_assignable(&self, expected: &Type, actual: &Type, rhs: &Expr) -> Result<(), SemanticError> {
         match (expected, actual, &rhs.kind) {
-            // Range proof via literal.
+            // Numeric and range compatibility.
+            (
+                Type::ConstrainedRange { base, lo, hi },
+                Type::ConstrainedRange { lo: act_lo, hi: act_hi, .. },
+                _,
+            ) if is_subset_range(*act_lo, *act_hi, *lo, *hi) => Ok(()),
+
             (
                 Type::ConstrainedRange { base, lo, hi },
                 _,
                 _,
-            ) if **base == Type::U32 => {
+            ) if base.is_numeric() => {
                 if self.defer_range_proofs {
-                    // Only allow u32-like values; proof is deferred to Z3.
-                    if is_u32_like(actual) {
+                    // Only allow numeric values; proof is deferred to Z3.
+                    if is_u32_like(actual) || actual.is_numeric() {
                         Ok(())
                     } else {
                         Err(SemanticError {
@@ -1468,21 +1479,6 @@ impl Checker {
                     self.verifier.prove_u32_in_range(rhs, *lo, *hi)
                 }
             }
-
-            // Range proof via subset relationship.
-            (
-                Type::ConstrainedRange {
-                    base: exp_base,
-                    lo: exp_lo,
-                    hi: exp_hi,
-                },
-                Type::ConstrainedRange {
-                    base: act_base,
-                    lo: act_lo,
-                    hi: act_hi,
-                },
-                _,
-            ) if **exp_base == **act_base && is_subset_range(*act_lo, *act_hi, *exp_lo, *exp_hi) => Ok(()),
 
             // Tensor assignability (prototype):
             // - Element types must match, except that `Unknown` is treated as a wildcard.
@@ -1613,11 +1609,11 @@ impl Checker {
             // Base equality (very minimal today).
             (a, b, _) if a == b => Ok(()),
 
-            // Allow constrained-range values to be used where the base type is expected.
-            (Type::U32, Type::ConstrainedRange { base, .. }, _) if **base == Type::U32 => Ok(()),
+            // Allow constrained-range values to be used where any numeric base type is expected.
+            (t, Type::ConstrainedRange { base, .. }, _) if t.is_numeric() && base.is_numeric() => Ok(()),
 
-            // Assigning unconstrained u32 into constrained range requires proof.
-            (Type::ConstrainedRange { .. }, Type::U32, _) if !self.defer_range_proofs => Err(SemanticError {
+            // Assigning unconstrained numeric into constrained range requires proof.
+            (Type::ConstrainedRange { .. }, t, _) if t.is_numeric() && !self.defer_range_proofs => Err(SemanticError {
                 message: "cannot prove range safety for non-literal assignment (SMT stub)".to_string(),
                 span: rhs.span,
             }),
@@ -1747,6 +1743,10 @@ impl Checker {
                 }
             }
             ExprKind::Ident(id) => {
+                if id.node == "true" || id.node == "false" {
+                    return Ok(Type::Bool);
+                }
+
                 self.check_async_capture(&id.node, id.span)?;
                 
                 // Look up the type first
@@ -1835,6 +1835,14 @@ impl Checker {
                 }
             }
             ExprKind::Member { base, member } => {
+                if let ExprKind::Ident(ty_id) = &base.kind {
+                    if let Some(def) = self.enum_defs.get(&ty_id.node) {
+                        if def.variants.iter().any(|v| v.name.node == member.node) {
+                            return Ok(Type::Named(ty_id.node.clone()));
+                        }
+                    }
+                }
+
                 let base_ty = self.infer_expr(base)?;
 
                 if let Some((rec_name, args)) = applied_name_and_args(base_type(&base_ty)) {
@@ -2298,9 +2306,24 @@ impl Checker {
 
     fn resolve_type_ref(&self, tr: &TypeRef) -> Result<Type, SemanticError> {
         let base = match tr.name.node.as_str() {
-            "u32" => Type::U32,
-            "Int" => Type::U32,
+            "u8" => Type::U8,
+            "u16" => Type::U16,
+            "u32" | "Int" => Type::U32,
+            "u64" => Type::U64,
+            "u128" => Type::U128,
+            "usize" => Type::USize,
+            "i8" => Type::I8,
+            "i16" => Type::I16,
+            "i32" => Type::I32,
+            "i64" => Type::I64,
+            "i128" => Type::I128,
+            "isize" => Type::ISize,
+            "f32" => Type::F32,
+            "f64" => Type::F64,
             "bool" => Type::Bool,
+            "char" => Type::Char,
+            "str" => Type::Str,
+            "String" => Type::String,
             "Tensor" => {
                 // `Tensor<Elem, [d0, d1, ...]>` (shape optional)
                 // `Tensor<Elem>` (element optional)
@@ -2346,7 +2369,6 @@ impl Checker {
                     shape,
                 }
             }
-            "String" => Type::String,
             "Style" => Type::Style,
             "Unit" => Type::Unit,
             "Model" => Type::Model,

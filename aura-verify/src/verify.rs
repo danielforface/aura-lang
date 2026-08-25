@@ -2357,9 +2357,17 @@ fn verify_strand<P: Prover>(sd: &StrandDef, aliases: &HashMap<String, RangeTy>, 
     Ok(())
 }
 
+fn is_integer_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+            | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "Int"
+    )
+}
+
 fn type_ref_to_range(tr: &TypeRef, aliases: &HashMap<String, RangeTy>) -> Option<RangeTy> {
-    // Direct: u32[lo..hi]
-    if tr.name.node == "u32" || tr.name.node == "Int" {
+    // Direct: T[lo..hi]
+    if is_integer_type_name(&tr.name.node) {
         if let Some(r) = &tr.range {
             let lo = const_u64(&r.lo)?;
             let hi = const_u64(&r.hi)?;
@@ -2429,8 +2437,8 @@ fn alias_to_range(ta: &TypeAlias) -> Option<RangeTy> {
         return None;
     }
 
-    // type X = u32[lo..hi]
-    if ta.target.name.node != "u32" {
+    // type X = u32[lo..hi] or other integer types
+    if !is_integer_type_name(&ta.target.name.node) {
         return None;
     }
     let r = ta.target.range.as_ref()?;

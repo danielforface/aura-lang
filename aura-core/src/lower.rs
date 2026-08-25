@@ -18,11 +18,36 @@ fn lower_sema_type_to_ir(ty: &crate::types::Type) -> Type {
     match ty {
         crate::types::Type::Unit => Type::Unit,
         crate::types::Type::Bool => Type::Bool,
+        crate::types::Type::Char => Type::Char,
+        crate::types::Type::U8 => Type::U8,
+        crate::types::Type::U16 => Type::U16,
         crate::types::Type::U32 => Type::U32,
+        crate::types::Type::U64 => Type::U64,
+        crate::types::Type::U128 => Type::U128,
+        crate::types::Type::USize => Type::USize,
+        crate::types::Type::I8 => Type::I8,
+        crate::types::Type::I16 => Type::I16,
+        crate::types::Type::I32 => Type::I32,
+        crate::types::Type::I64 => Type::I64,
+        crate::types::Type::I128 => Type::I128,
+        crate::types::Type::ISize => Type::ISize,
+        crate::types::Type::F32 => Type::F32,
+        crate::types::Type::F64 => Type::F64,
+        crate::types::Type::Str => Type::Str,
         crate::types::Type::String => Type::String,
         crate::types::Type::Style => Type::Opaque("Style".to_string()),
         crate::types::Type::Model => Type::Opaque("Model".to_string()),
         crate::types::Type::Tensor { .. } => Type::Tensor,
+        crate::types::Type::Ref { inner, .. } => Type::Ptr(Box::new(lower_sema_type_to_ir(inner))),
+        crate::types::Type::Record { name, fields } => Type::Record {
+            name: name.clone(),
+            fields: fields.iter().map(|(f, t)| (f.clone(), lower_sema_type_to_ir(t))).collect(),
+        },
+        crate::types::Type::Enum { name, variants } => Type::Enum {
+            name: name.clone(),
+            variants: variants.iter().map(|(v, tys)| (v.clone(), tys.iter().map(lower_sema_type_to_ir).collect())).collect(),
+        },
+        crate::types::Type::Tuple(elems) => Type::Opaque(format!("Tuple_{}", elems.len())),
         crate::types::Type::ConstrainedRange { base, .. } => lower_sema_type_to_ir(base),
         crate::types::Type::Named(n) => Type::Opaque(n.clone()),
         crate::types::Type::Applied { name, .. } => Type::Opaque(name.clone()),
@@ -70,6 +95,36 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
             }
             _ => {}
         }
+    }
+
+    let top_level_stmts: Vec<&Stmt> = program
+        .stmts
+        .iter()
+        .filter(|s| !matches!(s, Stmt::CellDef(_) | Stmt::FlowBlock(_) | Stmt::ExternCell(_) | Stmt::Import(_) | Stmt::TypeAlias(_) | Stmt::RecordDef(_) | Stmt::EnumDef(_) | Stmt::TraitDef(_)))
+        .collect();
+
+    if !top_level_stmts.is_empty() && !module.functions.contains_key("main") {
+        let dummy_span: aura_ast::Span = (0, 0).into();
+        let entry = lower.id.fresh_block();
+        lower.blocks.clear();
+        lower.locals.clear();
+        lower.push_block(entry, dummy_span, ExecutionHint::Sequential);
+        for stmt in top_level_stmts {
+            lower.lower_stmt_in_place(stmt, dummy_span)?;
+        }
+        let last_idx = lower.current.unwrap_or(0);
+        if last_idx < lower.blocks.len() && !matches!(lower.blocks[last_idx].term, Terminator::Return(_)) {
+            lower.set_terminator(Terminator::Return(None));
+        }
+        let f = FunctionIR {
+            name: "main".to_string(),
+            span: dummy_span,
+            params: vec![],
+            ret: Type::Unit,
+            blocks: std::mem::take(&mut lower.blocks),
+            entry,
+        };
+        module.functions.insert("main".to_string(), f);
     }
 
     Ok(module)
@@ -718,14 +773,40 @@ impl<'c> Lowerer<'c> {
 
     fn lower_expr(&mut self, expr: &Expr) -> Result<ValueId, SemanticError> {
         match &expr.kind {
-            ExprKind::Ident(id) => self
-                .locals
-                .get(&id.node)
-                .cloned()
-                .ok_or_else(|| SemanticError {
-                    message: format!("lowering: unknown identifier '{}'", id.node),
-                    span: id.span,
-                }),
+            ExprKind::Ident(id) => {
+                if id.node == "true" {
+                    let v = self.id.fresh_value();
+                    self.push_inst(Inst {
+                        span: expr.span,
+                        dest: Some(v),
+                        kind: InstKind::BindStrand {
+                            name: format!("$true{v:?}"),
+                            expr: RValue::ConstBool(true),
+                        },
+                    });
+                    return Ok(v);
+                }
+                if id.node == "false" {
+                    let v = self.id.fresh_value();
+                    self.push_inst(Inst {
+                        span: expr.span,
+                        dest: Some(v),
+                        kind: InstKind::BindStrand {
+                            name: format!("$false{v:?}"),
+                            expr: RValue::ConstBool(false),
+                        },
+                    });
+                    return Ok(v);
+                }
+
+                self.locals
+                    .get(&id.node)
+                    .cloned()
+                    .ok_or_else(|| SemanticError {
+                        message: format!("lowering: unknown identifier '{}'", id.node),
+                        span: id.span,
+                    })
+            }
 
             ExprKind::IntLit(n) => {
                 let v = self.id.fresh_value();
@@ -824,16 +905,45 @@ impl<'c> Lowerer<'c> {
             }
 
             ExprKind::Member { base, member } => {
-                // We lower member access by turning it into a callee string when used as callee.
-                // If evaluated as a value, it's an opaque handle.
-                let _ = self.lower_expr(base)?;
+                if let ExprKind::Ident(ty_id) = &base.kind {
+                    if let Some((tag, arity)) =
+                        self.checker.enum_variant_info(&ty_id.node, &member.node)
+                    {
+                        if arity == 0 {
+                            let len_v = self.lower_const_u32(1, expr.span);
+                            let enum_v = self.id.fresh_value();
+                            self.push_inst(Inst {
+                                span: expr.span,
+                                dest: Some(enum_v),
+                                kind: InstKind::Call {
+                                    callee: "tensor.new".to_string(),
+                                    args: vec![len_v],
+                                },
+                            });
+
+                            let idx0 = self.lower_const_u32(0, expr.span);
+                            let tag_v = self.lower_const_u32(tag as u64, expr.span);
+                            self.push_inst(Inst {
+                                span: expr.span,
+                                dest: None,
+                                kind: InstKind::Call {
+                                    callee: "tensor.set".to_string(),
+                                    args: vec![enum_v, idx0, tag_v],
+                                },
+                            });
+                            return Ok(enum_v);
+                        }
+                    }
+                }
+
+                let base_v = self.lower_expr(base)?;
                 let v = self.id.fresh_value();
                 self.push_inst(Inst {
                     span: expr.span,
                     dest: Some(v),
-                    kind: InstKind::BindStrand {
-                        name: format!("{}.{}", "<member>", member.node),
-                        expr: RValue::ConstString(member.node.clone()),
+                    kind: InstKind::GetField {
+                        base: base_v,
+                        field_name: member.node.clone(),
                     },
                 });
                 Ok(v)
@@ -1076,10 +1186,23 @@ impl<'c> Lowerer<'c> {
                 }
             }
 
-            ExprKind::RecordLit { .. } => Err(SemanticError {
-                message: "lowering: record literals are not supported in IR yet".to_string(),
-                span: expr.span,
-            }),
+            ExprKind::RecordLit { name, fields } => {
+                let mut lowered_fields = Vec::with_capacity(fields.len());
+                for (fname, fexpr) in fields {
+                    let fval = self.lower_expr(fexpr)?;
+                    lowered_fields.push((fname.node.clone(), fval));
+                }
+                let dest = self.id.fresh_value();
+                self.push_inst(Inst {
+                    span: expr.span,
+                    dest: Some(dest),
+                    kind: InstKind::ConstructRecord {
+                        record_name: name.node.clone(),
+                        fields: lowered_fields,
+                    },
+                });
+                Ok(dest)
+            }
         }
     }
 
@@ -1294,9 +1417,24 @@ fn map_binop(op: AstBinOp) -> BinOp {
 fn lower_type(tr: &TypeRef) -> Type {
     match tr.name.node.as_str() {
         "bool" => Type::Bool,
-        "u32" => Type::U32,
-        "Tensor" => Type::Tensor,
+        "char" => Type::Char,
+        "u8" => Type::U8,
+        "u16" => Type::U16,
+        "u32" | "Int" => Type::U32,
+        "u64" => Type::U64,
+        "u128" => Type::U128,
+        "usize" => Type::USize,
+        "i8" => Type::I8,
+        "i16" => Type::I16,
+        "i32" => Type::I32,
+        "i64" => Type::I64,
+        "i128" => Type::I128,
+        "isize" => Type::ISize,
+        "f32" => Type::F32,
+        "f64" => Type::F64,
+        "str" => Type::Str,
         "String" => Type::String,
+        "Tensor" => Type::Tensor,
         "Unit" => Type::Unit,
         "Style" => Type::Opaque("Style".to_string()),
         other => Type::Opaque(other.to_string()),

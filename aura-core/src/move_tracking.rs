@@ -22,16 +22,41 @@ pub enum LinearTypeKind {
 /// Determine if a type is linear (must be explicitly consumed).
 pub fn classify_type(ty: &Type) -> LinearTypeKind {
     match ty {
-        Type::Unknown => LinearTypeKind::Copyable,
-        Type::Unit => LinearTypeKind::Copyable,
-        Type::Bool => LinearTypeKind::Copyable,
-        Type::U32 => LinearTypeKind::Copyable,
-        Type::String => LinearTypeKind::Copyable,
+        Type::Unknown | Type::Unit | Type::Bool | Type::Char => LinearTypeKind::Copyable,
+        Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::USize => LinearTypeKind::Copyable,
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::I128 | Type::ISize => LinearTypeKind::Copyable,
+        Type::F32 | Type::F64 | Type::Str | Type::String => LinearTypeKind::Copyable,
         
         // Linear resource types
         Type::Tensor { .. } => LinearTypeKind::Linear,
         Type::Model => LinearTypeKind::Linear,
         Type::Style => LinearTypeKind::Linear,
+
+        Type::Ref { .. } => LinearTypeKind::Reference,
+
+        Type::Tuple(elems) => {
+            if elems.iter().any(|e| classify_type(e) == LinearTypeKind::Linear) {
+                LinearTypeKind::Linear
+            } else {
+                LinearTypeKind::Copyable
+            }
+        }
+
+        Type::Record { fields, .. } => {
+            if fields.iter().any(|(_, t)| classify_type(t) == LinearTypeKind::Linear) {
+                LinearTypeKind::Linear
+            } else {
+                LinearTypeKind::Copyable
+            }
+        }
+
+        Type::Enum { variants, .. } => {
+            if variants.iter().any(|(_, tys)| tys.iter().any(|t| classify_type(t) == LinearTypeKind::Linear)) {
+                LinearTypeKind::Linear
+            } else {
+                LinearTypeKind::Copyable
+            }
+        }
         
         Type::Named(n) => {
             // Heuristic: types ending in these names are typically linear resources
