@@ -4,10 +4,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{BinOp, BlockId, FunctionIR, InstKind, ModuleIR, RValue, Terminator, UnaryOp, ValueId};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum ConstVal {
     U32(u64),
+    I64(i64),
+    F64(f64),
     Bool(bool),
+    Char(char),
     String(String),
 }
 
@@ -33,61 +36,51 @@ pub fn optimize_function(f: &mut FunctionIR) {
 
 fn const_fold_and_simplify_cfg(f: &mut FunctionIR) -> bool {
     let mut changed = false;
-
-    // Collect known constants (best-effort). This is not full global const-prop; it’s enough
-    // to fold local expressions produced from literals.
     let mut consts: BTreeMap<ValueId, ConstVal> = BTreeMap::new();
+
+    // Collect initial constants.
     for b in &f.blocks {
         for inst in &b.insts {
-            let Some(dest) = inst.dest else { continue };
-            if let InstKind::BindStrand { expr, .. } = &inst.kind {
-                if let Some(c) = const_from_rvalue(expr, &consts) {
-                    consts.insert(dest, c);
+            if let Some(dest) = inst.dest {
+                if let InstKind::BindStrand { expr, .. } = &inst.kind {
+                    if let Some(c) = const_from_rvalue(expr, &consts) {
+                        consts.insert(dest, c);
+                    }
                 }
             }
         }
     }
 
+    // Fold unary/binary ops and branch targets.
     for b in &mut f.blocks {
         for inst in &mut b.insts {
-            match &mut inst.kind {
+            match &inst.kind {
                 InstKind::Unary { op, operand } => {
-                    if let Some(c) = consts.get(operand).cloned() {
-                        if let Some(out) = fold_unary(*op, c) {
+                    if let Some(c) = consts.get(operand) {
+                        if let Some(folded) = fold_unary(*op, c.clone()) {
                             inst.kind = InstKind::BindStrand {
-                                name: "$fold".to_string(),
-                                expr: rvalue_from_const(out),
+                                name: format!("$folded{:?}", inst.dest),
+                                expr: rvalue_from_const(folded.clone()),
                             };
                             if let Some(dest) = inst.dest {
-                                if let Some(c2) = const_from_rvalue(match &inst.kind {
-                                    InstKind::BindStrand { expr, .. } => expr,
-                                    _ => unreachable!(),
-                                }, &consts) {
-                                    consts.insert(dest, c2);
-                                }
+                                consts.insert(dest, folded);
                             }
                             changed = true;
                         }
                     }
                 }
                 InstKind::Binary { op, left, right } => {
-                    let (Some(cl), Some(cr)) = (consts.get(left).cloned(), consts.get(right).cloned()) else {
-                        continue;
-                    };
-                    if let Some(out) = fold_binary(*op, cl, cr) {
-                        inst.kind = InstKind::BindStrand {
-                            name: "$fold".to_string(),
-                            expr: rvalue_from_const(out),
-                        };
-                        if let Some(dest) = inst.dest {
-                            if let Some(c2) = const_from_rvalue(match &inst.kind {
-                                InstKind::BindStrand { expr, .. } => expr,
-                                _ => unreachable!(),
-                            }, &consts) {
-                                consts.insert(dest, c2);
+                    if let (Some(l), Some(r)) = (consts.get(left), consts.get(right)) {
+                        if let Some(folded) = fold_binary(*op, l.clone(), r.clone()) {
+                            inst.kind = InstKind::BindStrand {
+                                name: format!("$folded{:?}", inst.dest),
+                                expr: rvalue_from_const(folded.clone()),
+                            };
+                            if let Some(dest) = inst.dest {
+                                consts.insert(dest, folded);
                             }
+                            changed = true;
                         }
-                        changed = true;
                     }
                 }
                 InstKind::RangeCheckU32 { value, lo, hi } => {
@@ -147,7 +140,10 @@ fn const_fold_and_simplify_cfg(f: &mut FunctionIR) -> bool {
 fn const_from_rvalue(rv: &RValue, consts: &BTreeMap<ValueId, ConstVal>) -> Option<ConstVal> {
     match rv {
         RValue::ConstU32(n) => Some(ConstVal::U32(*n)),
+        RValue::ConstI64(n) => Some(ConstVal::I64(*n)),
+        RValue::ConstF64(f) => Some(ConstVal::F64(*f)),
         RValue::ConstBool(b) => Some(ConstVal::Bool(*b)),
+        RValue::ConstChar(c) => Some(ConstVal::Char(*c)),
         RValue::ConstString(s) => Some(ConstVal::String(s.clone())),
         RValue::Local(v) => consts.get(v).cloned(),
     }
@@ -156,7 +152,10 @@ fn const_from_rvalue(rv: &RValue, consts: &BTreeMap<ValueId, ConstVal>) -> Optio
 fn rvalue_from_const(c: ConstVal) -> RValue {
     match c {
         ConstVal::U32(n) => RValue::ConstU32(n),
+        ConstVal::I64(n) => RValue::ConstI64(n),
+        ConstVal::F64(f) => RValue::ConstF64(f),
         ConstVal::Bool(b) => RValue::ConstBool(b),
+        ConstVal::Char(c) => RValue::ConstChar(c),
         ConstVal::String(s) => RValue::ConstString(s),
     }
 }
@@ -242,7 +241,13 @@ fn dce(f: &mut FunctionIR) -> bool {
 }
 
 fn is_side_effecting(k: &InstKind) -> bool {
-    matches!(k, InstKind::Call { .. } | InstKind::ComputeKernel { .. } | InstKind::RangeCheckU32 { .. })
+    matches!(
+        k,
+        InstKind::Call { .. }
+            | InstKind::ComputeKernel { .. }
+            | InstKind::RangeCheckU32 { .. }
+            | InstKind::RangeCheck { .. }
+    )
 }
 
 fn seed_value_uses_from_term(term: &Terminator, needed: &mut BTreeSet<ValueId>, work: &mut VecDeque<ValueId>) {
@@ -286,7 +291,24 @@ fn seed_value_uses_from_inst(k: &InstKind, needed: &mut BTreeSet<ValueId>, work:
                 use_v(*v);
             }
         }
-        InstKind::RangeCheckU32 { value, .. } => use_v(*value),
+        InstKind::RangeCheckU32 { value, .. } | InstKind::RangeCheck { value, .. } => use_v(*value),
+        InstKind::ConstructRecord { fields, .. } => {
+            for (_, v) in fields {
+                use_v(*v);
+            }
+        }
+        InstKind::GetField { base, .. } => use_v(*base),
+        InstKind::SetField { base, value, .. } => {
+            use_v(*base);
+            use_v(*value);
+        }
+        InstKind::ConstructEnumVariant { args, .. } => {
+            for v in args {
+                use_v(*v);
+            }
+        }
+        InstKind::GetEnumTag { base } => use_v(*base),
+        InstKind::GetEnumPayload { base, .. } => use_v(*base),
         InstKind::Unary { operand, .. } => use_v(*operand),
         InstKind::Binary { left, right, .. } => {
             use_v(*left);

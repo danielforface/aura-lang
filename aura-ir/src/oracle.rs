@@ -6,7 +6,7 @@ use crate::{
     BinOp, BlockId, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp, ValueId,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OracleOutput {
     pub ok: bool,
     pub stdout: String,
@@ -14,13 +14,26 @@ pub struct OracleOutput {
     pub return_value: Option<OracleValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OracleValue {
     Unit,
     Bool(bool),
+    Char(char),
     U32(u32),
+    I64(i64),
+    F64(f64),
     String(String),
     Tensor(u32),
+    Record {
+        name: String,
+        fields: HashMap<String, OracleValue>,
+    },
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        tag: u32,
+        args: Vec<OracleValue>,
+    },
     Opaque(String),
 }
 
@@ -230,21 +243,128 @@ fn run_function(
                         env.insert(dest, v);
                     }
                 }
-                InstKind::RangeCheckU32 { value, lo, hi } => {
+                InstKind::RangeCheckU32 { value, lo, hi } | InstKind::RangeCheck { value, lo, hi } => {
                     let v = env.get(value).ok_or_else(|| OracleError {
                         message: format!("oracle: missing value {:?} for range check", value),
                     })?;
-                    let OracleValue::U32(u) = v else {
-                        return Err(OracleError {
-                            message: "oracle: RangeCheckU32 expects U32".to_string(),
-                        });
+                    let val_u64 = match v {
+                        OracleValue::U32(u) => *u as u64,
+                        OracleValue::I64(i) => *i as u64,
+                        _ => {
+                            return Err(OracleError {
+                                message: "oracle: RangeCheck expects numeric value".to_string(),
+                            });
+                        }
                     };
-                    if (*u as u64) < *lo || (*u as u64) > *hi {
+                    if val_u64 < *lo || val_u64 > *hi {
                         *stderr = format!(
                             "Aura range check failed: {} not in [{}..{}]\n",
-                            u, lo, hi
+                            val_u64, lo, hi
                         );
                         return Ok((None, false));
+                    }
+                }
+                InstKind::ConstructRecord { record_name, fields } => {
+                    let mut rec_fields = HashMap::new();
+                    for (name, val_id) in fields {
+                        let fv = env.get(val_id).cloned().ok_or_else(|| OracleError {
+                            message: format!("oracle: missing field value {:?}", val_id),
+                        })?;
+                        rec_fields.insert(name.clone(), fv);
+                    }
+                    if let Some(dest) = inst.dest {
+                        env.insert(
+                            dest,
+                            OracleValue::Record {
+                                name: record_name.clone(),
+                                fields: rec_fields,
+                            },
+                        );
+                    }
+                }
+                InstKind::GetField { base, field_name } => {
+                    let bv = env.get(base).ok_or_else(|| OracleError {
+                        message: format!("oracle: missing record base {:?}", base),
+                    })?;
+                    let OracleValue::Record { fields, .. } = bv else {
+                        return Err(OracleError {
+                            message: "oracle: GetField expects Record".to_string(),
+                        });
+                    };
+                    let fv = fields.get(field_name).cloned().ok_or_else(|| OracleError {
+                        message: format!("oracle: missing field '{}' in record", field_name),
+                    })?;
+                    if let Some(dest) = inst.dest {
+                        env.insert(dest, fv);
+                    }
+                }
+                InstKind::SetField { base, field_name, value } => {
+                    let bv = env.get(base).cloned().ok_or_else(|| OracleError {
+                        message: format!("oracle: missing record base {:?}", base),
+                    })?;
+                    let OracleValue::Record { name, mut fields } = bv else {
+                        return Err(OracleError {
+                            message: "oracle: SetField expects Record".to_string(),
+                        });
+                    };
+                    let fv = env.get(value).cloned().ok_or_else(|| OracleError {
+                        message: format!("oracle: missing set field value {:?}", value),
+                    })?;
+                    fields.insert(field_name.clone(), fv);
+                    if let Some(dest) = inst.dest {
+                        env.insert(dest, OracleValue::Record { name, fields });
+                    }
+                }
+                InstKind::ConstructEnumVariant { enum_name, variant_name, tag, args } => {
+                    let mut arg_vals = Vec::with_capacity(args.len());
+                    for a in args {
+                        let av = env.get(a).cloned().ok_or_else(|| OracleError {
+                            message: format!("oracle: missing enum arg {:?}", a),
+                        })?;
+                        arg_vals.push(av);
+                    }
+                    if let Some(dest) = inst.dest {
+                        env.insert(
+                            dest,
+                            OracleValue::EnumVariant {
+                                enum_name: enum_name.clone(),
+                                variant_name: variant_name.clone(),
+                                tag: *tag,
+                                args: arg_vals,
+                            },
+                        );
+                    }
+                }
+                InstKind::GetEnumTag { base } => {
+                    let bv = env.get(base).ok_or_else(|| OracleError {
+                        message: format!("oracle: missing enum base {:?}", base),
+                    })?;
+                    let tag = match bv {
+                        OracleValue::EnumVariant { tag, .. } => *tag,
+                        _ => return Err(OracleError {
+                            message: "oracle: GetEnumTag expects EnumVariant".to_string(),
+                        }),
+                    };
+                    if let Some(dest) = inst.dest {
+                        env.insert(dest, OracleValue::U32(tag));
+                    }
+                }
+                InstKind::GetEnumPayload { base, payload_index, .. } => {
+                    let bv = env.get(base).ok_or_else(|| OracleError {
+                        message: format!("oracle: missing enum base {:?}", base),
+                    })?;
+                    let val = match bv {
+                        OracleValue::EnumVariant { args, .. } => {
+                            args.get(*payload_index).cloned().ok_or_else(|| OracleError {
+                                message: format!("oracle: invalid payload index {}", payload_index),
+                            })?
+                        }
+                        _ => return Err(OracleError {
+                            message: "oracle: GetEnumPayload expects EnumVariant".to_string(),
+                        }),
+                    };
+                    if let Some(dest) = inst.dest {
+                        env.insert(dest, val);
                     }
                 }
                 InstKind::Unary { op, operand } => {
@@ -309,22 +429,17 @@ fn run_function(
                             return Ok((None, false));
                         }
                         rv
-                    } else if module.externs.contains_key(callee)
-                        || is_modeled_runtime_callee(callee)
-                    {
-                        // Some IR producers encode compiler-known runtime builtins as calls
-                        // without materializing them in ModuleIR.externs. Keep this strict:
-                        // only callees explicitly modeled by the oracle may bypass externs.
+                    } else if is_modeled_runtime_callee(callee) {
                         run_extern(callee, &call_args, stdout)?
                     } else {
                         return Err(OracleError {
-                            message: format!("oracle: unknown callee '{callee}'"),
+                            message: format!("oracle: extern '{}' not modeled", callee),
                         });
                     };
 
                     if let Some(dest) = inst.dest {
-                        if let Some(v) = ret {
-                            env.insert(dest, v);
+                        if let Some(rv) = ret {
+                            env.insert(dest, rv);
                         } else {
                             env.insert(dest, OracleValue::Unit);
                         }
@@ -373,11 +488,12 @@ fn run_function(
                 })?;
                 let key: u64 = match v {
                     OracleValue::U32(n) => (*n) as u64,
+                    OracleValue::I64(n) => (*n) as u64,
                     OracleValue::Bool(b) => if *b { 1 } else { 0 },
                     OracleValue::Tensor(n) => (*n) as u64,
                     _ => {
                         return Err(OracleError {
-                            message: "oracle: Switch expects U32/Bool/Tensor".to_string(),
+                            message: "oracle: Switch expects U32/I64/Bool/Tensor".to_string(),
                         });
                     }
                 };
@@ -400,7 +516,10 @@ fn run_function(
 fn eval_rvalue(rv: &RValue, env: &HashMap<ValueId, OracleValue>) -> Result<OracleValue, OracleError> {
     Ok(match rv {
         RValue::ConstU32(u) => OracleValue::U32(*u as u32),
+        RValue::ConstI64(i) => OracleValue::I64(*i),
+        RValue::ConstF64(f) => OracleValue::F64(*f),
         RValue::ConstBool(b) => OracleValue::Bool(*b),
+        RValue::ConstChar(c) => OracleValue::Char(*c),
         RValue::ConstString(s) => OracleValue::String(s.clone()),
         RValue::Local(id) => env.get(id).cloned().ok_or_else(|| OracleError {
             message: format!("oracle: missing local {:?}", id),
@@ -411,6 +530,8 @@ fn eval_rvalue(rv: &RValue, env: &HashMap<ValueId, OracleValue>) -> Result<Oracl
 fn eval_unary(op: UnaryOp, v: &OracleValue) -> Result<OracleValue, OracleError> {
     match (op, v) {
         (UnaryOp::Neg, OracleValue::U32(x)) => Ok(OracleValue::U32(x.wrapping_neg())),
+        (UnaryOp::Neg, OracleValue::I64(x)) => Ok(OracleValue::I64(x.wrapping_neg())),
+        (UnaryOp::Neg, OracleValue::F64(x)) => Ok(OracleValue::F64(-x)),
         (UnaryOp::Not, OracleValue::Bool(b)) => Ok(OracleValue::Bool(!b)),
         _ => Err(OracleError {
             message: format!("oracle: unsupported unary op {:?} for value {:?}", op, v),
@@ -434,12 +555,36 @@ fn eval_binary(op: BinOp, l: &OracleValue, r: &OracleValue) -> Result<OracleValu
             Ok(OracleValue::U32(a / b))
         }
 
+        (Add, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::I64(a.wrapping_add(*b))),
+        (Sub, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::I64(a.wrapping_sub(*b))),
+        (Mul, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::I64(a.wrapping_mul(*b))),
+        (Div, OracleValue::I64(a), OracleValue::I64(b)) => {
+            if *b == 0 {
+                return Err(OracleError {
+                    message: "oracle: division by zero".to_string(),
+                });
+            }
+            Ok(OracleValue::I64(a / b))
+        }
+
+        (Add, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a + b)),
+        (Sub, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a - b)),
+        (Mul, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a * b)),
+        (Div, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a / b)),
+
         (Eq, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a == b)),
         (Ne, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a != b)),
         (Lt, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a < b)),
         (Gt, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a > b)),
         (Le, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a <= b)),
         (Ge, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a >= b)),
+
+        (Eq, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a == b)),
+        (Ne, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a != b)),
+        (Lt, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a < b)),
+        (Gt, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a > b)),
+        (Le, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a <= b)),
+        (Ge, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a >= b)),
 
         (Eq, OracleValue::Bool(a), OracleValue::Bool(b)) => Ok(OracleValue::Bool(a == b)),
         (Ne, OracleValue::Bool(a), OracleValue::Bool(b)) => Ok(OracleValue::Bool(a != b)),
@@ -523,9 +668,14 @@ pub fn oracle_type_of(v: &OracleValue) -> Type {
     match v {
         OracleValue::Unit => Type::Unit,
         OracleValue::Bool(_) => Type::Bool,
+        OracleValue::Char(_) => Type::Char,
         OracleValue::U32(_) => Type::U32,
+        OracleValue::I64(_) => Type::I64,
+        OracleValue::F64(_) => Type::F64,
         OracleValue::String(_) => Type::String,
         OracleValue::Tensor(_) => Type::Tensor,
+        OracleValue::Record { name, .. } => Type::Opaque(name.clone()),
+        OracleValue::EnumVariant { enum_name, .. } => Type::Opaque(enum_name.clone()),
         OracleValue::Opaque(s) => Type::Opaque(s.clone()),
     }
 }

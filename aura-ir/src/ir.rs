@@ -29,13 +29,50 @@ pub enum FlowKind {
     Async,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     Unit,
     Bool,
+    Char,
+
+    // Unsigned integer primitives
+    U8,
+    U16,
     U32,
+    U64,
+    U128,
+    USize,
+
+    // Signed integer primitives
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    ISize,
+
+    // Floating point
+    F32,
+    F64,
+
+    // String & Text
+    Str,
     String,
     Tensor,
+
+    // Pointer / Reference
+    Ptr(Box<Type>),
+
+    // Composite
+    Record {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<(String, Vec<Type>)>,
+    },
+
     Opaque(String),
 }
 
@@ -147,6 +184,46 @@ pub enum InstKind {
 
     /// Range/bounds check inserted by verifier.
     RangeCheckU32 { value: ValueId, lo: u64, hi: u64 },
+    RangeCheck { value: ValueId, lo: u64, hi: u64 },
+
+    /// Construct a composite record value.
+    ConstructRecord {
+        record_name: String,
+        fields: Vec<(String, ValueId)>,
+    },
+
+    /// Access field of a record.
+    GetField {
+        base: ValueId,
+        field_name: String,
+    },
+
+    /// Set/update field of a record.
+    SetField {
+        base: ValueId,
+        field_name: String,
+        value: ValueId,
+    },
+
+    /// Construct an algebraic enum variant.
+    ConstructEnumVariant {
+        enum_name: String,
+        variant_name: String,
+        tag: u32,
+        args: Vec<ValueId>,
+    },
+
+    /// Extract enum discriminant tag.
+    GetEnumTag {
+        base: ValueId,
+    },
+
+    /// Extract enum payload argument by index.
+    GetEnumPayload {
+        base: ValueId,
+        variant_name: String,
+        payload_index: usize,
+    },
 
     /// Unary operator.
     Unary { op: UnaryOp, operand: ValueId },
@@ -171,10 +248,13 @@ pub struct Inst {
     pub kind: InstKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RValue {
     ConstU32(u64),
+    ConstI64(i64),
+    ConstF64(f64),
     ConstBool(bool),
+    ConstChar(char),
     ConstString(String),
     Local(ValueId),
 }

@@ -147,8 +147,49 @@ fn repl_main(enable_z3: bool) -> miette::Result<()> {
 fn format_value(v: &AvmValue) -> String {
     match v {
         AvmValue::Int(i) => i.to_string(),
+        AvmValue::Float(f) => f.to_string(),
+        AvmValue::Char(c) => c.to_string(),
         AvmValue::Bool(b) => b.to_string(),
         AvmValue::Str(s) => s.clone(),
+        AvmValue::Tuple(elems) => {
+            let mut out = String::from("(");
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format_value(e));
+            }
+            out.push(')');
+            out
+        }
+        AvmValue::Record { name, fields } => {
+            let mut out = format!("{name}{{");
+            for (i, (k, vv)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(k);
+                out.push_str(": ");
+                out.push_str(&format_value(vv));
+            }
+            out.push('}');
+            out
+        }
+        AvmValue::EnumVariant { variant_name, args, .. } => {
+            if args.is_empty() {
+                variant_name.clone()
+            } else {
+                let mut out = format!("{variant_name}(");
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&format_value(a));
+                }
+                out.push(')');
+                out
+            }
+        }
         AvmValue::Style(map) => {
             let mut out = String::from("Style{");
             for (i, (k, vv)) in map.iter().enumerate() {
