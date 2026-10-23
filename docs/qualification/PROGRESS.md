@@ -3,12 +3,12 @@
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Working branch:** `qual/Q01-003-004-native-contract-gate` (stacked on Q01-001/002 Draft PR #11, itself stacked on R0 Draft PR #9)  
-**Active gate:** **Q00 — Baseline, governance and continuity**  
-**Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (Q01-001/002 GREEN and pending review; Q01-003/004 conservative native proof gate proposed, CI not yet observed)  
+**Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
+**Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
+**Status:** **IN_PROGRESS** (Q01-001/002 GREEN and IN_REVIEW; Q01-003/004 RED reproduced, Rust compile blocker corrected; latest patch CI pending)  
 **Release:** none created in this work; no new stable-language claim.  
-**Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
-**Next planned task:** obtain maintainer review for PR #11 (Q01-001/002 test suite GREEN); begin the separate AURA-Q01-003/004 assertion-and-contract-mode investigation in a new stacked Draft PR, without merging either PR.
+**Draft PR stack:** [#9 — R0 program](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3 verify](https://github.com/danielforface/aura-lang/pull/11) → [#13 — native contract gate](https://github.com/danielforface/aura-lang/pull/13). All remain draft/unmerged. **Active issue:** [#12](https://github.com/danielforface/aura-lang/issues/12); compatibility blocker [#14](https://github.com/danielforface/aura-lang/issues/14).  
+**Next planned task:** inspect CI of corrected PR #13 (`da39c0c` and current head) for actual native-contract GREEN; if it fails, fix with regression evidence; then reproduce issue #14 AVM/no-Z3 compatibility before any merges. Continue to keep roadmap immutable.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -17,7 +17,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Gate | Track | State | Verified exit evidence |
 |---|---|---|---|
 | Q00 | Governance, baseline and continuity | IN_PROGRESS | PENDING |
-| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Fail-closed CLI tests being introduced; initial red CI required |
+| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Q01-001/002 RED→GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082); Q01-003/004 native gate patch CI pending |
 | Q02 | Typed numeric semantics | NOT_STARTED | PENDING |
 | Q03 | Composite/IR/backend fidelity | NOT_STARTED | PENDING |
 | Q04 | Formal soundness and trust accounting | NOT_STARTED | PENDING |

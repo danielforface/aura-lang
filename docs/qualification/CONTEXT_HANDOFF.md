@@ -1,15 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01-003/004 RED reproduced, E0277 CI blocker fixed, rerun pending)  
+**Updated at:** 2026-10-23 (Q01-003/004 repro, E0277 remediation, compatibility issue #14; patch CI still pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 still in review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests, native contract-mode tests IN_PROGRESS; **release:** none.  
-**Scope of this focused branch:** [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11), [issue #10](https://github.com/danielforface/aura-lang/issues/10), tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
-**Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
-**Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
-**Last verified R0 program branch head before starting Q01:** `b2bdf39282e9d6579e5c6f484762c72390e5a57d`; fetch current Q01 branch head/PR and CI each session.  
+**Scope of this focused branch:** [Draft PR #13](https://github.com/danielforface/aura-lang/pull/13) / [issue #12](https://github.com/danielforface/aura-lang/issues/12), tasks AURA-Q01-003/004; inherited PR #11 Q01-001/002 and R0 PR #9. Compatibility issue #14 remains open. No autonomous merge.  
+**Draft PR chain:** #9 → #11 → #13, all OPEN/DRAFT/unmerged; current branch is head of #13.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/12 (P0 native contract assurance); additional regression risk https://github.com/danielforface/aura-lang/issues/14.  
+**Current working-branch head at time of this note:** `047921439bcb6ac116c8c1f4e7518ba76af67db0` (preceding this documentation-sync commit); fetch actual #13 head and CI on resumption.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -160,3 +160,7 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 - Discovered a source-derived integration risk: `tools/compat/run.sh` executes `cargo run -q -p aura --locked --no-default-features -- build "$f" --mode avm` for compatibility fixtures; `build_one` calls `verify_file` for all `mode==Avm` and prints `avm: verified`. After Q01-001/002 correctly makes no-Z3 `verify` fail closed, compatibility suite may fail, as it previously conflated parse/typecheck with proof. Logged in [issue #14](https://github.com/danielforface/aura-lang/issues/14) and [PR #13 comment](https://github.com/danielforface/aura-lang/pull/13). **Do not mark reproduced** until command executed; do not weaken proof correctness to fix CI. Resolve via explicit typecheck-only compatibility path or real-Z3 verification, with tests.
 - Streamlined `.github/workflows/q01-native-contract-gate.yml`: stop duplicate runs caused by simultaneous `push` and `pull_request` on the stacked feature branch (main/program PR coverage retained), and enable `Swatinem/rust-cache@v2` used by Core CI for iterative test speed. These are workflow changes, not proof quality evidence.
 - **Latest source change:** commit `da39c0c` fixes miette E0277 and bridge cache bypass. Its Actions [run 39948322245](https://github.com/danielforface/aura-lang/actions/runs/39948322245) and [run 39948332418](https://github.com/danielforface/aura-lang/actions/runs/39948332418) were still IN_PROGRESS at the last observation. **Next safe action:** fetch their outcomes/logs and the new workflow HEAD run; inspect failing tests or capture real GREEN, update PROGRESS+CONTEXT_HANDOFF+EVIDENCE_LOG with exact run links and actual outcomes, then review stacked PRs. No merging to main without user approval. Frozen plan unchanged.
+
+## 18. Top-of-document reconciliation (2026-10-23)
+
+Corrected stale header references carried over from initial R0/Q01 branch. Current work is **Q01-003/004 in Draft PR #13**, not a new Q01 issue being planned. Exact next task remains patched CI validation and compatibility issue #14 reproduction. This documentation-only reconciliation does not imply success of in-progress CI. Follow newest section over historical earlier status notes. Current source patch before this note is `da39c0c`; current workflow+docs head is `0479214`. Frozen roadmap unchanged, no merges or releases.
