@@ -1,12 +1,12 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01 test-first phase; after R0 CI review)  
+**Updated at:** 2026-10-23 (Q01 fix proposed; exact CI results still pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked upon `program/aura-long-horizon-qualification-v1`; R0 PR #9 remains draft/unmerged)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 under review; Q01/R1 test-first work IN_PROGRESS in a separate stacked feature branch; **release:** none.  
-**Scope of this focused branch:** issue #10, tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
+**Scope of this focused branch:** [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11), [issue #10](https://github.com/danielforface/aura-lang/issues/10), tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
 **Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
 **Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
 **Last verified R0 program branch head before starting Q01:** `b2bdf39282e9d6579e5c6f484762c72390e5a57d`; fetch current Q01 branch head/PR and CI each session.  
@@ -103,3 +103,11 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 **Current technical slice:** create a no-Z3 integration test that executes the real `CARGO_BIN_EXE_aura` with a semantically valid but nonprovable assertion; also exercise `--report` and confirm `ok:false`, an explanatory missing-solver error and nonzero exit. Dedicated workflow builds with `--no-default-features` and invokes only this integration test. **At test-first commit time results are NOT RUN; expect RED on current source.** First observe actual CI output before changing production code, then add a minimal fail-closed implementation, await GREEN and record evidence. Be careful that Core CI on PR #9 does not imply the new Q01 tests have passed.
 
 **Next safe action:** look at Q01 branch CI; verify RED is due to expected assertions rather than invalid Aura fixture/build problems. Fix test setup if invalid. Then repair the non-Z3 code branches in `aura/src/main.rs`; build/report must never falsely imply proof. Update `PROGRESS.md`, this handoff and evidence together. Do not edit `MASTER_ROADMAP_V1.md` or merge either PR without user approval.
+
+## 10. Technical continuity update (2026-10-23)
+
+- Created stacked [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) from `qual/Q01-001-002-fail-closed-verify` into the R0 program branch. R0 [PR #9](https://github.com/danielforface/aura-lang/pull/9) remains unmerged. Never merge either without user authorization.
+- Test-first commit `9c6172a21e1dec551e51a044c25ffbb2df4b744f` added real CLI test `aura/tests/verify_fail_closed.rs` and dedicated `.github/workflows/q01-verification-fail-closed.yml`. Its [first CI run](https://github.com/danielforface/aura-lang/actions/runs/39927689905) was IN_PROGRESS when observed. **Do not claim RED** until the log is inspected.
+- Subsequent source patch touches only `aura/src/main.rs`: when feature `z3` is missing, `verify_file` now fails explicitly rather than returning success; `verify_file_with_report` writes a failure report with `ok:false`, an error naming `z3`, and no fabricated proof evidence. Clarified Verify help. This is limited to AURA-Q01-001/002; broader verifier taxonomy, runtime assertion enforcement and C correctness remain open.
+- **Current validation status:** patched code has not yet produced an observed CI result at moment of commit; local Rust compiler unavailable. Recheck Q01 GitHub Actions runs, including first-commit expected RED and patched HEAD GREEN. Distinguish real reproduced failure from fixture/compiler errors. Preserve test results with exact run IDs in EVIDENCE_LOG, PROGRESS and this handoff.
+- **Next safe action:** fetch latest Q01 PR HEAD and workflow status. Investigate RED/compile failures, correct implementation or tests, append evidence and update BOTH live docs in the same commit. Keep frozen plan unchanged. If ready for review leave Draft PR open and ask approval before merge.
