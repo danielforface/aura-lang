@@ -1,11 +1,14 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (bootstrap session)  
+**Updated at:** 2026-10-23 (after bootstrap commit / PR / first technical issue)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current program branch:** `program/aura-long-horizon-qualification-v1`  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00 / R0; **status:** IN_PROGRESS; **release:** none in this program yet.  
+**Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
+**Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
+**Last confirmed source commit before this progress update:** `04dbdc05925315235d83a5e9dcdb398b0c5baaed`; always fetch current branch SHA anew.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -48,8 +51,10 @@ Branch `program/aura-long-horizon-qualification-v1` was created from `main@e8f1c
 - Confirmed previously missing App install; later successful write test created `program/aura-long-horizon-qualification-v1`.
 - Read current `ROADMAP_PUBLIC.md`, `PROJECT_STATUS.md`, `AURA_1_0_QUALIFICATION_PROGRAM.md`, `AURA_1_0_CAPABILITY_INVENTORY.md`, `PUBLIC_CLAIMS_POLICY.md`, `README.md` and `Cargo.toml` on main.
 - Selected immutable canonical plan v1 plus mutable progress, evidence, ledger and handoff, with governance CI guard and a brief entry in old public roadmap rather than rewriting it.
-- Prepared the R0 governance branch files **in this change**. These are documentation/process artifacts only; no compiler defect has been fixed in this session.
-- The branch work must still be independently reviewed. Check the live Draft PR and actual CI statuses before claiming completion.
+- Committed initial R0 documentation/governance scaffold as [`04dbdc0`](https://github.com/danielforface/aura-lang/commit/04dbdc05925315235d83a5e9dcdb398b0c5baaed): 88 frozen task IDs, 12 gates, 9 trains, mutable tracker/handoff/evidence/release ledger, operating protocol, check script and GitHub Actions workflow; preserved existing Gates A–G and added navigation to original public roadmap. No language source changed.
+- Opened [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9) against main (no merge). Confirmed files are present on branch. [Qualification governance run 39921540244](https://github.com/danielforface/aura-lang/actions/runs/39921540244), Dependency Review and Website Static Export reported SUCCESS on initial bootstrap head. Core CI was IN_PROGRESS at last check, so no full-CI success claim.
+- Created [GitHub issue #10](https://github.com/danielforface/aura-lang/issues/10) as first scoped P0 technical follow-up: reproduce no-Z3 verify success and false ok:true report, then fix fail-closed behavior with tests.
+- **This status/handoff/evidence follow-up commit** records those events together. Check current PR/CI after it lands; no compiler tests or runtime repro were run in this session.
 
 ## 5. Rules and decisions already agreed
 
@@ -65,13 +70,13 @@ Branch `program/aura-long-horizon-qualification-v1` was created from `main@e8f1c
 ## 6. Current queue, blockers, explicit next safe action
 
 **Current train:** R0 program foundation, active task Q00.  
-**Currently in review:** program doc scaffold and governance CI (see `PROGRESS.md`).  
-**Blockers:** no compiler tests, CI run or actual release artifacts have been validated in this session; existing inventory is old; PR review needed.
+**Currently in review:** [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9), with governance PASS on its initial commit and complete CI status still requiring a fresh check.  
+**Blockers:** no compiler tests, executable repro or release artifacts have been validated in this session; historical inventory is old; PR #9 review/merge not authorized. Governance workflow PASSED at initial PR head; other CI checks must be rechecked after latest commit.
 
 **Next safe action (read repo state first):**
-1. Fetch `docs/qualification/PROGRESS.md` and this file from the active branch, fetch latest PR/diff and CI workflow runs.
-2. Ensure documentation/governance PR is open as draft, review and validate the immutable-roadmap and handoff/progress guard; fix only real failures and update both live documents.
-3. With maintainer approval, merge R0 scaffold, then open a **new narrow implementation branch** for `AURA-Q01-001`/`AURA-Q01-002`; first reproduce missing-solver `verify` false-success and `ok:true` reporting with actual commands.
+1. Fetch `docs/qualification/PROGRESS.md` and this file from the active branch, fetch latest [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9) diff and *current* CI statuses; prior governance PASS is linked above.
+2. Review the docs/CI guard, especially immutability and handoff update policy. **Do not merge** without explicit user/maintainer approval. Correct issues in a small commit updating both live documents.
+3. After maintainer approval to merge R0, use [issue #10](https://github.com/danielforface/aura-lang/issues/10) on a **new narrow implementation branch** for `AURA-Q01-001`/`AURA-Q01-002`; first reproduce missing-solver `verify` false-success and `ok:true` reporting with actual commands.
 4. Make verifier fail closed and add adversarial CLI regression tests; capture real tests/CI/commit in evidence.
 5. Continue Q01 profile/assertion truth, then Q02 numeric correctness, Q03 composite lowering. Re-evaluate all tasks against current code each time.
 

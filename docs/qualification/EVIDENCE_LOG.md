@@ -39,3 +39,6 @@ Use a new ID (EV-022 onward), with `task-id | source commit | OS/arch/compiler/f
 3. Integer/float widening, signed values, overflow and narrow range (EV-005/006/007).
 4. Record/enum construct/read/update/match on actual C backend (EV-008/009/010).
 5. Package signature-verification adversarial fixture (EV-011).
+
+- **EV-022 (2026-10-23, CI-OBSERVED, AURA-Q00-004):** [GitHub Actions qualification governance run 39921540244](https://github.com/danielforface/aura-lang/actions/runs/39921540244) completed SUCCESS for initial bootstrap head `04dbdc05925315235d83a5e9dcdb398b0c5baaed`; this verifies the script executes on the bootstrap PR, NOT that a later attempted plan modification has been adversarially rejected.
+- **EV-023 (2026-10-23, CONNECTOR-OBSERVED, AURA-Q00-001):** [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9) opened against main, no merge; [issue #10](https://github.com/danielforface/aura-lang/issues/10) created as scoped, *not-yet-reproduced* Q01 technical follow-up. Website Static Export and Dependency Review also reported SUCCESS on initial head; Core CI remained IN_PROGRESS when checked. No compiler tests performed.

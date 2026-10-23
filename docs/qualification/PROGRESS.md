@@ -5,9 +5,10 @@
 **Working branch:** `program/aura-long-horizon-qualification-v1`  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (documentation/governance bootstrapping; no compiler fixes attempted)  
+**Status:** **IN_PROGRESS** (R0 governance scaffold committed; Draft PR #9 open; no compiler fixes attempted)  
 **Release:** none created in this work; no new stable-language claim.  
-**Next planned task:** `AURA-Q00-005` (re-audit high-risk current source against an executable corpus), after bootstrap PR review/CI.
+**Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
+**Next planned task:** finish R0 PR/CI validation, then reproduce `AURA-Q01-001/002` through issue #10; keep `AURA-Q00-005` source re-audit active.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -32,10 +33,10 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 | Task ID | State | Notes / source of evidence |
 |---|---|---|
-| AURA-Q00-001 | IN_REVIEW | Working branch created through connected GitHub; program index and Draft PR to be reviewed |
+| AURA-Q00-001 | IN_REVIEW | Working branch exists; [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9) open and awaiting review |
 | AURA-Q00-002 | IN_REVIEW | References to legacy Gates A–G and 1.0 qualification preserved and mapped |
 | AURA-Q00-003 | IN_REVIEW | Frozen plan + live progress + evidence + handoff + release ledger included in bootstrap |
-| AURA-Q00-004 | IN_REVIEW | Automated governance guard included; requires passing workflow run |
+| AURA-Q00-004 | IN_REVIEW | [Qualification governance workflow](https://github.com/danielforface/aura-lang/actions/runs/39921540244) passed on bootstrap head `04dbdc0`; freeze-after-merge scenario still awaits review |
 | AURA-Q00-005 | IN_PROGRESS | Static high-risk code review logged; real reproduction and comprehensive re-audit pending |
 | AURA-Q00-006 | NOT_STARTED | Clean-checkout smoke instructions and observed output pending |
 | AURA-Q00-007 | NOT_STARTED | Explicit tier/profile/version policy pending maintainer confirmation |
@@ -65,3 +66,4 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## Progress events
 
 - **2026-10-23:** created and verified the qualification branch (separate from `main`); began R0 plan/governance documentation. No code modifications or language release claims.
+- **2026-10-23:** pushed documentation/governance bootstrap commit [`04dbdc0`](https://github.com/danielforface/aura-lang/commit/04dbdc05925315235d83a5e9dcdb398b0c5baaed) (10 files, 88 fixed tasks), opened [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9), observed governance [run 39921540244 PASS](https://github.com/danielforface/aura-lang/actions/runs/39921540244), dependency review and website export PASS; Core CI was still IN_PROGRESS when checked. Created [issue #10](https://github.com/danielforface/aura-lang/issues/10) for first Q01 fail-closed fix. No runtime regression tests executed in this session. Recheck current CI before approving.
