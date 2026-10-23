@@ -5,10 +5,10 @@
 **Working branch:** `qual/Q01-compat-explicit-typecheck` (stacked on #13 native-contract gate → #11 verifier → #9 program)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-001/002 no-Z3 GREEN; Q01-003/004 no-Z3 and Z3 GREEN; explicit-check compatibility patch in CI, PRs unmerged)  
+**Status:** **IN_PROGRESS** (Q01-001/002 and native Q01-003/004 tested paths GREEN; issue #14 compatibility GREEN and PR #15 IN_REVIEW; no merges/releases)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3 verify](https://github.com/danielforface/aura-lang/pull/11) → [#13 — native contracts](https://github.com/danielforface/aura-lang/pull/13) → [#15 — explicit typecheck compatibility](https://github.com/danielforface/aura-lang/pull/15). All unmerged. **Current issue:** [#14](https://github.com/danielforface/aura-lang/issues/14).  
-**Next planned task:** validate Q01 check/compatibility patch using real CLI tests and `tools/compat/run.sh` on stacked branch, repair until GREEN; then inspect stacked PRs for acceptance without merging and pursue any remaining Q01 P0 gaps.
+**Next planned task:** conduct stacked PR #9 → #11 → #13 → #15 review/approval without automatic merge, and prepare the next narrow Q01 safety task (proof status/assurance taxonomy and cache negative tests). Keep Q01 gate itself IN_PROGRESS until all frozen requirements evidenced.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -100,3 +100,9 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23 (Z3 native GREEN observed, issue #14 repair begun):** [run 39949851377](https://github.com/danielforface/aura-lang/actions/runs/39949851377) on SHA `28fe3cc` passed BOTH jobs: real Z3 native C acceptance/rejection **3/3** and no-Z3 native contract checks **4/4**. Baseline RED→GREEN evidence preserved. Started issue [#14](https://github.com/danielforface/aura-lang/issues/14) on separate stacked `qual/Q01-compat-explicit-typecheck`: introduced `aura check` that only parses/type-checks and explicitly says *formal verification NOT RUN*, and adapted `tools/compat/run.sh` to use it rather than `build --mode avm` which requires a real solver. Added negative/positive CLI tests and a CI workflow. **Issue #14 patch tests NOT RUN at this commit; no false success claim.**
 
 - **2026-10-23 (issue #14 PR and CI):** [Draft PR #15](https://github.com/danielforface/aura-lang/pull/15) opened from `qual/Q01-compat-explicit-typecheck` into #13 branch; [CI run 39956263061](https://github.com/danielforface/aura-lang/actions/runs/39956263061) was IN_PROGRESS (native dependencies step) at this documentation update. Current code commit `d9ad4ab` adds CLI `check`, real tests and compatibility suite update. No observed new-green claim, no merge; next inspect test results, fix any failures and repeat.
+
+## Issue #14 acceptance results (observed, 2026-10-23)
+
+- **[Draft PR #15](https://github.com/danielforface/aura-lang/pull/15) is IN_REVIEW** (branch `qual/Q01-compat-explicit-typecheck`, against PR #13 branch; no merge).
+- [GitHub Actions run 39956263061](https://github.com/danielforface/aura-lang/actions/runs/39956263061), source code SHA `d9ad4ab502203ee66b4edc3b1f28206f649b4dac`, Ubuntu: **all three workflow steps passed** — real no-Z3 CLI `compat_check` **3/3 tests**, `bash tools/compat/run.sh` **3/3 existing fixtures** using `aura check` (each printed `formal verification NOT RUN`), and `cargo check -p aura --locked --no-default-features --features z3` success. Original `aura build --mode avm` no-Z3 is correctly fail-closed (proven in integration test), not a replacement for typecheck. Evidence EV-037.
+- This is a successful **scoped compatibility slice**, not language release or full verification soundness. PR #9, #11, #13 and #15 remain draft/unmerged; user approval required for merge. The later documentation-only SHA `3718da7` run may have a separate CI status; check latest head before review.
