@@ -1,11 +1,11 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01 fix GREEN confirmed on GitHub Actions; still pending PR review)  
+**Updated at:** 2026-10-23 (beginning Q01-003/004 native build negative tests)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked upon `program/aura-long-horizon-qualification-v1`; R0 PR #9 remains draft/unmerged)  
+**Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Active gate/train:** Q00/R0 under review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests; next Q01-003/004 investigation planned; **release:** none.  
+**Active gate/train:** Q00/R0 still in review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests, native contract-mode tests IN_PROGRESS; **release:** none.  
 **Scope of this focused branch:** [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11), [issue #10](https://github.com/danielforface/aura-lang/issues/10), tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
 **Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
 **Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
@@ -123,3 +123,13 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 **The previous in-progress status above is historical and superseded by this section.** Paired test-first evidence is complete for this narrow path: [baseline run 39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) on `9c6172a` had **0 passed, 2 failed**; [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) on `4868112391d19bfa3a665a8a87edaf870a86cb24` had **2 passed, 0 failed** in the same Ubuntu/no-Z3 integration command (`cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`). GREEN logs explicitly show both tests `... ok`. This establishes limited **no-solver CLI regression remediation**, not completeness of solver status taxonomy nor general contract soundness. [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) is unmerged, awaiting review; issue #10 is not closed; Q01-001/002 remain IN_REVIEW pending maintainer acceptance.
 
 **Next safe action:** inspect current GitHub branch/PR/CI; begin separate test-first scope `AURA-Q01-003/004` for build profile and assertion/contract semantics, preferably in another stacked branch based on PR #11 if R0 and Q01 are not yet merged. Never silently discard a native assert or treat `assume` as proof. Capture real negative tests and classify behavior before fixing; update progress + this handoff every increment. **Do not merge #9/#11 automatically**, or modify `MASTER_ROADMAP_V1.md`. If code/branch HEAD has advanced, reconcile these notes with the actual repository.
+
+## 13. Q01-003/004 native assurance tests initiated (2026-10-23)
+
+**New Issue:** [#12](https://github.com/danielforface/aura-lang/issues/12); **new branch:** `qual/Q01-003-004-native-contract-gate`, parent Q01 PR #11 head `ab23a7b5ae164085709722339ba0ed3f6c5755c7`. It is stacked for review: PR #9 (R0) → PR #11 (no-Z3 verify) → upcoming native-contract PR, never directly on main and never merge without owner approval.
+
+**Source-reviewed risk:** `aura-core/src/lower.rs` erases contracts/assertions with `Ok(())`; `aura/src/main.rs` `build_one` only calls `verify_file` for `profile verify` (or AVM), not default dev or release; C backend emits unverified output. The build cache restores existing artifacts before a proof gate, so the assurance policy must account for cache hits. This is source review, not runtime reproduction at commit time.
+
+**Test-only increment:** new `aura/tests/native_contract_modes.rs` and `.github/workflows/q01-native-contract-gate.yml` exercise real CLI `build --mode hybrid --backend c` under no-Z3 `dev`/`release` with an explicitly false assertion, plus a positive contract-free dev build. Test-first CI is expected RED on unsafe branches but status NOT RUN at document creation. No implementation changes were made in this commit.
+
+**Immediate next safe action:** fetch latest Q01-003/004 CI run and per-test stdout/stderr; distinguish verified false-success from fixture/C compile errors. If RED proves defect, choose minimal fail-closed interim assurance gate (native C/WASM must prove obligations or reject; preserve unannotated build). **Check cache-hit and alternate native build paths**, do not use source regex as a surrogate for syntax tree. Update progress + this handoff + evidence in each commit; do not mutate frozen master roadmap or merge PRs autonomously. Once work is validated, open/update Draft PR against `qual/Q01-001-002-fail-closed-verify`, then review stacked merge order.

@@ -1,0 +1,29 @@
+name: Q01 native contract assurance regression
+
+on:
+  push:
+    branches:
+      - 'qual/Q01-003-004-native-contract-gate'
+  pull_request:
+    branches:
+      - 'qual/Q01-001-002-fail-closed-verify'
+      - 'program/aura-long-horizon-qualification-v1'
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-contract-assurance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real CLI C-backend dev/release contract tests, no Z3
+        run: cargo test -p aura --locked --no-default-features --test native_contract_modes -- --nocapture

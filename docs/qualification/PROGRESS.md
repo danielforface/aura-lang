@@ -2,7 +2,7 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked on program branch; R0 Draft PR #9 remains unmerged)  
+**Working branch:** `qual/Q01-003-004-native-contract-gate` (stacked on Q01-001/002 Draft PR #11, itself stacked on R0 Draft PR #9)  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
 **Status:** **IN_PROGRESS** (Q01-001/002 validated in no-Z3 CI; PR #11 awaits review, not merged)  
@@ -80,7 +80,9 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 |---|---|---|
 | AURA-Q01-001 | IN_REVIEW | Baseline RED [39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657); patch GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082), `verify` without Z3 nonzero exit with explicit error. PR #11 remains unmerged. |
 | AURA-Q01-002 | IN_REVIEW | Same paired runs; `--report` now sets `ok:false`, error names Z3, verify evidence null; two/2 tests pass. |
-| AURA-Q01-003 | NOT_STARTED | Mode-contract semantics and profile boundaries remain unresolved. |
-| AURA-Q01-004 | NOT_STARTED | Runtime/native lowering of assertions/contracts remains unresolved. |
+| AURA-Q01-003 | IN_PROGRESS | [Issue #12](https://github.com/danielforface/aura-lang/issues/12): test-first native dev/release build assurance matrix; semantic policy pending red baseline. |
+| AURA-Q01-004 | IN_PROGRESS | [Issue #12](https://github.com/danielforface/aura-lang/issues/12): test C emission cannot silently erase unverified assertions; expected initial RED, not yet observed. |
 
 - **2026-10-23 (GREEN confirmed):** [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) completed SUCCESS at SHA `4868112391d19bfa3a665a8a87edaf870a86cb24`, Ubuntu, `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`: **2 passed, 0 failed**, following baseline **0 passed, 2 failed** at `9c6172a`. Patch still only IN_REVIEW; no release or merge. See EV-026.
+
+- **2026-10-23 (Q01 native-contract test-first start):** opened [issue #12](https://github.com/danielforface/aura-lang/issues/12), new stacked branch `qual/Q01-003-004-native-contract-gate` based on Q01 #11 head `ab23a7b`. Added native build integration regression tests and GitHub Actions workflow, **no native source fix in the test-first commit**. Baseline test result NOT RUN at commit creation; record observed RED before selecting production patch. Current root PR #9, Q01 PR #11 remain unmerged; do not merge without user consent.
