@@ -1,11 +1,11 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01 fix proposed; exact CI results still pending)  
+**Updated at:** 2026-10-23 (Q01 fix GREEN confirmed on GitHub Actions; still pending PR review)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked upon `program/aura-long-horizon-qualification-v1`; R0 PR #9 remains draft/unmerged)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Active gate/train:** Q00/R0 under review; Q01/R1 test-first work IN_PROGRESS in a separate stacked feature branch; **release:** none.  
+**Active gate/train:** Q00/R0 under review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests; next Q01-003/004 investigation planned; **release:** none.  
 **Scope of this focused branch:** [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11), [issue #10](https://github.com/danielforface/aura-lang/issues/10), tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
 **Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
 **Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
@@ -117,3 +117,9 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 - At test-only SHA `9c6172a21e1dec551e51a044c25ffbb2df4b744f`, [GitHub Actions run 39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) compiled Aura then executed `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture` on Ubuntu. The integration suite reported `0 passed; 2 failed`. Both no-Z3 `verify` and no-Z3 `verify --report` produced **exit code 0** even though the fixture asserted `x == 2` when `x = 1`. This is reproduced evidence (EV-025), not just static source review; an issue #10 comment also records it.
 - First implementation fix SHA `649cf30078c2bfef6283e34783336fa398854e7e` changes only `aura/src/main.rs` and handoff/progress/evidence. At the time of this context update, patched [run 39928636094](https://github.com/danielforface/aura-lang/actions/runs/39928636094) and [run 39928644146](https://github.com/danielforface/aura-lang/actions/runs/39928644146) were still IN_PROGRESS. **Do not claim fix passed until actual run logs confirm success.**
 - **Next safe action:** inspect patched CI runs for success and output, and investigate if failures are due to compilation, fixture or implementation. For any further code/doc change, update PROGRESS and handoff together; keep master roadmap frozen. PR #11 remains stacked and Draft; PR #9 remains unmerged.
+
+## 12. Verified CI observation and next task — 2026-10-23 (latest)
+
+**The previous in-progress status above is historical and superseded by this section.** Paired test-first evidence is complete for this narrow path: [baseline run 39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) on `9c6172a` had **0 passed, 2 failed**; [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) on `4868112391d19bfa3a665a8a87edaf870a86cb24` had **2 passed, 0 failed** in the same Ubuntu/no-Z3 integration command (`cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`). GREEN logs explicitly show both tests `... ok`. This establishes limited **no-solver CLI regression remediation**, not completeness of solver status taxonomy nor general contract soundness. [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) is unmerged, awaiting review; issue #10 is not closed; Q01-001/002 remain IN_REVIEW pending maintainer acceptance.
+
+**Next safe action:** inspect current GitHub branch/PR/CI; begin separate test-first scope `AURA-Q01-003/004` for build profile and assertion/contract semantics, preferably in another stacked branch based on PR #11 if R0 and Q01 are not yet merged. Never silently discard a native assert or treat `assume` as proof. Capture real negative tests and classify behavior before fixing; update progress + this handoff every increment. **Do not merge #9/#11 automatically**, or modify `MASTER_ROADMAP_V1.md`. If code/branch HEAD has advanced, reconcile these notes with the actual repository.

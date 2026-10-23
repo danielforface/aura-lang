@@ -5,10 +5,10 @@
 **Working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked on program branch; R0 Draft PR #9 remains unmerged)  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (Q01 implementation work on Draft PR #11, stacked on unmerged R0 PR #9; code fix awaiting CI)  
+**Status:** **IN_PROGRESS** (Q01-001/002 validated in no-Z3 CI; PR #11 awaits review, not merged)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
-**Next planned task:** run an intentionally failing no-Z3 CLI regression workflow on the focused stacked Q01 branch, document exact red result, then fix `AURA-Q01-001/002`; R0 Draft PR #9 awaits explicit merge approval.
+**Next planned task:** obtain maintainer review for PR #11 (Q01-001/002 test suite GREEN); begin the separate AURA-Q01-003/004 assertion-and-contract-mode investigation in a new stacked Draft PR, without merging either PR.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -73,3 +73,14 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23 (Q01 code change):** Opened [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) targeting the R0 program branch. Source change in `aura/src/main.rs` returns error when compiled without Z3; JSON report now records `ok:false`, an explanatory error and no invented proof data. Baseline test runs on commit `9c6172a` were still compiling at the time of coding; **RED not yet observed**. Patched test result **NOT RUN** at time of this commit. Follow up by collecting both results and updating evidence; no merge.
 
 - **2026-10-23 (Q01 RED reproduced):** [Baseline run #39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) on test-only SHA `9c6172a` compiled and ran the real CLI test command successfully as a test binary, then reported **0 passed / 2 failed** as expected. Both `verify` and `verify --report` incorrectly returned exit code 0 for an unprovable `assert x == 2`. This confirms the no-Z3 false-success defect at runtime. Fix SHA `649cf300` is still under CI verification; do not mark VERIFIED yet. [Issue #10](https://github.com/danielforface/aura-lang/issues/10) records the log.
+
+## Active Q01 progress (latest reviewed CI observation, 2026-10-23)
+
+| Task ID | State | Repro / acceptance evidence |
+|---|---|---|
+| AURA-Q01-001 | IN_REVIEW | Baseline RED [39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657); patch GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082), `verify` without Z3 nonzero exit with explicit error. PR #11 remains unmerged. |
+| AURA-Q01-002 | IN_REVIEW | Same paired runs; `--report` now sets `ok:false`, error names Z3, verify evidence null; two/2 tests pass. |
+| AURA-Q01-003 | NOT_STARTED | Mode-contract semantics and profile boundaries remain unresolved. |
+| AURA-Q01-004 | NOT_STARTED | Runtime/native lowering of assertions/contracts remains unresolved. |
+
+- **2026-10-23 (GREEN confirmed):** [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) completed SUCCESS at SHA `4868112391d19bfa3a665a8a87edaf870a86cb24`, Ubuntu, `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`: **2 passed, 0 failed**, following baseline **0 passed, 2 failed** at `9c6172a`. Patch still only IN_REVIEW; no release or merge. See EV-026.
