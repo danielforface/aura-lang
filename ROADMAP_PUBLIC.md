@@ -1,5 +1,7 @@
 # Aura Public Roadmap
 
+> **Long-horizon execution overlay (2026-10-23):** The existing Gates A–G and historical roadmap remain intact. The frozen multi-release acceptance plan, live stage tracker, evidence ledger, and fresh-chat continuity notes are maintained under [docs/qualification/](docs/qualification/README.md). Work follows reviewable incremental releases, not an immediate all-feature 1.0 upgrade.
+
 This is the concise public roadmap. It does not replace the repository's detailed historical `ROADMAP.md`; it provides a stable, readable view of what matters before Aura can honestly call the whole language platform “stable 1.0.”
 
 ## North star
