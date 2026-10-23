@@ -1,0 +1,41 @@
+name: Q01 versioned verification-report schema
+on:
+  push:
+    branches:
+      - 'qual/Q01-006-versioned-proof-report'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-z3-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: q01-schema-noz3
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: CLI report status tests (no solver)
+        run: cargo test -p aura --locked --no-default-features --test verify_report_status -- --nocapture
+      - name: Existing CLI fail-closed tests
+        run: cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture
+  z3-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: q01-schema-z3
+      - name: Native and solver dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: CLI report status tests (real solver)
+        run: cargo test -p aura --locked --no-default-features --features z3 --test verify_report_status -- --nocapture

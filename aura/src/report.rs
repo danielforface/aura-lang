@@ -21,11 +21,29 @@ impl From<Span> for SpanRange {
     }
 }
 
+/// Versioned, deliberately coarse result of attempting formal verification.
+/// Do not map an arbitrary solver error to "counterexample" or "timeout"
+/// without a structured solver outcome. Expand this enum only with tested
+/// mappings from the verifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationStatus {
+    Proved,
+    NotRun,
+    InvalidInput,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TrustedCoreReport {
     pub schema: &'static str,
     pub input: String,
+    pub status: VerificationStatus,
+    /// Backward-compatible property: derived from `status`, never independently set.
     pub ok: bool,
+    /// Machine-readable failure category; absent for a successfully proved input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub trusted: TrustedSurface,
@@ -129,16 +147,32 @@ fn analyze_stmt(out: &mut TrustedSurface, stmt: &Stmt) {
 
 pub fn write_verify_report(
     path: &Path,
-    ok: bool,
+    status: VerificationStatus,
+    reason_code: Option<&'static str>,
     error: Option<String>,
     program: Option<&Program>,
     verify: Option<VerifyEvidenceReport>,
     out_path: &Path,
 ) -> miette::Result<()> {
+    // Proof evidence and success status must never contradict each other.
+    // A successful report requires proof metadata; errors must not carry it.
+    let proved = status == VerificationStatus::Proved;
+    if proved != verify.is_some() {
+        return Err(miette::miette!(
+            "inconsistent formal-verification report: status and proof evidence disagree"
+        ));
+    }
+    if proved && (error.is_some() || reason_code.is_some()) {
+        return Err(miette::miette!(
+            "inconsistent formal-verification report: proved with an error"
+        ));
+    }
     let report = TrustedCoreReport {
-        schema: "aura.trusted-core.v1",
+        schema: "aura.trusted-core.v2",
         input: display_path(path),
-        ok,
+        status,
+        ok: proved,
+        reason_code,
         error,
         trusted: program
             .map(analyze_trusted_surface)

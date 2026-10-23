@@ -1117,7 +1117,8 @@ fn verify_file_with_report(
         Err(e) => {
             let _ = report::write_verify_report(
                 path,
-                false,
+                report::VerificationStatus::InvalidInput,
+                Some("parse_error"),
                 Some(format!("{e:?}")),
                 None,
                 None,
@@ -1135,7 +1136,8 @@ fn verify_file_with_report(
     {
         let _ = report::write_verify_report(
             path,
-            false,
+            report::VerificationStatus::InvalidInput,
+            Some("type_error"),
             Some(format!("{e:?}")),
             Some(&program),
             None,
@@ -1158,7 +1160,8 @@ fn verify_file_with_report(
                 let e = miette::Report::new(e).with_source_code(source.clone());
                 let _ = report::write_verify_report(
                     path,
-                    false,
+                    report::VerificationStatus::Failed,
+                    Some("verification_failed"),
                     Some(format!("{e:?}")),
                     Some(&program),
                     None,
@@ -1168,7 +1171,15 @@ fn verify_file_with_report(
             }
         };
 
-        report::write_verify_report(path, true, None, Some(&program), verify, report_out)?;
+        report::write_verify_report(
+            path,
+            report::VerificationStatus::Proved,
+            None,
+            None,
+            Some(&program),
+            verify,
+            report_out,
+        )?;
         return Ok(());
     }
 
@@ -1178,7 +1189,8 @@ fn verify_file_with_report(
         // Retain trusted-surface metadata, but do not invent successful proof evidence.
         report::write_verify_report(
             path,
-            false,
+            report::VerificationStatus::NotRun,
+            Some("verifier_unavailable"),
             Some(Z3_UNAVAILABLE_MESSAGE.to_string()),
             Some(&program),
             None,
