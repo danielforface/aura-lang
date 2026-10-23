@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `program/aura-long-horizon-qualification-v1`  
+**Working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked on program branch; R0 Draft PR #9 remains unmerged)  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
 **Status:** **IN_PROGRESS** (R0 governance scaffold committed; Draft PR #9 open; no compiler fixes attempted)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
-**Next planned task:** finish R0 PR/CI validation, then reproduce `AURA-Q01-001/002` through issue #10; keep `AURA-Q00-005` source re-audit active.
+**Next planned task:** run an intentionally failing no-Z3 CLI regression workflow on the focused stacked Q01 branch, document exact red result, then fix `AURA-Q01-001/002`; R0 Draft PR #9 awaits explicit merge approval.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -17,7 +17,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Gate | Track | State | Verified exit evidence |
 |---|---|---|---|
 | Q00 | Governance, baseline and continuity | IN_PROGRESS | PENDING |
-| Q01 | Fail-closed verifier and CLI | NOT_STARTED | PENDING |
+| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Fail-closed CLI tests being introduced; initial red CI required |
 | Q02 | Typed numeric semantics | NOT_STARTED | PENDING |
 | Q03 | Composite/IR/backend fidelity | NOT_STARTED | PENDING |
 | Q04 | Formal soundness and trust accounting | NOT_STARTED | PENDING |
@@ -67,3 +67,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 - **2026-10-23:** created and verified the qualification branch (separate from `main`); began R0 plan/governance documentation. No code modifications or language release claims.
 - **2026-10-23:** pushed documentation/governance bootstrap commit [`04dbdc0`](https://github.com/danielforface/aura-lang/commit/04dbdc05925315235d83a5e9dcdb398b0c5baaed) (10 files, 88 fixed tasks), opened [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9), observed governance [run 39921540244 PASS](https://github.com/danielforface/aura-lang/actions/runs/39921540244), dependency review and website export PASS; Core CI was still IN_PROGRESS when checked. Created [issue #10](https://github.com/danielforface/aura-lang/issues/10) for first Q01 fail-closed fix. No runtime regression tests executed in this session. Recheck current CI before approving.
+
+- **2026-10-23 (Q01 test-first start):** all four relevant CI workflows on R0 PR #9 (`b2bdf3928`) reported SUCCESS: [Core CI](https://github.com/danielforface/aura-lang/actions/runs/39921912182), [Governance](https://github.com/danielforface/aura-lang/actions/runs/39921912310), dependency review and website export. The R0 PR is still open/draft/unmerged. Created `qual/Q01-001-002-fail-closed-verify` from that branch (stacked; preserves plan). Added real CLI no-Z3 negative tests and dedicated workflow; **BEFORE CI:** outcomes NOT RUN, intended initial failing baseline. No production fix yet. Continue at issue #10; if CI does not run, do not claim reproduction.

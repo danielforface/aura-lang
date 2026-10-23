@@ -1,14 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (after bootstrap commit / PR / first technical issue)  
+**Updated at:** 2026-10-23 (Q01 test-first phase; after R0 CI review)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current program branch:** `program/aura-long-horizon-qualification-v1`  
+**Current working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked upon `program/aura-long-horizon-qualification-v1`; R0 PR #9 remains draft/unmerged)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Active gate/train:** Q00 / R0; **status:** IN_PROGRESS; **release:** none in this program yet.  
+**Active gate/train:** Q00/R0 under review; Q01/R1 test-first work IN_PROGRESS in a separate stacked feature branch; **release:** none.  
+**Scope of this focused branch:** issue #10, tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
 **Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
 **Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
-**Last confirmed source commit before this progress update:** `04dbdc05925315235d83a5e9dcdb398b0c5baaed`; always fetch current branch SHA anew.  
+**Last verified R0 program branch head before starting Q01:** `b2bdf39282e9d6579e5c6f484762c72390e5a57d`; fetch current Q01 branch head/PR and CI each session.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -91,3 +92,14 @@ At the **end of every implementation/documentation increment and before leaving 
 Send repository URL plus: **"Continue the Aura long-horizon qualification program. Read `docs/qualification/CONTEXT_HANDOFF.md`, `PROGRESS.md`, `MASTER_ROADMAP_V1.md`, `OPERATING_PROTOCOL.md`, `EVIDENCE_LOG.md` from the latest program branch. Verify GitHub connection/PR/branch state, then continue the recorded next safe action. Never rewrite the frozen plan and update progress + handoff with every increment."**
 
 The latest GitHub files, not memory, are the source of continuity. See `OPERATING_PROTOCOL.md` for failure, PR and release rules.
+
+
+## 9. Continuity update — first technical Q01 incremental work (2026-10-23)
+
+**New decision D-009:** Start reversible/test-only *stacked* technical work while R0 governance Draft PR #9 is awaiting explicit maintainer merge approval. The feature branch is based on R0's head; its own PR should target the program branch, not `main`, until R0 is merged. No direct-main changes and no mixing compiler fixes into R0 bootstrap proposal. When #9 merges, rebase/retarget the technical PR after checking actual GitHub state.
+
+**Verified CI for PR #9 at `b2bdf3928`:** [Core CI PASS](https://github.com/danielforface/aura-lang/actions/runs/39921912182), [Governance PASS](https://github.com/danielforface/aura-lang/actions/runs/39921912310), Website Static Export PASS, Dependency Review PASS. PR remains OPEN/DRAFT and unmerged.
+
+**Current technical slice:** create a no-Z3 integration test that executes the real `CARGO_BIN_EXE_aura` with a semantically valid but nonprovable assertion; also exercise `--report` and confirm `ok:false`, an explanatory missing-solver error and nonzero exit. Dedicated workflow builds with `--no-default-features` and invokes only this integration test. **At test-first commit time results are NOT RUN; expect RED on current source.** First observe actual CI output before changing production code, then add a minimal fail-closed implementation, await GREEN and record evidence. Be careful that Core CI on PR #9 does not imply the new Q01 tests have passed.
+
+**Next safe action:** look at Q01 branch CI; verify RED is due to expected assertions rather than invalid Aura fixture/build problems. Fix test setup if invalid. Then repair the non-Z3 code branches in `aura/src/main.rs`; build/report must never falsely imply proof. Update `PROGRESS.md`, this handoff and evidence together. Do not edit `MASTER_ROADMAP_V1.md` or merge either PR without user approval.
