@@ -23,6 +23,9 @@ use aura_parse::ParseConfig;
 
 use aura_interpret::{DebugCommand, DebugEvent, DebugHandle, DebugSession};
 
+#[cfg(not(feature = "z3"))]
+const Z3_UNAVAILABLE_MESSAGE: &str = "verification unavailable: this Aura binary was built without the `z3` feature; rebuild with `--features z3`";
+
 static DEBUG_SESSION: OnceLock<(DebugSession, DebugHandle)> = OnceLock::new();
 static DEBUG_STDOUT_GUARD: OnceLock<std::sync::Arc<std::sync::Mutex<()>>> = OnceLock::new();
 
@@ -356,7 +359,7 @@ enum Cmd {
         hot: bool,
     },
 
-    /// Verify a program (parse + sema + Z3 gate when enabled)
+    /// Formally verify a program (requires Aura compiled with the z3 feature)
     Verify {
         /// Input .aura file or a directory containing `aura.toml`
         #[arg(default_value = "main.aura")]
@@ -1063,10 +1066,12 @@ fn verify_file(
 
     #[cfg(not(feature = "z3"))]
     {
-        let _ = nexus_plugins;
-        let _ = smt_profile;
+        let _ = (nexus_plugins, smt_profile);
+        // A type-check-only run is never a successful formal proof.
+        return Err(miette::miette!("{}", Z3_UNAVAILABLE_MESSAGE));
     }
 
+    #[cfg(feature = "z3")]
     Ok(())
 }
 
@@ -1145,12 +1150,18 @@ fn verify_file_with_report(
 
     #[cfg(not(feature = "z3"))]
     {
-        let _ = nexus_plugins;
-        let _ = smt_profile;
+        let _ = (nexus_plugins, smt_profile);
+        // Retain trusted-surface metadata, but do not invent successful proof evidence.
+        report::write_verify_report(
+            path,
+            false,
+            Some(Z3_UNAVAILABLE_MESSAGE.to_string()),
+            Some(&program),
+            None,
+            report_out,
+        )?;
+        return Err(miette::miette!("{}", Z3_UNAVAILABLE_MESSAGE));
     }
-
-    report::write_verify_report(path, true, None, Some(&program), None, report_out)?;
-    Ok(())
 }
 
 fn lint_file(path: &Path, parse_cfg: &ParseConfig) -> miette::Result<()> {

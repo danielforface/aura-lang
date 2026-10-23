@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `program/aura-long-horizon-qualification-v1`  
+**Working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked on program branch; R0 Draft PR #9 remains unmerged)  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (R0 governance scaffold committed; Draft PR #9 open; no compiler fixes attempted)  
+**Status:** **IN_PROGRESS** (Q01-001/002 validated in no-Z3 CI; PR #11 awaits review, not merged)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
-**Next planned task:** finish R0 PR/CI validation, then reproduce `AURA-Q01-001/002` through issue #10; keep `AURA-Q00-005` source re-audit active.
+**Next planned task:** obtain maintainer review for PR #11 (Q01-001/002 test suite GREEN); begin the separate AURA-Q01-003/004 assertion-and-contract-mode investigation in a new stacked Draft PR, without merging either PR.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -17,7 +17,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Gate | Track | State | Verified exit evidence |
 |---|---|---|---|
 | Q00 | Governance, baseline and continuity | IN_PROGRESS | PENDING |
-| Q01 | Fail-closed verifier and CLI | NOT_STARTED | PENDING |
+| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Fail-closed CLI tests being introduced; initial red CI required |
 | Q02 | Typed numeric semantics | NOT_STARTED | PENDING |
 | Q03 | Composite/IR/backend fidelity | NOT_STARTED | PENDING |
 | Q04 | Formal soundness and trust accounting | NOT_STARTED | PENDING |
@@ -67,3 +67,20 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 - **2026-10-23:** created and verified the qualification branch (separate from `main`); began R0 plan/governance documentation. No code modifications or language release claims.
 - **2026-10-23:** pushed documentation/governance bootstrap commit [`04dbdc0`](https://github.com/danielforface/aura-lang/commit/04dbdc05925315235d83a5e9dcdb398b0c5baaed) (10 files, 88 fixed tasks), opened [Draft PR #9](https://github.com/danielforface/aura-lang/pull/9), observed governance [run 39921540244 PASS](https://github.com/danielforface/aura-lang/actions/runs/39921540244), dependency review and website export PASS; Core CI was still IN_PROGRESS when checked. Created [issue #10](https://github.com/danielforface/aura-lang/issues/10) for first Q01 fail-closed fix. No runtime regression tests executed in this session. Recheck current CI before approving.
+
+- **2026-10-23 (Q01 test-first start):** all four relevant CI workflows on R0 PR #9 (`b2bdf3928`) reported SUCCESS: [Core CI](https://github.com/danielforface/aura-lang/actions/runs/39921912182), [Governance](https://github.com/danielforface/aura-lang/actions/runs/39921912310), dependency review and website export. The R0 PR is still open/draft/unmerged. Created `qual/Q01-001-002-fail-closed-verify` from that branch (stacked; preserves plan). Added real CLI no-Z3 negative tests and dedicated workflow; **BEFORE CI:** outcomes NOT RUN, intended initial failing baseline. No production fix yet. Continue at issue #10; if CI does not run, do not claim reproduction.
+
+- **2026-10-23 (Q01 code change):** Opened [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) targeting the R0 program branch. Source change in `aura/src/main.rs` returns error when compiled without Z3; JSON report now records `ok:false`, an explanatory error and no invented proof data. Baseline test runs on commit `9c6172a` were still compiling at the time of coding; **RED not yet observed**. Patched test result **NOT RUN** at time of this commit. Follow up by collecting both results and updating evidence; no merge.
+
+- **2026-10-23 (Q01 RED reproduced):** [Baseline run #39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) on test-only SHA `9c6172a` compiled and ran the real CLI test command successfully as a test binary, then reported **0 passed / 2 failed** as expected. Both `verify` and `verify --report` incorrectly returned exit code 0 for an unprovable `assert x == 2`. This confirms the no-Z3 false-success defect at runtime. Fix SHA `649cf300` is still under CI verification; do not mark VERIFIED yet. [Issue #10](https://github.com/danielforface/aura-lang/issues/10) records the log.
+
+## Active Q01 progress (latest reviewed CI observation, 2026-10-23)
+
+| Task ID | State | Repro / acceptance evidence |
+|---|---|---|
+| AURA-Q01-001 | IN_REVIEW | Baseline RED [39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657); patch GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082), `verify` without Z3 nonzero exit with explicit error. PR #11 remains unmerged. |
+| AURA-Q01-002 | IN_REVIEW | Same paired runs; `--report` now sets `ok:false`, error names Z3, verify evidence null; two/2 tests pass. |
+| AURA-Q01-003 | NOT_STARTED | Mode-contract semantics and profile boundaries remain unresolved. |
+| AURA-Q01-004 | NOT_STARTED | Runtime/native lowering of assertions/contracts remains unresolved. |
+
+- **2026-10-23 (GREEN confirmed):** [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) completed SUCCESS at SHA `4868112391d19bfa3a665a8a87edaf870a86cb24`, Ubuntu, `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`: **2 passed, 0 failed**, following baseline **0 passed, 2 failed** at `9c6172a`. Patch still only IN_REVIEW; no release or merge. See EV-026.

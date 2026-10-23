@@ -1,0 +1,29 @@
+name: Q01 fail-closed verification regression
+
+on:
+  push:
+    branches:
+      - 'qual/Q01-001-002-fail-closed-verify'
+  pull_request:
+    branches:
+      - 'program/aura-long-horizon-qualification-v1'
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-z3-verification-must-fail-closed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: No-Z3 real CLI integration tests
+        run: cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture

@@ -1,14 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (after bootstrap commit / PR / first technical issue)  
+**Updated at:** 2026-10-23 (Q01 fix GREEN confirmed on GitHub Actions; still pending PR review)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current program branch:** `program/aura-long-horizon-qualification-v1`  
+**Current working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked upon `program/aura-long-horizon-qualification-v1`; R0 PR #9 remains draft/unmerged)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Active gate/train:** Q00 / R0; **status:** IN_PROGRESS; **release:** none in this program yet.  
+**Active gate/train:** Q00/R0 under review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests; next Q01-003/004 investigation planned; **release:** none.  
+**Scope of this focused branch:** [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11), [issue #10](https://github.com/danielforface/aura-lang/issues/10), tasks AURA-Q01-001 / AURA-Q01-002; no autonomous merge.  
 **Draft PR:** https://github.com/danielforface/aura-lang/pull/9 (OPEN, DRAFT, unmerged).  
 **Next issue:** https://github.com/danielforface/aura-lang/issues/10 (P0, Q01 fail-closed).  
-**Last confirmed source commit before this progress update:** `04dbdc05925315235d83a5e9dcdb398b0c5baaed`; always fetch current branch SHA anew.  
+**Last verified R0 program branch head before starting Q01:** `b2bdf39282e9d6579e5c6f484762c72390e5a57d`; fetch current Q01 branch head/PR and CI each session.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -91,3 +92,34 @@ At the **end of every implementation/documentation increment and before leaving 
 Send repository URL plus: **"Continue the Aura long-horizon qualification program. Read `docs/qualification/CONTEXT_HANDOFF.md`, `PROGRESS.md`, `MASTER_ROADMAP_V1.md`, `OPERATING_PROTOCOL.md`, `EVIDENCE_LOG.md` from the latest program branch. Verify GitHub connection/PR/branch state, then continue the recorded next safe action. Never rewrite the frozen plan and update progress + handoff with every increment."**
 
 The latest GitHub files, not memory, are the source of continuity. See `OPERATING_PROTOCOL.md` for failure, PR and release rules.
+
+
+## 9. Continuity update — first technical Q01 incremental work (2026-10-23)
+
+**New decision D-009:** Start reversible/test-only *stacked* technical work while R0 governance Draft PR #9 is awaiting explicit maintainer merge approval. The feature branch is based on R0's head; its own PR should target the program branch, not `main`, until R0 is merged. No direct-main changes and no mixing compiler fixes into R0 bootstrap proposal. When #9 merges, rebase/retarget the technical PR after checking actual GitHub state.
+
+**Verified CI for PR #9 at `b2bdf3928`:** [Core CI PASS](https://github.com/danielforface/aura-lang/actions/runs/39921912182), [Governance PASS](https://github.com/danielforface/aura-lang/actions/runs/39921912310), Website Static Export PASS, Dependency Review PASS. PR remains OPEN/DRAFT and unmerged.
+
+**Current technical slice:** create a no-Z3 integration test that executes the real `CARGO_BIN_EXE_aura` with a semantically valid but nonprovable assertion; also exercise `--report` and confirm `ok:false`, an explanatory missing-solver error and nonzero exit. Dedicated workflow builds with `--no-default-features` and invokes only this integration test. **At test-first commit time results are NOT RUN; expect RED on current source.** First observe actual CI output before changing production code, then add a minimal fail-closed implementation, await GREEN and record evidence. Be careful that Core CI on PR #9 does not imply the new Q01 tests have passed.
+
+**Next safe action:** look at Q01 branch CI; verify RED is due to expected assertions rather than invalid Aura fixture/build problems. Fix test setup if invalid. Then repair the non-Z3 code branches in `aura/src/main.rs`; build/report must never falsely imply proof. Update `PROGRESS.md`, this handoff and evidence together. Do not edit `MASTER_ROADMAP_V1.md` or merge either PR without user approval.
+
+## 10. Technical continuity update (2026-10-23)
+
+- Created stacked [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) from `qual/Q01-001-002-fail-closed-verify` into the R0 program branch. R0 [PR #9](https://github.com/danielforface/aura-lang/pull/9) remains unmerged. Never merge either without user authorization.
+- Test-first commit `9c6172a21e1dec551e51a044c25ffbb2df4b744f` added real CLI test `aura/tests/verify_fail_closed.rs` and dedicated `.github/workflows/q01-verification-fail-closed.yml`. Its [first CI run](https://github.com/danielforface/aura-lang/actions/runs/39927689905) was IN_PROGRESS when observed. **Do not claim RED** until the log is inspected.
+- Subsequent source patch touches only `aura/src/main.rs`: when feature `z3` is missing, `verify_file` now fails explicitly rather than returning success; `verify_file_with_report` writes a failure report with `ok:false`, an error naming `z3`, and no fabricated proof evidence. Clarified Verify help. This is limited to AURA-Q01-001/002; broader verifier taxonomy, runtime assertion enforcement and C correctness remain open.
+- **Current validation status:** patched code has not yet produced an observed CI result at moment of commit; local Rust compiler unavailable. Recheck Q01 GitHub Actions runs, including first-commit expected RED and patched HEAD GREEN. Distinguish real reproduced failure from fixture/compiler errors. Preserve test results with exact run IDs in EVIDENCE_LOG, PROGRESS and this handoff.
+- **Next safe action:** fetch latest Q01 PR HEAD and workflow status. Investigate RED/compile failures, correct implementation or tests, append evidence and update BOTH live docs in the same commit. Keep frozen plan unchanged. If ready for review leave Draft PR open and ask approval before merge.
+
+## 11. CI baseline reproduction result (2026-10-23)
+
+- At test-only SHA `9c6172a21e1dec551e51a044c25ffbb2df4b744f`, [GitHub Actions run 39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) compiled Aura then executed `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture` on Ubuntu. The integration suite reported `0 passed; 2 failed`. Both no-Z3 `verify` and no-Z3 `verify --report` produced **exit code 0** even though the fixture asserted `x == 2` when `x = 1`. This is reproduced evidence (EV-025), not just static source review; an issue #10 comment also records it.
+- First implementation fix SHA `649cf30078c2bfef6283e34783336fa398854e7e` changes only `aura/src/main.rs` and handoff/progress/evidence. At the time of this context update, patched [run 39928636094](https://github.com/danielforface/aura-lang/actions/runs/39928636094) and [run 39928644146](https://github.com/danielforface/aura-lang/actions/runs/39928644146) were still IN_PROGRESS. **Do not claim fix passed until actual run logs confirm success.**
+- **Next safe action:** inspect patched CI runs for success and output, and investigate if failures are due to compilation, fixture or implementation. For any further code/doc change, update PROGRESS and handoff together; keep master roadmap frozen. PR #11 remains stacked and Draft; PR #9 remains unmerged.
+
+## 12. Verified CI observation and next task — 2026-10-23 (latest)
+
+**The previous in-progress status above is historical and superseded by this section.** Paired test-first evidence is complete for this narrow path: [baseline run 39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657) on `9c6172a` had **0 passed, 2 failed**; [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) on `4868112391d19bfa3a665a8a87edaf870a86cb24` had **2 passed, 0 failed** in the same Ubuntu/no-Z3 integration command (`cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`). GREEN logs explicitly show both tests `... ok`. This establishes limited **no-solver CLI regression remediation**, not completeness of solver status taxonomy nor general contract soundness. [Draft PR #11](https://github.com/danielforface/aura-lang/pull/11) is unmerged, awaiting review; issue #10 is not closed; Q01-001/002 remain IN_REVIEW pending maintainer acceptance.
+
+**Next safe action:** inspect current GitHub branch/PR/CI; begin separate test-first scope `AURA-Q01-003/004` for build profile and assertion/contract semantics, preferably in another stacked branch based on PR #11 if R0 and Q01 are not yet merged. Never silently discard a native assert or treat `assume` as proof. Capture real negative tests and classify behavior before fixing; update progress + this handoff every increment. **Do not merge #9/#11 automatically**, or modify `MASTER_ROADMAP_V1.md`. If code/branch HEAD has advanced, reconcile these notes with the actual repository.
