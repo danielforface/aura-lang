@@ -1,7 +1,7 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01-003/004 native assurance policy and scanner hardening; CI verification pending)  
+**Updated at:** 2026-10-23 (Q01-003/004 RED reproduced, E0277 CI blocker fixed, rerun pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
@@ -146,3 +146,11 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 - Created `docs/qualification/Q01_NATIVE_ASSURANCE_POLICY.md`: exact *interim* C/WASM matrix for dev/release/verify with and without Z3, cache bypass, AVM/LLVM exclusions and explicit non-guarantees. This note is not a normative frozen roadmap amendment.
 - Hardened `aura/src/report.rs` `analyze_verify_surface` to walk `MacroDef` and `Render` bodies (which contain nested blocks) rather than overlooking their assertions/assumptions. Added nested conditional assertion negative test to `aura/tests/native_contract_modes.rs`.
 - **At commit creation:** initial baseline workflow and patched workflow were still compiling; the latest code's CI has **NOT BEEN VERIFIED**. On resume, fetch all PR #13 run statuses, check baseline RED and latest GREEN, archive precise outputs in EVIDENCE_LOG; if failing, fix and rerun. Check stacked R0 #9, Q01 #11 and #13 branches; none merged automatically.
+
+## 16. Native gate CI failure triage and correction (2026-10-23)
+
+**First-commit baseline RED confirmed:** [run 39938385042](https://github.com/danielforface/aura-lang/actions/runs/39938385042), head `794a83c`, compiled and executed 3 native CLI tests. `dev_native_build_must_not_erase_false_assert` and `release_native_build_must_not_erase_false_assert` failed **because both returned exit 0 and wrote module.c**, despite unprovable assertion. The positive contract-free build passed. This proves a real semantic gap; evidence EV-030.
+
+**Patch blocked by Rust compilation:** [run 39938775467](https://github.com/danielforface/aura-lang/actions/runs/39938775467) at `5c7f050` and [run 39939359111](https://github.com/danielforface/aura-lang/actions/runs/39939359111) at `eff15d7` failed in `aura/src/main.rs` line ~1253: `error[E0277]: the trait bound ErrReport: Diagnostic is not satisfied`. Root cause: `parse_source_with_config` already yields a `miette::Report`, which must not be wrapped by `miette::Report::new`. **Neither failed run establishes safety of the intended patch.**
+
+**Correction committed in this increment:** `aura/src/main.rs` now uses direct `?` for parsing, and short-circuits bridged headers to uncached real build *before* parsing combined text (which can contain bare header paths). New CI result NOT YET OBSERVED at commit creation. Recheck latest PR #13 head/run and inspect actual logs. Investigate any new failures, record GREEN with run URL if achieved, update PROGRESS+handoff+evidence together. Leave all stacked PRs draft/unmerged; frozen plan unchanged.
