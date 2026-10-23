@@ -1,6 +1,6 @@
 # Verification report schema v2 — bounded Q01 status contract
 
-**Status:** proposed in [Issue #16](https://github.com/danielforface/aura-lang/issues/16); implementation and tests in a stacked Draft PR, pending real CI. This note is explanatory and mutable; the canonical MASTER_ROADMAP_V1.md is unchanged.
+**Status:** scoped tests GREEN in [GitHub Actions run 39963769042](https://github.com/danielforface/aura-lang/actions/runs/39963769042); [Draft PR #17](https://github.com/danielforface/aura-lang/pull/17) OPEN/IN_REVIEW, unmerged. This is not language-wide qualification. This note is explanatory and mutable; the canonical MASTER_ROADMAP_V1.md is unchanged.
 
 `aura verify --report <path>` produces JSON carrying a version marker `schema: "aura.trusted-core.v2"`, a typed `status`, backward-compatible `ok`, optional machine-readable `reason_code`, optional prose `error`, `trusted` surface and optional `verify` evidence.
 
