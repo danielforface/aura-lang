@@ -392,6 +392,13 @@ enum Cmd {
         smt_profile: SmtProfileArg,
     },
 
+    /// Check Aura syntax and types without claiming formal verification
+    Check {
+        /// Source file or project directory
+        #[arg(default_value = "main.aura")]
+        path: PathBuf,
+    },
+
     /// Lint Aura source (format check + parse/sema)
     Lint {
         /// Input .aura file or a project directory
@@ -720,6 +727,23 @@ fn main() -> miette::Result<()> {
                 return Err(miette::miette!("{failed} test file(s) failed"));
             }
             println!("aura test: ok");
+            Ok(())
+        }
+
+        Cmd::Check { path } => {
+            let resolved = resolve_manifest_config(&path, &[], &[], &[])?;
+            let parse_cfg = build_parse_config(&cli.edition, &cli.feature, &resolved);
+            let targets = expand_workspace_targets(&path, &resolved);
+            if targets.is_empty() {
+                return Err(miette::miette!("aura check: no targets found"));
+            }
+            for target in &targets {
+                check_file(target, &parse_cfg)?;
+            }
+            println!(
+                "aura check: {} target(s) passed syntax/type checks; formal verification NOT RUN",
+                targets.len()
+            );
             Ok(())
         }
 
@@ -1162,6 +1186,23 @@ fn verify_file_with_report(
         )?;
         return Err(miette::miette!("{}", Z3_UNAVAILABLE_MESSAGE));
     }
+}
+
+/// A deliberately non-proving validation path for smoke/compatibility checks.
+/// It shares parsing + type checking with formal verification, but does not
+/// produce a proof result or mark any assertion/contract as discharged.
+fn check_file(path: &Path, parse_cfg: &ParseConfig) -> miette::Result<()> {
+    let src = fs::read_to_string(path).into_diagnostic()?;
+    let src_aug = augment_with_sdk_std(&src)?;
+    let named = NamedSource::new(display_path(path), src_aug.clone());
+    let program = aura_parse::parse_source_with_config(&src_aug, parse_cfg)
+        .map_err(|e| e.with_source_code(named.clone()))?;
+    let mut checker = aura_core::Checker::new();
+    checker.set_defer_range_proofs(true);
+    checker
+        .check_program(&program)
+        .map_err(|e| miette::Report::new(e).with_source_code(named.clone()))?;
+    Ok(())
 }
 
 fn lint_file(path: &Path, parse_cfg: &ParseConfig) -> miette::Result<()> {

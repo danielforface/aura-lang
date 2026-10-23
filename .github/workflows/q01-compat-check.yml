@@ -1,0 +1,30 @@
+name: Q01 explicit compatibility type-check
+on:
+  push:
+    branches:
+      - 'qual/Q01-compat-explicit-typecheck'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compat-without-solver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: q01-explicit-check
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Check explicit non-proving CLI path
+        run: cargo test -p aura --locked --no-default-features --test compat_check -- --nocapture
+      - name: Execute compatibility fixture suite using explicit check
+        run: bash tools/compat/run.sh
+      - name: Ensure binary also builds with real solver feature
+        run: cargo check -p aura --locked --no-default-features --features z3

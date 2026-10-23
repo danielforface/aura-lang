@@ -39,3 +39,7 @@ The syntax-aware scan uses Aura's AST and the recursive `report::analyze_verify_
 `cargo test -p aura --locked --no-default-features --test native_contract_modes -- --nocapture` on Ubuntu (CI) covers false assertions in dev/release, a nested assertion, and a positive unannotated dev build. Record real RED and GREEN run IDs in `EVIDENCE_LOG.md`; the code change is unqualified until observed. Test with Z3-enabled proof success/failure and additional platforms in later bounded increments.
 
 **Release discipline:** keep this PR draft and stacked until reviewed; do not merge autonomously. Update `PROGRESS.md` and `CONTEXT_HANDOFF.md` whenever work advances.
+
+## Source-check compatibility note (issue #14, pending CI)
+
+A separate CLI command `aura check` is proposed for compatibility and IDE-like validation: parse/typecheck **only**, `formal verification NOT RUN`. `build --mode avm` is intentionally still a formal-verification gate and fails with missing Z3; the older `tools/compat/run.sh` is adapted to use `check` rather than relabel typecheck as proof. This non-proving compatibility path **passed scoped CI** in [run 39956263061](https://github.com/danielforface/aura-lang/actions/runs/39956263061): 3 CLI tests, 3 compatibility fixtures and Z3-feature cargo check. Its Draft PR #15 remains unmerged and under review; this is not proof of native output assurance.
