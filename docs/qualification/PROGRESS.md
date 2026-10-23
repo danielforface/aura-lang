@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-006-versioned-proof-report` (stacked on #15 → #13 → #11 → #9; none merged)  
+**Working branch:** `qual/Q01-005-typed-solver-unknown` (stacked on #17 → #15 → #13 → #11 → #9; unmerged)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-006 report-v2 CLI test suite GREEN and PR #17 IN_REVIEW; stage-wide Q01 soundness work remains open)  
+**Status:** **IN_PROGRESS** (report-v2 GREEN; typed SMT Unknown propagation source patch pending new CI)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3](https://github.com/danielforface/aura-lang/pull/11) → [#13 — Native](https://github.com/danielforface/aura-lang/pull/13) → [#15 — check](https://github.com/danielforface/aura-lang/pull/15) → [#17 — report v2](https://github.com/danielforface/aura-lang/pull/17). All remain Draft/unmerged. **Current issue:** [#16](https://github.com/danielforface/aura-lang/issues/16).  
-**Next planned task:** review Draft PR #17 (typed report-v2) in dependency order after #9/#11/#13/#15; then start separate Q01-005/006 typed solver-failure classification / exit-code semantics with negative cases, or cache/adversarial checks under Q04-004/Q08-005. No auto merges.
+**Next planned task:** validate typed solver Unknown propagation CI (including LSP), repair build/test failures, record real evidence; remaining timeout/unsupported classifications in later slices. No automatic merges.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -120,3 +120,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | AURA-Q01-006 (typed process exit codes) | NOT_STARTED | CLI still differentiates only success/non-success in scope of this patch; separate task |
 
 - **2026-10-23:** Source code SHA `8929561da7ef10ed65453145ff4542bf42ce2bb4`, Ubuntu: full dedicated workflow [run #39963769042](https://github.com/danielforface/aura-lang/actions/runs/39963769042) completed SUCCESS. `no-z3-report`: 2/2 v2 tests and 2/2 original fail-closed tests passed; `z3-report`: 2/2 passed (false assert classified `failed`, true proof `proved` with evidence). Report `ok` now derived from enum. **PR #17 Draft/unmerged; no Q01-wide qualification claim.** EV-039 is the execution evidence.
+
+- **2026-10-23:** [Issue #18](https://github.com/danielforface/aura-lang/issues/18) begun on stacked branch with typed VerifyFailureKind, direct Z3 Unknown propagation, v2 report mapping and unit/CLI regression checks. Parent #17 latest [CI 39965574132](https://github.com/danielforface/aura-lang/actions/runs/39965574132) PASS. New code test results **NOT YET OBSERVED**; no full taxonomy claim.

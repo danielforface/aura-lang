@@ -32,6 +32,8 @@ pub enum VerificationStatus {
     NotRun,
     InvalidInput,
     Failed,
+    /// SMT explicitly reported Unknown, neither proved nor refuted.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +147,13 @@ fn analyze_stmt(out: &mut TrustedSurface, stmt: &Stmt) {
     }
 }
 
+#[cfg(feature = "z3")]
+pub fn classify_verifier_failure(error: &aura_verify::VerifyError) -> (VerificationStatus, &'static str) {
+    match error.kind {
+        aura_verify::VerifyFailureKind::Failed => (VerificationStatus::Failed, "verification_failed"),
+        aura_verify::VerifyFailureKind::Unknown => (VerificationStatus::Unknown, "solver_unknown"),
+    }
+}
 pub fn write_verify_report(
     path: &Path,
     status: VerificationStatus,
@@ -360,4 +369,26 @@ fn display_path(path: &Path) -> String {
     }
 
     s
+}
+
+#[cfg(all(test, feature = "z3"))]
+mod typed_failure_tests {
+    use super::{classify_verifier_failure, VerificationStatus};
+    fn fixture(kind: aura_verify::VerifyFailureKind, message: &str) -> aura_verify::VerifyError {
+        aura_verify::VerifyError {
+            kind, message: message.to_string(),
+            span: aura_ast::Span::new(miette::SourceOffset::from(0usize), 0usize),
+            model: None, meta: None,
+        }
+    }
+    #[test]
+    fn structured_unknown_not_lost() {
+        assert_eq!(classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Unknown, "opaque")),
+            (VerificationStatus::Unknown, "solver_unknown"));
+    }
+    #[test]
+    fn textual_unknown_does_not_reclassify_failed() {
+        assert_eq!(classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Failed, "unknown in prose")),
+            (VerificationStatus::Failed, "verification_failed"));
+    }
 }

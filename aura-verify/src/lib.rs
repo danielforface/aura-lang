@@ -10,7 +10,7 @@ pub mod region_stdlib;
 #[cfg(feature = "z3")]
 pub mod geometry;
 
-pub use solver::{NoZ3Prover, Prover, SmtProfile, VerifyError};
+pub use solver::{NoZ3Prover, Prover, SmtProfile, VerifyError, VerifyFailureKind};
 pub use proof_summary::{ProofSummary, ProofResult, ModuleSummaryCache};
 pub use counterexample_mapper::{TypedValue, CounterexampleMapper};
 pub use variable_traces::{TraceCollector, VariableTrace, TraceEvent};

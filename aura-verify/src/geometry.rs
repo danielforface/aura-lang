@@ -403,8 +403,7 @@ pub fn verify_lumina_geometry(
 
     for (idx, root) in roots.iter().enumerate() {
         if let Some((span, why)) = find_obvious_overflow(root) {
-            return Err(VerifyError {
-                message: format!(
+            return Err(VerifyError { kind: Default::default(), message: format!(
                     "Lumina Sentinel: geometry overflow on {}x{}: {}",
                     SCREEN_W, SCREEN_H, why
                 ),
@@ -429,12 +428,15 @@ pub fn verify_lumina_geometry(
         let v = mk_vars(ctx, &format!("ui_root_{idx}"));
         constrain_node(ctx, &solver, root, &format!("ui_root_{idx}"), &v, None);
 
-        match solver.check() {
+        let solver_result = solver.check();
+        let was_unknown = matches!(solver_result, SatResult::Unknown);
+        match solver_result {
             SatResult::Sat => {}
             SatResult::Unsat | SatResult::Unknown => {
                 return Err(VerifyError {
+                    kind: if was_unknown { crate::solver::VerifyFailureKind::Unknown } else { Default::default() },
                     message: format!(
-                        "Lumina Sentinel: geometry constraints are unsatisfiable for screen {}x{}",
+                        "Lumina Sentinel: geometry constraints were not established for screen {}x{}",
                         SCREEN_W, SCREEN_H
                     ),
                     span: root.span,
@@ -483,8 +485,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
         solver.assert(&rv.ge(&Int::from_i64(ctx, 0)));
         solver.assert(&rv.le(&Int::from_i64(ctx, 64)));
         if !matches!(solver.check(), SatResult::Sat) {
-            return Err(VerifyError {
-                message: "Lumina Style: radius must be within 0..64".to_string(),
+            return Err(VerifyError { kind: Default::default(), message: "Lumina Style: radius must be within 0..64".to_string(),
                 span: sp,
                 model: None,
                 meta: Some(DiagnosticMetadata {
@@ -510,8 +511,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
         solver.assert(&pv.ge(&Int::from_i64(ctx, 0)));
         solver.assert(&pv.le(&Int::from_i64(ctx, 128)));
         if !matches!(solver.check(), SatResult::Sat) {
-            return Err(VerifyError {
-                message: "Lumina Style: padding must be within 0..128".to_string(),
+            return Err(VerifyError { kind: Default::default(), message: "Lumina Style: padding must be within 0..128".to_string(),
                 span: sp,
                 model: None,
                 meta: Some(DiagnosticMetadata {
@@ -554,8 +554,7 @@ fn verify_node_aesthetics(node: &UiGeomNode, ctx: &Context) -> Result<(), Verify
             solver.assert(&lhs.ge(&rhs));
 
             if !matches!(solver.check(), SatResult::Sat) {
-                return Err(VerifyError {
-                    message: format!(
+                return Err(VerifyError { kind: Default::default(), message: format!(
                         "Lumina Style: insufficient contrast between fg='{}' and bg='{}' (requires >= 4.5:1)",
                         fg_name, bg_name
                     ),
