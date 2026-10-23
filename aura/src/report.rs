@@ -174,6 +174,18 @@ fn analyze_verify_stmt(assumptions: &mut Vec<SpanRange>, obligations: &mut Vec<S
                 analyze_verify_stmt(assumptions, obligations, st);
             }
         }
+        // A native assurance gate must not miss contracts nested in these
+        // syntactic bodies even if an unexpanded macro will not be emitted.
+        Stmt::MacroDef(m) => {
+            for st in &m.body.stmts {
+                analyze_verify_stmt(assumptions, obligations, st);
+            }
+        }
+        Stmt::Render(r) => {
+            for st in &r.body.stmts {
+                analyze_verify_stmt(assumptions, obligations, st);
+            }
+        }
         Stmt::UnsafeBlock(UnsafeBlock { body, .. }) => {
             for st in &body.stmts {
                 analyze_verify_stmt(assumptions, obligations, st);

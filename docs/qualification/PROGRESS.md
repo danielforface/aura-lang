@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-001-002-fail-closed-verify` (stacked on program branch; R0 Draft PR #9 remains unmerged)  
-**Active gate:** **Q00 — Baseline, governance and continuity**  
-**Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (Q01-001/002 validated in no-Z3 CI; PR #11 awaits review, not merged)  
+**Working branch:** `qual/Q01-003-004-native-contract-gate` (stacked on Q01-001/002 Draft PR #11, itself stacked on R0 Draft PR #9)  
+**Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
+**Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
+**Status:** **IN_PROGRESS** (Q01-001/002 GREEN and IN_REVIEW; Q01-003/004 RED→GREEN on Ubuntu/no-Z3, now testing proof-enabled path; PRs unmerged)  
 **Release:** none created in this work; no new stable-language claim.  
-**Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
-**Next planned task:** obtain maintainer review for PR #11 (Q01-001/002 test suite GREEN); begin the separate AURA-Q01-003/004 assertion-and-contract-mode investigation in a new stacked Draft PR, without merging either PR.
+**Draft PR stack:** [#9 — R0 program](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3 verify](https://github.com/danielforface/aura-lang/pull/11) → [#13 — native contract gate](https://github.com/danielforface/aura-lang/pull/13). All remain draft/unmerged. **Active issue:** [#12](https://github.com/danielforface/aura-lang/issues/12); compatibility blocker [#14](https://github.com/danielforface/aura-lang/issues/14).  
+**Next planned task:** observe new proof-enabled C native Z3 tests in PR #13; fix any real failures, record evidence, then reproduce issue #14 AVM/no-Z3 compatibility. Keep all PRs unmerged and plan immutable.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -17,7 +17,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Gate | Track | State | Verified exit evidence |
 |---|---|---|---|
 | Q00 | Governance, baseline and continuity | IN_PROGRESS | PENDING |
-| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Fail-closed CLI tests being introduced; initial red CI required |
+| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Q01-001/002 RED→GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082); Q01-003/004 native gate patch CI pending |
 | Q02 | Typed numeric semantics | NOT_STARTED | PENDING |
 | Q03 | Composite/IR/backend fidelity | NOT_STARTED | PENDING |
 | Q04 | Formal soundness and trust accounting | NOT_STARTED | PENDING |
@@ -80,7 +80,19 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 |---|---|---|
 | AURA-Q01-001 | IN_REVIEW | Baseline RED [39927640657](https://github.com/danielforface/aura-lang/actions/runs/39927640657); patch GREEN [39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082), `verify` without Z3 nonzero exit with explicit error. PR #11 remains unmerged. |
 | AURA-Q01-002 | IN_REVIEW | Same paired runs; `--report` now sets `ok:false`, error names Z3, verify evidence null; two/2 tests pass. |
-| AURA-Q01-003 | NOT_STARTED | Mode-contract semantics and profile boundaries remain unresolved. |
-| AURA-Q01-004 | NOT_STARTED | Runtime/native lowering of assertions/contracts remains unresolved. |
+| AURA-Q01-003 | IN_PROGRESS | [Issue #12](https://github.com/danielforface/aura-lang/issues/12): test-first native dev/release build assurance matrix; semantic policy pending red baseline. |
+| AURA-Q01-004 | IN_PROGRESS | [Issue #12](https://github.com/danielforface/aura-lang/issues/12): test C emission cannot silently erase unverified assertions; expected initial RED, not yet observed. |
 
 - **2026-10-23 (GREEN confirmed):** [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) completed SUCCESS at SHA `4868112391d19bfa3a665a8a87edaf870a86cb24`, Ubuntu, `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`: **2 passed, 0 failed**, following baseline **0 passed, 2 failed** at `9c6172a`. Patch still only IN_REVIEW; no release or merge. See EV-026.
+
+- **2026-10-23 (Q01 native-contract test-first start):** opened [issue #12](https://github.com/danielforface/aura-lang/issues/12), new stacked branch `qual/Q01-003-004-native-contract-gate` based on Q01 #11 head `ab23a7b`. Added native build integration regression tests and GitHub Actions workflow, **no native source fix in the test-first commit**. Baseline test result NOT RUN at commit creation; record observed RED before selecting production patch. Current root PR #9, Q01 PR #11 remain unmerged; do not merge without user consent.
+
+- **2026-10-23 (Q01-003/004 initial implementation):** [Draft PR #13](https://github.com/danielforface/aura-lang/pull/13) contains test-first branch based on PR #11; proposed minimal fail-closed C/WASM build guard for detected AST contracts/assertions. It re-proves annotated programs before C/WASM emission when Z3 exists, rejects annotated native build when Z3 absent and bypasses artifact cache on contract-bearing/bridge programs so cache hits cannot skip guard. Preserves unannotated `dev` builds. **Baseline CI and patch CI: NOT YET OBSERVED at implementation time**; do not mark VERIFIED. Scope does not cover *all* IR-implicit obligations or full runtime/profile semantics. See issue #12.
+
+- **2026-10-23 (Q01 interim policy and scanner hardening):** added `docs/qualification/Q01_NATIVE_ASSURANCE_POLICY.md` with explicit native C/WASM profile table and limitations; hardened `report::analyze_verify_surface` to traverse macro-definition and render bodies; added nested-assert real-CLI negative test. Latest CI on this new commit **NOT YET OBSERVED**. Earlier baseline and first implementation CI may be superseded; all gate states remain IN_PROGRESS pending real tests and review.
+
+- **2026-10-23 (Q01 real CI triage):** [baseline run #39938385042](https://github.com/danielforface/aura-lang/actions/runs/39938385042) at test-only `794a83c` built and executed 3 native CLI tests: **1 passed / 2 failed** as expected: both `dev` and `release` accepted an unprovable assertion with exit 0, while contract-free native build succeeded. This is runtime-reproduced EV-030. Patch runs at `5c7f050` and `eff15d7` failed to compile (`E0277` from accidentally wrapping `miette::Report` in `miette::Report::new` at cache parse); **NOT VALIDATING FIX**. New commit removes double-wrapping and moves C-bridge cache bypass before augmented-text parsing; pending fresh CI. **Q01-003/004 remain IN_PROGRESS**.
+
+- **2026-10-23 (Q01 compatibility risk):** opened [issue #14](https://github.com/danielforface/aura-lang/issues/14) for *not-yet-reproduced* regression risk in `tools/compat/run.sh`: it uses no-Z3 `aura build --mode avm`, but fail-closed `verify_file` is invoked unconditionally on that path. Preserve fail-closed verification; provide separate typecheck compatibility semantics or real verifier test, with observed CI. Streamlined native CI workflow to avoid duplicate push+stacked-PR runs, and enabled the repository's existing Rust cache action for future repeated test iterations. Latest patched build test status requires fresh GitHub check; not VERIFIED.
+
+- **2026-10-23 (Q01-003/004 GREEN confirmed):** [post-E0277 fix run 39948322245](https://github.com/danielforface/aura-lang/actions/runs/39948322245) at `da39c0c` completed SUCCESS (Ubuntu, `cargo test -p aura --locked --no-default-features --test native_contract_modes -- --nocapture`): **4 passed, 0 failed**. Baseline at `794a83c` [run 39938385042](https://github.com/danielforface/aura-lang/actions/runs/39938385042): **1 passed, 2 failed** due to native dev/release false-assert success. Test coverage still only no-Z3 native C paths and does not prove LLVM/WASM/caching/SMT model correctness. Added Z3-enabled positive and negative C native tests and CI job in a new commit; result **NOT RUN** at creation, so Q01-003/004 stays IN_PROGRESS.
