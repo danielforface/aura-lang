@@ -1,15 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Issue #14 CLI + compat + Z3-feature build GREEN; PR #15 review pending)  
+**Updated at:** 2026-10-23 (Q01-006 report v2 implementation/CI pending; previous PR #15 fully GREEN)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-compat-explicit-typecheck` (stacked on Q01 native contract PR #13, itself on #11 and R0 #9)  
+**Current working branch:** `qual/Q01-006-versioned-proof-report` (stacked on #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
-**Current focused scope:** [issue #14](https://github.com/danielforface/aura-lang/issues/14) — honest no-Z3 parse/typecheck compatibility through new `aura check`, with regression tests. Parent [PR #13](https://github.com/danielforface/aura-lang/pull/13) Q01-003/004 had Z3/no-Z3 jobs GREEN; #11/#9 remain draft. No autonomous merge.  
-**Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15), all DRAFT/unmerged; active branch is `qual/Q01-compat-explicit-typecheck`.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/14 (compatibility and honest non-proving check); previous issue #12 native gate now has narrow Z3/no-Z3 CI success on #13.  
-**Source of truth for current HEAD/CI:** always fetch the latest `qual/Q01-compat-explicit-typecheck` branch and [Draft PR #15](https://github.com/danielforface/aura-lang/pull/15) directly; literal historical SHAs in later journal sections are *not* current HEAD.  
+**Current focused scope:** [issue #16](https://github.com/danielforface/aura-lang/issues/16), narrow `AURA-Q01-006` typed machine-readable verification report and serializer truthfulness. Previous issue #14/PR #15 passed CI; all parent PRs remain unmerged.  
+**Draft PR chain:** #9 → #11 → #13 → #15 → issue #16 branch (new Draft PR to open), each stacked on previous; all unmerged.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/16 (typed proof report v2, AURA-Q01-006); issue #14 compatibility was GREEN in CI but not merged.  
+**Source of truth for current HEAD/CI:** fetch live `qual/Q01-006-versioned-proof-report` branch/PR via GitHub; historical SHAs in this journal are not current HEAD. GitHub permissions must be checked in a fresh chat.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -190,3 +190,9 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 - `bash tools/compat/run.sh` **PASSED** on all three existing fixtures `basic_math.aura`, `smoke.aura`, `vector_basic.aura`. Each `aura check` stdout explicitly said **formal verification NOT RUN**. `cargo check -p aura --locked --no-default-features --features z3` also completed successfully. GitHub logged all three step conclusions success. Evidence [EV-037](EVIDENCE_LOG.md). No unsupported claim about AVM runtime execution or semantic parity.
 - [Draft PR #15](https://github.com/danielforface/aura-lang/pull/15) is now **IN_REVIEW** based on scoped GREEN code-CI; the stack remains [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → #15. **All four PRs unmerged**; no permission to merge automatically. Q01 stage as a whole is still IN_PROGRESS (implicit obligations/cache and full proof statuses not qualified).
 - **Next safe action in a new chat:** re-fetch actual GitHub branches/PR/CI and this handoff, review dependency-ordered PRs, request maintainer approval before merges. If continuing engineering without merging, create a new narrowly scoped branch from current validated #15 head for the next Q01 gap (explicit proof status taxonomy, cache negative tests). Keep frozen master unmodified; use test-first and update PROGRESS+CONTEXT_HANDOFF+EVIDENCE_LOG with every increment. Never interpret `check` success as proof.
+
+## 23. Typed, versioned verification-report work begun (2026-10-23)
+
+- Prior [PR #15](https://github.com/danielforface/aura-lang/pull/15) is still DRAFT/unmerged. [Workflow run 39960113689](https://github.com/danielforface/aura-lang/actions/runs/39960113689) on its latest earlier SHA `a4dd08b` completed SUCCESS. All upstream PRs #9/#11/#13/#15 stayed unmerged; **maintainer consent is required to merge**, but not to continue proposing focused branches.
+- Created [issue #16](https://github.com/danielforface/aura-lang/issues/16) and stacked branch `qual/Q01-006-versioned-proof-report` from PR #15. The original report `schema=aura.trusted-core.v1` only had independent boolean `ok`/error; new bounded v2 serialized `status` enum is `proved|not_run|invalid_input|failed` with `reason_code`, deriving `ok` exclusively from typed result, and rejecting inconsistent proof evidence. Adds `docs/qualification/VERIFY_REPORT_STATUS_V2.md`, real-CLI Z3/no-Z3 tests and Actions workflow. DOES NOT categorize solver timeouts/unknown/cancellation automatically; further Q01-005 work remains.
+- **At code commit: new CI NOT YET OBSERVED.** The next chat or this one must fetch new issue #16 Draft PR/head CI logs, fix any Rust compilation, report mapping or fixture failures until GREEN; never claim success before logs. Continue updating PROGRESS+this handoff and append-only evidence; never modify frozen `MASTER_ROADMAP_V1.md`. Do not merge without user authorization.

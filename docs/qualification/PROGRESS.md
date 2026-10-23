@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-compat-explicit-typecheck` (stacked on #13 native-contract gate → #11 verifier → #9 program)  
+**Working branch:** `qual/Q01-006-versioned-proof-report` (stacked on #15 → #13 → #11 → #9; none merged)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-001/002 and native Q01-003/004 tested paths GREEN; issue #14 compatibility GREEN and PR #15 IN_REVIEW; no merges/releases)  
+**Status:** **IN_PROGRESS** (earlier CLI/native/compatibility slices GREEN; new Q01-006 proof-report schema v2 patch requires CI validation)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3 verify](https://github.com/danielforface/aura-lang/pull/11) → [#13 — native contracts](https://github.com/danielforface/aura-lang/pull/13) → [#15 — explicit typecheck compatibility](https://github.com/danielforface/aura-lang/pull/15). All unmerged. **Current issue:** [#14](https://github.com/danielforface/aura-lang/issues/14).  
-**Next planned task:** conduct stacked PR #9 → #11 → #13 → #15 review/approval without automatic merge, and prepare the next narrow Q01 safety task (proof status/assurance taxonomy and cache negative tests). Keep Q01 gate itself IN_PROGRESS until all frozen requirements evidenced.
+**Next planned task:** validate issue #16 typed report-v2 statuses in real CLI with and without Z3, repair any CI failures, then record evidence and seek maintainer review without merging; keep Q01-005 advanced solver statuses open.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -108,3 +108,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - This is a successful **scoped compatibility slice**, not language release or full verification soundness. PR #9, #11, #13 and #15 remain draft/unmerged; user approval required for merge. The later documentation-only SHA `3718da7` run may have a separate CI status; check latest head before review.
 
 - **2026-10-23 (handoff robustness):** removed a stale literal `#13` HEAD pointer from top of CONTEXT_HANDOFF; opening a new chat must fetch current PR #15 and branch HEAD live, since updating the handoff itself necessarily creates another commit. Current compatibility code acceptance is EV-037 (GREEN), PR #15 remains draft/unmerged. No code or scope change.
+
+- **2026-10-23 (Q01-006 schema-v2 work started):** prior [PR #15](https://github.com/danielforface/aura-lang/pull/15) later-head Actions [run 39960113689](https://github.com/danielforface/aura-lang/actions/runs/39960113689) observed SUCCESS; all #9/#11/#13/#15 still DRAFT and unmerged. Created issue [#16](https://github.com/danielforface/aura-lang/issues/16), new stacked branch `qual/Q01-006-versioned-proof-report`; proposed typed four-way report status, derived `ok`, `reason_code`, schema v2, and real CLI positive/negative tests for Z3 and missing Z3. **New patch tests NOT RUN at commit creation**, cannot mark status accepted until actual CI. Full Q01-005 taxonomy remains open.
