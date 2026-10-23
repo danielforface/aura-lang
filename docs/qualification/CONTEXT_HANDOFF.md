@@ -9,7 +9,7 @@
 **Current focused scope:** [issue #14](https://github.com/danielforface/aura-lang/issues/14) — honest no-Z3 parse/typecheck compatibility through new `aura check`, with regression tests. Parent [PR #13](https://github.com/danielforface/aura-lang/pull/13) Q01-003/004 had Z3/no-Z3 jobs GREEN; #11/#9 remain draft. No autonomous merge.  
 **Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15), all DRAFT/unmerged; active branch is `qual/Q01-compat-explicit-typecheck`.  
 **Current issue:** https://github.com/danielforface/aura-lang/issues/14 (compatibility and honest non-proving check); previous issue #12 native gate now has narrow Z3/no-Z3 CI success on #13.  
-**Current working-branch head at time of this note:** `047921439bcb6ac116c8c1f4e7518ba76af67db0` (preceding this documentation-sync commit); fetch actual #13 head and CI on resumption.  
+**Source of truth for current HEAD/CI:** always fetch the latest `qual/Q01-compat-explicit-typecheck` branch and [Draft PR #15](https://github.com/danielforface/aura-lang/pull/15) directly; literal historical SHAs in later journal sections are *not* current HEAD.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
