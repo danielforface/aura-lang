@@ -6,7 +6,6 @@ on:
       - 'qual/Q01-003-004-native-contract-gate'
   pull_request:
     branches:
-      - 'qual/Q01-001-002-fail-closed-verify'
       - 'program/aura-long-horizon-qualification-v1'
       - main
   workflow_dispatch:
@@ -21,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Reuse the same Rust cache action already trusted in Core CI.
+      - uses: Swatinem/rust-cache@v2
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
