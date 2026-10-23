@@ -20,8 +20,8 @@ if [ ${#FILES[@]} -eq 0 ]; then
 fi
 
 for f in "${FILES[@]}"; do
-  echo "-- build (avm): $f"
-  cargo run -q -p aura --locked --no-default-features -- build "$f" --mode avm
+  echo "-- syntax/type check (not a formal proof): $f"
+  cargo run -q -p aura --locked --no-default-features -- check "$f"
 done
 
 echo "OK"

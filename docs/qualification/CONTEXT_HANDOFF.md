@@ -1,14 +1,14 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01-003/004 native no-Z3 GREEN; Z3 proof-path CI test-first pending)  
+**Updated at:** 2026-10-23 (both Z3/no-Z3 native green; issue #14 explicit check implementation awaiting CI)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
+**Current working branch:** `qual/Q01-compat-explicit-typecheck` (stacked on Q01 native contract PR #13, itself on #11 and R0 #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 still in review; Q01/R1 no-Z3 repair IN_REVIEW with GREEN tests, native contract-mode tests IN_PROGRESS; **release:** none.  
-**Scope of this focused branch:** [Draft PR #13](https://github.com/danielforface/aura-lang/pull/13) / [issue #12](https://github.com/danielforface/aura-lang/issues/12), tasks AURA-Q01-003/004; inherited PR #11 Q01-001/002 and R0 PR #9. Compatibility issue #14 remains open. No autonomous merge.  
-**Draft PR chain:** #9 → #11 → #13, all OPEN/DRAFT/unmerged; current branch is head of #13.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/12 (P0 native contract assurance); additional regression risk https://github.com/danielforface/aura-lang/issues/14.  
+**Current focused scope:** [issue #14](https://github.com/danielforface/aura-lang/issues/14) — honest no-Z3 parse/typecheck compatibility through new `aura check`, with regression tests. Parent [PR #13](https://github.com/danielforface/aura-lang/pull/13) Q01-003/004 had Z3/no-Z3 jobs GREEN; #11/#9 remain draft. No autonomous merge.  
+**Draft PR chain:** #9 → #11 → #13 → (issue #14 branch PR to open), all unmerged; current branch is `qual/Q01-compat-explicit-typecheck`.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/14 (compatibility and honest non-proving check); previous issue #12 native gate now has narrow Z3/no-Z3 CI success on #13.  
 **Current working-branch head at time of this note:** `047921439bcb6ac116c8c1f4e7518ba76af67db0` (preceding this documentation-sync commit); fetch actual #13 head and CI on resumption.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
@@ -170,3 +170,10 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 - [CI run 39948322245](https://github.com/danielforface/aura-lang/actions/runs/39948322245) at code commit `da39c0cd9d63f562a838b51a76f00057e9083c7b` **PASSED**, logging all four real-CLI Ubuntu/no-Z3 tests: false assert rejected in `dev`, `release`, nested `if`; no-contract dev build allowed. Compare baseline RED [39938385042](https://github.com/danielforface/aura-lang/actions/runs/39938385042), **1/3 passed**. EV-033 captures measured result. **Still not a full qualification:** no real Z3 positive proof, verifier soundness, cache poisoning or unsupported backend semantics established by these four tests.
 - Added `aura/tests/native_contract_z3.rs` (3 real CLI cases with Z3: true assertion accepted, false assertion rejected in dev/release) and a separate Ubuntu Actions job installing `libz3-dev`; results **NOT RUN at commit creation**. Goal is to test the proof-enabled branch of the new native gate, not to claim all verification is sound.
 - **Next safe action:** check current PR #13 run(s), look at both no-Z3 and Z3 job results. If solver runtime/dependency or proof mismatch occurs, diagnose with actual logs, then fix minimally; document every observation. After that, reproduce [issue #14](https://github.com/danielforface/aura-lang/issues/14) no-Z3 `tools/compat/run.sh` regression and make compatible semantics explicit. Keep PR #9/#11/#13 Draft/unmerged; do not edit frozen plan.
+
+## 20. Q01-003/004 Z3 AND no-Z3 GREEN; issue #14 explicit compatibility check implementation (2026-10-23)
+
+- [GitHub run 39949851377](https://github.com/danielforface/aura-lang/actions/runs/39949851377) on PR #13 source `28fe3ccb3a01695589bec9bde2ae98e3067cd683`: Z3 job **3 passed/0 failed** (provable assertion accepted in dev, false assertion rejected in dev and release); no-Z3 job **4 passed/0 failed** (C dev/release/nested false assertion rejected and unannotated dev build succeeded). This narrows previously open Q01 contract-path concerns, but does not prove completeness of implicit obligations, C soundness, caching, AVM run or all target combinations. Evidence EV-034.
+- Initiated issue [#14](https://github.com/danielforface/aura-lang/issues/14) on a dedicated *stacked* branch `qual/Q01-compat-explicit-typecheck` branched from PR #13; no prior PRs merged. The old `tools/compat/run.sh` called `aura build --mode avm` with `--no-default-features`, but that mode demands `verify_file` and now refuses to lie without a solver. **We must preserve that refusal** and use an explicitly non-proving validation path for syntax/type compatibility.
+- New CLI `aura check` (in `aura/src/main.rs`) uses the same parser and semantic checker with range proofs deferred, but does not invoke SMT or represent unproved code as verified; stdout explicitly states `formal verification NOT RUN`. `tools/compat/run.sh` now calls `aura check`. Added `aura/tests/compat_check.rs` for well-typed false `assert` accepted as typechecked-but-NOT-proved, invalid syntax rejected, and AVM build still failing closed without Z3. Added `.github/workflows/q01-compat-check.yml` to execute tests, full fixture suite and solver-feature compile check.
+- **New branch CI: NOT YET OBSERVED at implementation commit;** cannot claim the compatibility bug was dynamically reproduced or fixed until actual CLI/workflow results. Next: open stacked draft PR against `qual/Q01-003-004-native-contract-gate`, inspect CI logs, fix failures iteratively to GREEN, record evidence, update progress/handoff with each change. Never change frozen roadmap or merge automatically.

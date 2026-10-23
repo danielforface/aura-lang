@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-23  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-003-004-native-contract-gate` (stacked on Q01-001/002 Draft PR #11, itself stacked on R0 Draft PR #9)  
+**Working branch:** `qual/Q01-compat-explicit-typecheck` (stacked on #13 native-contract gate → #11 verifier → #9 program)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-001/002 GREEN and IN_REVIEW; Q01-003/004 RED→GREEN on Ubuntu/no-Z3, now testing proof-enabled path; PRs unmerged)  
+**Status:** **IN_PROGRESS** (Q01-001/002 no-Z3 GREEN; Q01-003/004 no-Z3 and Z3 GREEN; explicit-check compatibility patch in CI, PRs unmerged)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0 program](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3 verify](https://github.com/danielforface/aura-lang/pull/11) → [#13 — native contract gate](https://github.com/danielforface/aura-lang/pull/13). All remain draft/unmerged. **Active issue:** [#12](https://github.com/danielforface/aura-lang/issues/12); compatibility blocker [#14](https://github.com/danielforface/aura-lang/issues/14).  
-**Next planned task:** observe new proof-enabled C native Z3 tests in PR #13; fix any real failures, record evidence, then reproduce issue #14 AVM/no-Z3 compatibility. Keep all PRs unmerged and plan immutable.
+**Next planned task:** validate Q01 check/compatibility patch using real CLI tests and `tools/compat/run.sh` on stacked branch, repair until GREEN; then inspect stacked PRs for acceptance without merging and pursue any remaining Q01 P0 gaps.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -96,3 +96,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23 (Q01 compatibility risk):** opened [issue #14](https://github.com/danielforface/aura-lang/issues/14) for *not-yet-reproduced* regression risk in `tools/compat/run.sh`: it uses no-Z3 `aura build --mode avm`, but fail-closed `verify_file` is invoked unconditionally on that path. Preserve fail-closed verification; provide separate typecheck compatibility semantics or real verifier test, with observed CI. Streamlined native CI workflow to avoid duplicate push+stacked-PR runs, and enabled the repository's existing Rust cache action for future repeated test iterations. Latest patched build test status requires fresh GitHub check; not VERIFIED.
 
 - **2026-10-23 (Q01-003/004 GREEN confirmed):** [post-E0277 fix run 39948322245](https://github.com/danielforface/aura-lang/actions/runs/39948322245) at `da39c0c` completed SUCCESS (Ubuntu, `cargo test -p aura --locked --no-default-features --test native_contract_modes -- --nocapture`): **4 passed, 0 failed**. Baseline at `794a83c` [run 39938385042](https://github.com/danielforface/aura-lang/actions/runs/39938385042): **1 passed, 2 failed** due to native dev/release false-assert success. Test coverage still only no-Z3 native C paths and does not prove LLVM/WASM/caching/SMT model correctness. Added Z3-enabled positive and negative C native tests and CI job in a new commit; result **NOT RUN** at creation, so Q01-003/004 stays IN_PROGRESS.
+
+- **2026-10-23 (Z3 native GREEN observed, issue #14 repair begun):** [run 39949851377](https://github.com/danielforface/aura-lang/actions/runs/39949851377) on SHA `28fe3cc` passed BOTH jobs: real Z3 native C acceptance/rejection **3/3** and no-Z3 native contract checks **4/4**. Baseline RED→GREEN evidence preserved. Started issue [#14](https://github.com/danielforface/aura-lang/issues/14) on separate stacked `qual/Q01-compat-explicit-typecheck`: introduced `aura check` that only parses/type-checks and explicitly says *formal verification NOT RUN*, and adapted `tools/compat/run.sh` to use it rather than `build --mode avm` which requires a real solver. Added negative/positive CLI tests and a CI workflow. **Issue #14 patch tests NOT RUN at this commit; no false success claim.**
