@@ -1,7 +1,7 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01-003/004 initial fail-closed C/WASM patch; CI not yet confirmed)  
+**Updated at:** 2026-10-23 (Q01-003/004 native assurance policy and scanner hardening; CI verification pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
@@ -140,3 +140,9 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 - Implementation changes `aura/src/main.rs` in two paths: `build_cached` parses augmented source and skips cache for detected assurance constructs or C bridge headers; the actual `build` path, after semantic analysis and before IR lowering, calls the Z3 verifier when native C/WASM code contains assumptions/obligations, or returns an explicit error when the binary lacks Z3. This prevents the known silent contract-drop route in no-Z3 dev/release and blocks production codegen without proof for annotated C/WASM. Contract-free dev build remains possible.
 - Caveats: this is a *conservative interim gate*, not a proof of full compiler soundness. It does not yet address implicit non-AST refinement obligations, compiler/SMT semantics mismatches, complex extern interactions, implicit bridging trust, or taxonomy of verifier outcomes. `--profile verify` may prove twice on contract-bearing native source; performance to optimize after safety. Cache is deliberately bypassed for bridged input until full cache inputs are sound (Q08-005).
 - **Next safe action:** check PR #13 GitHub Actions baseline first-commit RED (confirm expected semantics) and patched GREEN at new head. If test harness/compile fails, fix and rerun; inspect actual reports and verify all 3 tests. Append measured evidence and update PROGRESS + handoff in same change. Keep PR #9 and PR #11 unmerged until maintainer authorization; leave PR #13 draft and stacked. NEVER edit frozen roadmap.
+
+## 15. Additional bounded Q01 refinement (2026-10-23)
+
+- Created `docs/qualification/Q01_NATIVE_ASSURANCE_POLICY.md`: exact *interim* C/WASM matrix for dev/release/verify with and without Z3, cache bypass, AVM/LLVM exclusions and explicit non-guarantees. This note is not a normative frozen roadmap amendment.
+- Hardened `aura/src/report.rs` `analyze_verify_surface` to walk `MacroDef` and `Render` bodies (which contain nested blocks) rather than overlooking their assertions/assumptions. Added nested conditional assertion negative test to `aura/tests/native_contract_modes.rs`.
+- **At commit creation:** initial baseline workflow and patched workflow were still compiling; the latest code's CI has **NOT BEEN VERIFIED**. On resume, fetch all PR #13 run statuses, check baseline RED and latest GREEN, archive precise outputs in EVIDENCE_LOG; if failing, fix and rerun. Check stacked R0 #9, Q01 #11 and #13 branches; none merged automatically.

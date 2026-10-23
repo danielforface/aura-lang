@@ -47,3 +47,19 @@ fn contract_free_dev_native_build_remains_available_without_z3() {
     assert!(out.status.success(), "contract-free dev build should succeed: stdout={}, stderr={}",
         String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn nested_assert_is_not_silently_discarded_from_native_build() {
+    let f = Fixture::new("    if true:\n        assert false\n");
+    let out = f.build("dev");
+    assert!(
+        !out.status.success(),
+        "nested false assert was erased; status={:?}; stdout={}, stderr={}",
+        out.status, String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    assert!(
+        stderr.contains("verif") || stderr.contains("assert") || stderr.contains("contract") || stderr.contains("z3"),
+        "must reject for assurance, not unrelated syntax/backend failure: {stderr}"
+    );
+}
