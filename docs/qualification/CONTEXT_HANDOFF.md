@@ -1,7 +1,7 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (beginning Q01-003/004 native build negative tests)  
+**Updated at:** 2026-10-23 (Q01-003/004 initial fail-closed C/WASM patch; CI not yet confirmed)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-003-004-native-contract-gate` (stacked upon `qual/Q01-001-002-fail-closed-verify` PR #11, itself stacked on R0 PR #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
@@ -133,3 +133,10 @@ The latest GitHub files, not memory, are the source of continuity. See `OPERATIN
 **Test-only increment:** new `aura/tests/native_contract_modes.rs` and `.github/workflows/q01-native-contract-gate.yml` exercise real CLI `build --mode hybrid --backend c` under no-Z3 `dev`/`release` with an explicitly false assertion, plus a positive contract-free dev build. Test-first CI is expected RED on unsafe branches but status NOT RUN at document creation. No implementation changes were made in this commit.
 
 **Immediate next safe action:** fetch latest Q01-003/004 CI run and per-test stdout/stderr; distinguish verified false-success from fixture/C compile errors. If RED proves defect, choose minimal fail-closed interim assurance gate (native C/WASM must prove obligations or reject; preserve unannotated build). **Check cache-hit and alternate native build paths**, do not use source regex as a surrogate for syntax tree. Update progress + this handoff + evidence in each commit; do not mutate frozen master roadmap or merge PRs autonomously. Once work is validated, open/update Draft PR against `qual/Q01-001-002-fail-closed-verify`, then review stacked merge order.
+
+## 14. Q01-003/004 native C/WASM interim gate implementation (2026-10-23)
+
+- [Draft PR #13](https://github.com/danielforface/aura-lang/pull/13) targets the previous Q01 branch; [issue #12](https://github.com/danielforface/aura-lang/issues/12) defines acceptance. Test-only commit `794a83c2de7e0813cd1952772b8203c3850d8b3d` contains 3 real-CLI tests and an Actions workflow (expected first RED). **Actual baseline CI had not yet completed at the time of implementation**. Do not assert reproduction without inspecting output.
+- Implementation changes `aura/src/main.rs` in two paths: `build_cached` parses augmented source and skips cache for detected assurance constructs or C bridge headers; the actual `build` path, after semantic analysis and before IR lowering, calls the Z3 verifier when native C/WASM code contains assumptions/obligations, or returns an explicit error when the binary lacks Z3. This prevents the known silent contract-drop route in no-Z3 dev/release and blocks production codegen without proof for annotated C/WASM. Contract-free dev build remains possible.
+- Caveats: this is a *conservative interim gate*, not a proof of full compiler soundness. It does not yet address implicit non-AST refinement obligations, compiler/SMT semantics mismatches, complex extern interactions, implicit bridging trust, or taxonomy of verifier outcomes. `--profile verify` may prove twice on contract-bearing native source; performance to optimize after safety. Cache is deliberately bypassed for bridged input until full cache inputs are sound (Q08-005).
+- **Next safe action:** check PR #13 GitHub Actions baseline first-commit RED (confirm expected semantics) and patched GREEN at new head. If test harness/compile fails, fix and rerun; inspect actual reports and verify all 3 tests. Append measured evidence and update PROGRESS + handoff in same change. Keep PR #9 and PR #11 unmerged until maintainer authorization; leave PR #13 draft and stacked. NEVER edit frozen roadmap.

@@ -1246,6 +1246,26 @@ fn build_cached(
     }
     combined = augment_with_sdk_std(&combined)?;
 
+    // Q01-003/004: a cache hit cannot bypass the assurance gate for proof-bearing
+    // source. Bridge input is also excluded until cache dependency/assurance keys
+    // are fully specified (Q08-005). Prefer safety over premature caching.
+    let cache_parse = aura_parse::parse_source_with_config(&combined, parse_cfg)
+        .map_err(miette::Report::new)?;
+    let (assumptions, obligations) = report::analyze_verify_surface(&cache_parse);
+    if !bridge_headers.is_empty() || !assumptions.is_empty() || !obligations.is_empty() {
+        return build(
+            path,
+            parse_cfg,
+            backend,
+            bridge_headers,
+            link_dirs,
+            link_libs,
+            nexus_plugins,
+            optimize,
+            smt_profile,
+        );
+    }
+
     let mut hasher = sha2::Sha256::new();
     hasher.update(combined.as_bytes());
     if let Some(ed) = &parse_cfg.edition {
@@ -1837,6 +1857,34 @@ fn build(
     checker
         .check_program(&program)
         .map_err(|e| miette::Report::new(e).with_source_code(source.clone()))?;
+
+    // Until native runtime checks are specified, contract/assert statements
+    // that would be erased by IR lowering must be formally discharged before
+    // producing C/WASM. This applies to dev and release, and to direct native
+    // calls as well as build_cached; unannotated programs remain buildable.
+    if backend == "c" || backend == "wasm" {
+        let (assumptions, obligations) = report::analyze_verify_surface(&program);
+        if !assumptions.is_empty() || !obligations.is_empty() {
+            #[cfg(feature = "z3")]
+            {
+                let mut prover = aura_verify::Z3Prover::new();
+                verify_program_z3_with_manifest_plugins(
+                    &program,
+                    &mut prover,
+                    nexus_plugins,
+                    smt_profile,
+                )
+                .map_err(|e| miette::Report::new(e).with_source_code(source.clone()))?;
+            }
+            #[cfg(not(feature = "z3"))]
+            {
+                return Err(miette::miette!(
+                    "native build contains contracts or assertions that cannot be checked: {}",
+                    Z3_UNAVAILABLE_MESSAGE
+                ));
+            }
+        }
+    }
 
     let module_ir = aura_core::lower_program(&program)
         .map_err(|e| miette::Report::new(e).with_source_code(source.clone()))?;

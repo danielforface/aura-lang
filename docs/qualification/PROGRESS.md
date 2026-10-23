@@ -5,7 +5,7 @@
 **Working branch:** `qual/Q01-003-004-native-contract-gate` (stacked on Q01-001/002 Draft PR #11, itself stacked on R0 Draft PR #9)  
 **Active gate:** **Q00 — Baseline, governance and continuity**  
 **Active release train:** **R0 — Program foundation**  
-**Status:** **IN_PROGRESS** (Q01-001/002 validated in no-Z3 CI; PR #11 awaits review, not merged)  
+**Status:** **IN_PROGRESS** (Q01-001/002 GREEN and pending review; Q01-003/004 conservative native proof gate proposed, CI not yet observed)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR:** [#9 — program foundation](https://github.com/danielforface/aura-lang/pull/9), opened 2026-10-23; awaiting maintainer review. **First technical issue:** [#10 — fail-closed verify](https://github.com/danielforface/aura-lang/issues/10).  
 **Next planned task:** obtain maintainer review for PR #11 (Q01-001/002 test suite GREEN); begin the separate AURA-Q01-003/004 assertion-and-contract-mode investigation in a new stacked Draft PR, without merging either PR.
@@ -86,3 +86,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23 (GREEN confirmed):** [patched run 39929440082](https://github.com/danielforface/aura-lang/actions/runs/39929440082) completed SUCCESS at SHA `4868112391d19bfa3a665a8a87edaf870a86cb24`, Ubuntu, `cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture`: **2 passed, 0 failed**, following baseline **0 passed, 2 failed** at `9c6172a`. Patch still only IN_REVIEW; no release or merge. See EV-026.
 
 - **2026-10-23 (Q01 native-contract test-first start):** opened [issue #12](https://github.com/danielforface/aura-lang/issues/12), new stacked branch `qual/Q01-003-004-native-contract-gate` based on Q01 #11 head `ab23a7b`. Added native build integration regression tests and GitHub Actions workflow, **no native source fix in the test-first commit**. Baseline test result NOT RUN at commit creation; record observed RED before selecting production patch. Current root PR #9, Q01 PR #11 remain unmerged; do not merge without user consent.
+
+- **2026-10-23 (Q01-003/004 initial implementation):** [Draft PR #13](https://github.com/danielforface/aura-lang/pull/13) contains test-first branch based on PR #11; proposed minimal fail-closed C/WASM build guard for detected AST contracts/assertions. It re-proves annotated programs before C/WASM emission when Z3 exists, rejects annotated native build when Z3 absent and bypasses artifact cache on contract-bearing/bridge programs so cache hits cannot skip guard. Preserves unannotated `dev` builds. **Baseline CI and patch CI: NOT YET OBSERVED at implementation time**; do not mark VERIFIED. Scope does not cover *all* IR-implicit obligations or full runtime/profile semantics. See issue #12.
