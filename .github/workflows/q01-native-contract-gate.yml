@@ -28,3 +28,19 @@ jobs:
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
       - name: Real CLI C-backend dev/release contract tests, no Z3
         run: cargo test -p aura --locked --no-default-features --test native_contract_modes -- --nocapture
+
+  native-contract-with-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: z3-native-contracts
+      - name: Install native Z3 and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Real CLI C native proof positive/negative tests with Z3
+        run: cargo test -p aura --locked --no-default-features --features z3 --test native_contract_z3 -- --nocapture
