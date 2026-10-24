@@ -1,15 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-24 (Issue #20 report integrity RED→GREEN confirmed with and without Z3)  
+**Updated at:** 2026-10-24 (Issue #22 typed Unsupported, test-first CI pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9)  
+**Current working branch:** `qual/Q01-005-typed-unsupported` (stacked on #21 → #19 → #17 → #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
-**Current focused scope:** [Issue #20](https://github.com/danielforface/aura-lang/issues/20) and [Draft PR #21](https://github.com/danielforface/aura-lang/pull/21): report destination integrity and stale success protection, scoped CI GREEN, IN_REVIEW.  
+**Current focused scope:** [Issue #22](https://github.com/danielforface/aura-lang/issues/22), typed status `unsupported` for verifier/profile refusals; test-first branch pending CI. Prior [PR #21](https://github.com/danielforface/aura-lang/pull/21) scoped CI GREEN/unmerged.  
 **Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17) → [#19](https://github.com/danielforface/aura-lang/pull/19) → [#21](https://github.com/danielforface/aura-lang/pull/21). **All Draft/unmerged**; user approval needed before any merge.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/20 (AURA-Q01-002/006 report integrity), tested GREEN but not merged.  
-**Source of truth for current HEAD/CI:** fetch live `qual/Q01-002-report-durability` and Draft PR #21; historical SHAs in this journal are not current HEAD.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/22 (AURA-Q01-005/006 Unsupported), tests-first and report taxonomy.  
+**Source of truth for current HEAD/CI:** fetch live `qual/Q01-005-typed-unsupported` and its Draft PR; historical SHAs are not current HEAD.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -245,3 +245,9 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 **Earlier actual failures are important history:** [baseline 40119465608](https://github.com/danielforface/aura-lang/actions/runs/40119465608) 1/4 passed (3 fail); [first patch 40119755541](https://github.com/danielforface/aura-lang/actions/runs/40119755541) 3/4 passed (1 fail); [Z3/no-Z3 extended run 40120058985](https://github.com/danielforface/aura-lang/actions/runs/40120058985) 4/5 passed per job (same missing-input fail). Root cause uncovered by CI: `Cmd::Verify` calls `resolve_manifest_config` before entering `verify_file_with_report`, so early missing-source error bypassed report invalidation. Final patch handles it upstream too. EV-047. No report proof may be claimed for an early error.
 
 **Next safe action:** read active PR #21 and parent PRs #19/#17/#15/#13/#11/#9 (all Draft, unmerged), latest branch SHA and CI. Pending explicit owner consent for any merge; engineering can continue in a separate stacked branch. Q01 still IN_PROGRESS because unknown timeout/cancelled, process exit taxonomy, full trust accounting and proof-cache semantics remain unqualified. CRASH durability, hardlink aliasing, symlink race and Windows behavior are NOT covered; see `VERIFY_REPORT_DESTINATION_POLICY.md`. Do not edit frozen master plan. Always synchronize PROGRESS + CONTEXT_HANDOFF with each increment.
+
+## 32. Q01-005 typed Unsupported test-first (2026-10-24)
+
+- Confirmed current parent #21 Actions [40121543573](https://github.com/danielforface/aura-lang/actions/runs/40121543573) SUCCESS on docs HEAD; all seven stacked PRs #9/#11/#13/#15/#17/#19/#21 remain Draft/unmerged, main unchanged. New [Issue #22](https://github.com/danielforface/aura-lang/issues/22) / branch `qual/Q01-005-typed-unsupported` atop #21.
+- Added real CLI Z3 feature tests for same quantifier source `assert forall(x: u32): x == x` under Fast (`status=unsupported`, reason `verification_unsupported`, nonzero) and Thorough (`proved` with proof evidence). FAST baseline is predicted to fail because verifier currently tags explicit policy refusal as generic Failed; **not verified until test-only CI logs**. If parser/typechecker rejects quantifier first, correct fixture/flow before claiming a real semantic RED.
+- CI has both Z3 tests and no-Z3 regressions; frozen master plan unchanged. Next: open Draft PR on #21 branch, inspect RED, implement only source-typed Unsupported classifications (no substring matching) and re-run until GREEN. Update PROGRESS+CONTEXT_HANDOFF+EVIDENCE_LOG with observed IDs. Do not merge automatically; do not claim timeout/cancelled classification.

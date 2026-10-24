@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-24  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9; unmerged)  
+**Working branch:** `qual/Q01-005-typed-unsupported` (stacked on #21 → #19 → #17 → #15 → #13 → #11 → #9; all Draft/unmerged)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Issue #20 report durability GREEN on real CLI with and without Z3, Draft PR #21 IN_REVIEW; overall Q01 remains open)  
+**Status:** **IN_PROGRESS** (Issue #20 #21 final CI GREEN; Issue #22 test-first Unsupported status CI pending)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3](https://github.com/danielforface/aura-lang/pull/11) → [#13 — Native](https://github.com/danielforface/aura-lang/pull/13) → [#15 — check](https://github.com/danielforface/aura-lang/pull/15) → [#17 — report v2](https://github.com/danielforface/aura-lang/pull/17) → [#19 — typed Unknown](https://github.com/danielforface/aura-lang/pull/19) → [#21 — report integrity](https://github.com/danielforface/aura-lang/pull/21). All remain Draft/unmerged. **Current issue:** [#20](https://github.com/danielforface/aura-lang/issues/20), report integrity. [Draft PR #21](https://github.com/danielforface/aura-lang/pull/21) stacked onto [#19](https://github.com/danielforface/aura-lang/pull/19); all drafts unmerged.  
-**Next planned task:** review Draft PR #21 and all ancestors in dependency order; do not merge without explicit maintainer approval. Next engineering slice: remaining Q01-005/006 outcome taxonomy and adversarial trust/proof cache testing, with test-first evidence.
+**Next planned task:** obtain RED/analysis from restricted-quantifier test, implement typed Unsupported without altering proof semantics, repeat Z3/no-Z3 CI until GREEN; never merge without maintainer permission.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -143,3 +143,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | [Accepted patch 40120564647](https://github.com/danielforface/aura-lang/actions/runs/40120564647) | `24ba1a3` | **GREEN**, BOTH no-Z3 and Z3: 5/5 report durability tests and 2/2 existing report tests each, total 14 passed |
 
 - **Acceptance scope:** input/file aliases tested on Ubuntu, missing input invalidates old success, explicit output failure and regression preservation. PR #21 remains Draft/IN_REVIEW; no release or merge. **Not established:** full crash-atomic report commit, concurrent report-path/symlink races, hardlink identity, portable cross-platform file safety or comprehensive Q01 proof results. See EV-047 and [VERIFY_REPORT_DESTINATION_POLICY.md](VERIFY_REPORT_DESTINATION_POLICY.md).
+
+- **2026-10-24, Issue #22 test-first:** source example `assert forall(x: u32): x == x` and verifier's Fast/Ci quantifier policy are used for a real CLI regression under `fast` (must return `unsupported`) and `thorough` (must prove tautology). New stacked branch and CI started as test-only; NOT YET VERIFIED. Existing code maps profile refusal to generic `failed`; parser/typechecker compatibility must be confirmed by actual CI. Parent #21 latest CI [40121543573](https://github.com/danielforface/aura-lang/actions/runs/40121543573) SUCCESS. Frozen roadmap unchanged.

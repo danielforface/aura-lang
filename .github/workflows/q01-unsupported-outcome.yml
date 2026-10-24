@@ -1,0 +1,38 @@
+name: Q01 typed unsupported SMT feature
+on:
+  push:
+    branches: ['qual/Q01-005-typed-unsupported']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unsupported-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native solver prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Real CLI restricted and thorough quantifier cases
+        run: cargo test -p aura --locked --no-default-features --features z3 --test verify_report_unsupported -- --nocapture
+      - name: Existing real-Z3 report status regressions
+        run: cargo test -p aura --locked --no-default-features --features z3 --test verify_report_status -- --nocapture
+  unsupported-no-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Verify no-Z3 report and fail-closed regressions
+        run: |
+          cargo test -p aura --locked --no-default-features --test verify_report_status -- --nocapture
+          cargo test -p aura --locked --no-default-features --test verify_fail_closed -- --nocapture
