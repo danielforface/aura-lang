@@ -37,6 +37,8 @@ pub enum VerifyFailureKind {
     #[default]
     Failed,
     Unknown,
+    /// The verifier explicitly refuses to model a construct/profile.
+    Unsupported,
 }
 #[derive(Debug, Error, Diagnostic)]
 #[error("verification error: {message}")]
@@ -174,7 +176,7 @@ pub mod z3_prover {
             let expr_ast = match &value_expr.kind {
                 ExprKind::IntLit(n) => Int::from_u64(self.ctx, *n),
                 _ => {
-                    return Err(VerifyError { kind: Default::default(), message: "Z3 prover currently only supports integer literals (symbolic execution TBD)".to_string(),
+                    return Err(VerifyError { kind: VerifyFailureKind::Unsupported, message: "Z3 prover currently only supports integer literals (symbolic execution TBD)".to_string(),
                         span,
                         model: None,
                         meta: None,
