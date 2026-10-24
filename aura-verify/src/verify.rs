@@ -1301,7 +1301,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             }
             ExprKind::ForAll { binders, body } | ExprKind::Exists { binders, body } => {
                 if !self.opts.allow_quantifiers {
-                    return Err(VerifyError { kind: Default::default(), message: format!(
+                    return Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unsupported, message: format!(
                             "quantifiers are disabled under SMT profile {:?}; use --smt-profile thorough",
                             self.opts.profile
                         ),
@@ -1311,7 +1311,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     });
                 }
                 if binders.len() > self.opts.max_quant_binders {
-                    return Err(VerifyError { kind: Default::default(), message: format!(
+                    return Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unsupported, message: format!(
                             "too many quantifier binders (max {})",
                             self.opts.max_quant_binders
                         ),
@@ -1353,7 +1353,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 };
                 Ok(q)
             }
-            _ => Err(VerifyError { kind: Default::default(), message: "unsupported boolean expression in verifier".to_string(),
+            _ => Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unsupported, message: "unsupported boolean expression in verifier".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,
@@ -1744,7 +1744,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
 
                 out
             }
-            _ => Err(VerifyError { kind: Default::default(), message: "unsupported integer expression in verifier".to_string(),
+            _ => Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unsupported, message: "unsupported integer expression in verifier".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,

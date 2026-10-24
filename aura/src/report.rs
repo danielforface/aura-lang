@@ -34,6 +34,8 @@ pub enum VerificationStatus {
     Failed,
     /// SMT explicitly reported Unknown, neither proved nor refuted.
     Unknown,
+    /// A verifier limitation or selected profile excludes the requested feature.
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,6 +154,7 @@ pub fn classify_verifier_failure(error: &aura_verify::VerifyError) -> (Verificat
     match error.kind {
         aura_verify::VerifyFailureKind::Failed => (VerificationStatus::Failed, "verification_failed"),
         aura_verify::VerifyFailureKind::Unknown => (VerificationStatus::Unknown, "solver_unknown"),
+        aura_verify::VerifyFailureKind::Unsupported => (VerificationStatus::Unsupported, "verification_unsupported"),
     }
 }
 pub fn write_verify_report(
@@ -391,4 +394,26 @@ mod typed_failure_tests {
         assert_eq!(classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Failed, "unknown in prose")),
             (VerificationStatus::Failed, "verification_failed"));
     }
+    #[test]
+    fn structured_unsupported_is_reported_without_proof() {
+        assert_eq!(
+            classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Unsupported, "limited backend")),
+            (VerificationStatus::Unsupported, "verification_unsupported")
+        );
+    }
+    #[test]
+    fn textual_unsupported_cannot_change_failed_kind() {
+        assert_eq!(
+            classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Failed, "unsupported mentioned in prose")),
+            (VerificationStatus::Failed, "verification_failed")
+        );
+    }
+    #[test]
+    fn unsupported_does_not_mean_solver_unknown() {
+        assert_ne!(
+            classify_verifier_failure(&fixture(aura_verify::VerifyFailureKind::Unsupported, "limit")).0,
+            VerificationStatus::Unknown
+        );
+    }
+
 }
