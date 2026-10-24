@@ -1,9 +1,9 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-24 (issue #18 structured Unknown scoped CI GREEN; PR #19 ready for review)  
+**Updated at:** 2026-10-24 (issue #20 test-first report safety reproduction pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-005-typed-solver-unknown` (stacked on #17 → #15 → #13 → #11 → #9)  
+**Current working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
 **Current focused scope:** [issue #18](https://github.com/danielforface/aura-lang/issues/18): structural SMT Unknown propagation to CLI reports, under CI. Parent #17 green but unmerged.  
@@ -214,3 +214,9 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 
 - Actual [Actions run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747) at `b27c6cd59e5854e9b0cdce11a8ff5c30bbe41109` finished SUCCESS: **Z3 job:** `typed_failure_tests` 2 passed / 0 failed, real-Z3 report CLI 2 passed / 0 failed, `cargo check` verifier+LSP passed. **No-Z3 job:** affected workspace cargo checks passed and both CLI test suites passed, 2/2 each. This validates the typed routing and previously tested paths, NOT deterministic Z3-Unknown end-to-end or full proof taxonomy. EV-041 appended. PR #19 remains Draft/unmerged with all ancestors.
 - Next safe action: inspect latest GitHub CI and branch head (docs commits schedule new run), proceed to bounded next Q01-005/006 improvement with explicit typed failure semantics and adversarial tests. A new chat should use live PR #19 and `docs/qualification/PROGRESS.md` + this handoff rather than old journal steps. Never edit frozen `MASTER_ROADMAP_V1.md`; do not merge without user approval.
+
+## 27. Report output durability, test-first increment (2026-10-24)
+
+- Issue [#20](https://github.com/danielforface/aura-lang/issues/20) opened; branch `qual/Q01-002-report-durability` based on parent #19. Source-review defect: `verify_file_with_report` reads/augments input before touching report destination, leaving a stale old `ok:true` JSON on early read failure, and discards report-write errors on parse/sema/solver paths; source/report same path may corrupt source. These are SOURCE REVIEW, **NOT reproduced by a new CI yet**.
+- Test-only commit adds `aura/tests/verify_report_durability.rs` four real CLI cases and `.github/workflows/q01-report-durability.yml`; no production fix. Expected 3 RED and 1 GREEN on source baseline, but do not claim until real job output. Keep existing valid status behavior and no-Z3 guard.
+- **Next safe action:** fetch current branch and new Draft PR, obtain test-first CI result, ensure errors are semantic rather than harness mistakes. Patch report destination preflight and early-error emission, preserve source if `--report` aliases input. Repeat to GREEN and archive exact CI. Later atomic crash-safe output publication, concurrent symlink races and multi-target paths remain further hardening. Update PROGRESS+CONTEXT_HANDOFF+EVIDENCE_LOG in same commit, master frozen, no auto merges.

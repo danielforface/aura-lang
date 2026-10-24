@@ -1,0 +1,23 @@
+name: Q01 verify report durability
+on:
+  push:
+    branches: ['qual/Q01-002-report-durability']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report-durability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real CLI durability negative tests
+        run: cargo test --locked -p aura --no-default-features --test verify_report_durability -- --nocapture
+      - name: Existing no-Z3 report regression
+        run: cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture

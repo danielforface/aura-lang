@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-24  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-005-typed-solver-unknown` (stacked on #17 → #15 → #13 → #11 → #9; unmerged)  
+**Working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9; unmerged)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-005 typed SMT Unknown scoped CI GREEN; PR #19 IN_REVIEW and unmerged; remaining taxonomy and assurance tasks open)  
+**Status:** **IN_PROGRESS** (PR #19 typed Unknown CI GREEN and IN_REVIEW; issue #20 report durability test-first pending CI)  
 **Release:** none created in this work; no new stable-language claim.  
 **Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3](https://github.com/danielforface/aura-lang/pull/11) → [#13 — Native](https://github.com/danielforface/aura-lang/pull/13) → [#15 — check](https://github.com/danielforface/aura-lang/pull/15) → [#17 — report v2](https://github.com/danielforface/aura-lang/pull/17). All remain Draft/unmerged. **Current issue:** [#18](https://github.com/danielforface/aura-lang/issues/18), narrow typed Unknown result. [Draft PR #19](https://github.com/danielforface/aura-lang/pull/19) stacked onto #17; all drafts unmerged.  
-**Next planned task:** review stacked PR #19 and predecessors without automatic merge; scope next Q01-005/006 test-first slice for non-Unknown result taxonomy and proof-failure reporting, maintaining explicit limitations on unsupported/timeout/cancelled outcomes.
+**Next planned task:** observe test-first report durability RED at Issue #20, fix stale/unsafe report path and silent write failure; rerun to GREEN, then review full stacked PR chain without auto merge.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -124,3 +124,5 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23:** [Issue #18](https://github.com/danielforface/aura-lang/issues/18) begun on stacked branch with typed VerifyFailureKind, direct Z3 Unknown propagation, v2 report mapping and unit/CLI regression checks. Parent #17 latest [CI 39965574132](https://github.com/danielforface/aura-lang/actions/runs/39965574132) PASS. New code test results **NOT YET OBSERVED**; no full taxonomy claim.
 
 - **2026-10-24 (Q01-005 scoped GREEN):** [PR #19](https://github.com/danielforface/aura-lang/pull/19) code SHA `b27c6cd59e5854e9b0cdce11a8ff5c30bbe41109`, [GitHub Actions run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747) completed SUCCESS (both jobs). Z3: **2/2 typed-status unit tests** and **2/2 real solver report regressions** passed, plus verifier and LSP check success. No-Z3: `aura`, `aura-verify`, `aura-lsp` compile checks passed; **2/2 report + 2/2 fail-closed real CLI tests** passed. IN_REVIEW until review/merge, not Q01-wide VERIFIED. Does not force real Z3 Unknown or test timeout/cancellation. EV-041. All stacked PRs remain unmerged.
+
+- **2026-10-24 (Q01 report durability tests prepared):** [Issue #20](https://github.com/danielforface/aura-lang/issues/20), branch `qual/Q01-002-report-durability` based on PR #19. Four real-CLI negative tests target stale `ok:true` report after unreadable source, silent output-write failure, same source and report path, and preservation of existing correct parse-error report. Dedicated no-Z3 Actions workflow added. **Baseline RED not yet observed when committed; no code fix in test-first commit.** Next examine actual logs before implementation. Frozen roadmap unchanged, parent #19 unmerged.
