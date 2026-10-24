@@ -1,0 +1,38 @@
+name: Q01 typed trust provenance
+on:
+  push:
+    branches: ['qual/Q01-007-typed-trust-origins']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trust-provenance-no-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real no-Z3 trust-origin contract tests
+        run: cargo test --locked -p aura --no-default-features --test verify_trust_provenance -- --nocapture
+      - name: Existing verifier fail-closed regressions
+        run: cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture
+  trust-provenance-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native and SMT dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Real Z3 trust-origin contract tests
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_trust_provenance -- --nocapture
+      - name: Existing real-Z3 report regressions
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_report_status -- --nocapture
