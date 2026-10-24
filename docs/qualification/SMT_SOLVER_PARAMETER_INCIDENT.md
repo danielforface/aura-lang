@@ -1,6 +1,6 @@
 # Q01/Q04: SMT solver parameter incident — Issue #24
 
-**Status:** source fix code tests GREEN at [CI 40129765942](https://github.com/danielforface/aura-lang/actions/runs/40129765942), verifier/LSP final check PENDING when this note was written. [Draft PR #25](https://github.com/danielforface/aura-lang/pull/25), stacked and unmerged.
+**Status:** scoped full CI GREEN at [run 40129765942](https://github.com/danielforface/aura-lang/actions/runs/40129765942), including verifier/LSP compilation; [Draft PR #25](https://github.com/danielforface/aura-lang/pull/25) IN_REVIEW, stacked/unmerged. All 31 active tests passed; one known historical bad-seed reproduction deliberately ignored.
 
 ## Observed failure and root cause
 The actual Aura verifier rejected `assert 1==1` and `forall(x:u32): x==x` in both Fast/Thorough proof profiles, while direct Z3 proved them. A 16-configuration Z3 matrix [run 40128912419](https://github.com/danielforface/aura-lang/actions/runs/40128912419) found `smt.random_seed=0` to be a strong discriminator in the pinned dependency environment: all eight masks including that key returned **SAT** for the negation of a contradiction, while all eight without it returned **UNSAT**. The problem reproduced in a raw Z3 test independent of Aura AST; avoid assuming all other solver versions behave similarly.
