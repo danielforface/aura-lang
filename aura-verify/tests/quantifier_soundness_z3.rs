@@ -43,3 +43,25 @@ fn aura_thorough_false_universal_property_must_fail() {
     let src="cell main() ->:\n    assert forall(x: u32): x == 1\n";
     assert!(verify_source(src).is_err(),"invalid universally quantified formula cannot prove");
 }
+
+#[test]
+fn raw_z3_tracked_negation_of_ground_truth_is_unsat(){
+    use z3::{ast::{Ast,Bool,Int},Config,Context,SatResult,Solver};
+    let ctx=Context::new(&Config::new());
+    let label=Bool::new_const(&ctx,"negated_goal_0");
+    let truth=Int::from_u64(&ctx,1)._eq(&Int::from_u64(&ctx,1));
+    let negated_goal=truth.not();
+    let solver=Solver::new(&ctx);
+    solver.assert(&label.implies(&negated_goal));
+    let result=solver.check_assumptions(&[label]);
+    eprintln!("RAW Z3 check_assumptions ground equality: truth={truth}; negation={negated_goal}; result={result:?}");
+    assert_eq!(result,SatResult::Unsat,"goal guard must be enforced by Z3");
+}
+#[test]
+fn aura_fast_ground_integer_reflexivity_must_prove(){
+    let src="cell main() ->:\n    assert 1 == 1\n";
+    let parsed=aura_parse::parse_source(src).expect("parse");
+    let mut prover=Z3Prover::new();let mut nexus=NexusContext::default();
+    verify_program_z3_profile(&parsed,&mut prover,&(),&mut nexus,SmtProfile::Fast)
+        .expect("Fast must prove plain ground reflexivity too");
+}
