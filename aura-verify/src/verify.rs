@@ -841,8 +841,11 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         label_to_smt.insert(goal_label.clone(), negated_goal.to_string());
         label_to_ast.insert(goal_label.clone(), negated_goal.clone());
 
-        solver.assert(&goal_track.implies(negated_goal));
-        assumption_lits.push(goal_track.clone());
+        // The negated goal is a *mandatory* assertion, not an optional premise.
+        // Use a tracked assertion (for unsat-core provenance) rather than
+        // implying it from an assumption literal. This guarantees the goal is
+        // present even if there are zero path constraints/assumptions.
+        solver.assert_and_track(negated_goal, &goal_track);
         label_to_origin.insert(
             goal_label.clone(),
             RelatedInfo {

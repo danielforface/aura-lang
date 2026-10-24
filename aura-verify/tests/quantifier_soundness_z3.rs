@@ -100,3 +100,17 @@ fn prover_context_raw_negation_is_unsat(){
     eprintln!("LEAKED prover context raw check: {:?}",sat);
     assert_eq!(sat,SatResult::Unsat);
 }
+
+#[test]
+fn aura_thorough_false_ground_equality_must_not_prove() {
+    verify_source("cell main() ->:\n    assert 1 == 2\n")
+        .expect_err("false ground equality must never be proved");
+}
+#[test]
+fn aura_fast_false_ground_equality_must_not_prove() {
+    let src="cell main() ->:\n    assert 1 == 2\n";
+    let parsed=aura_parse::parse_source(src).expect("parse");
+    let mut prover=Z3Prover::new();let mut nexus=NexusContext::default();
+    verify_program_z3_profile(&parsed,&mut prover,&(),&mut nexus,SmtProfile::Fast)
+        .expect_err("false ground equality must be refuted in Fast as well");
+}
