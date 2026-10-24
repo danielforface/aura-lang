@@ -1,15 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-24 (issue #20 test-first report safety reproduction pending)  
+**Updated at:** 2026-10-24 (Issue #20 report integrity RED→GREEN confirmed with and without Z3)  
 **Repository:** https://github.com/danielforface/aura-lang  
 **Current working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
-**Current focused scope:** [issue #18](https://github.com/danielforface/aura-lang/issues/18): structural SMT Unknown propagation to CLI reports, under CI. Parent #17 green but unmerged.  
-**Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17) → [#19](https://github.com/danielforface/aura-lang/pull/19). **All Draft/unmerged**; user approval needed before any merge.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/18 (AURA-Q01-005/006); #16 green/unmerged.  
-**Source of truth for current HEAD/CI:** fetch live `qual/Q01-005-typed-solver-unknown` and its Draft PR; historical SHAs are not current HEAD.  
+**Current focused scope:** [Issue #20](https://github.com/danielforface/aura-lang/issues/20) and [Draft PR #21](https://github.com/danielforface/aura-lang/pull/21): report destination integrity and stale success protection, scoped CI GREEN, IN_REVIEW.  
+**Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17) → [#19](https://github.com/danielforface/aura-lang/pull/19) → [#21](https://github.com/danielforface/aura-lang/pull/21). **All Draft/unmerged**; user approval needed before any merge.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/20 (AURA-Q01-002/006 report integrity), tested GREEN but not merged.  
+**Source of truth for current HEAD/CI:** fetch live `qual/Q01-002-report-durability` and Draft PR #21; historical SHAs in this journal are not current HEAD.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -237,3 +237,11 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 - **First patch partial GREEN, not accepted:** [run 40119755541](https://github.com/danielforface/aura-lang/actions/runs/40119755541) at `f0a11ff`: **3 passed, 1 failed**. Source-vs-report alias and directory report errors fixed; missing source case still has `ok:true`. Root cause: `Cmd::Verify` calls `resolve_manifest_config` (including source read) before `verify_file_with_report`, so early failure bypasses previously added report invalidation.
 - **Current follow-up patch:** adds handling of manifest-resolution errors inside `Cmd::Verify` itself: prepare output, invalidate stale success, write versioned `invalid_input` report with `io_error` for missing path (or `input_preparation_failed` for other preparation failures). Retains exception if no report requested. This must be tested on actual new HEAD. The prior Z3+symlink job [run 40120058985](https://github.com/danielforface/aura-lang/actions/runs/40120058985) may still be underway or fail on missing source; it is NOT patch evidence. Check and fix remaining problems until GREEN, update live documents each iteration.
 - **Next safe action:** inspect new complete workflow with both no-Z3 and Z3 jobs and all five tests, verify earlier `verify_report_status` suites and record exact CI evidence. Do not merge any PR in the stack; do not edit frozen roadmap.
+
+## 31. Issue #20 final scoped acceptance after repeated repair cycles (2026-10-24)
+
+**Actual GREEN:** [run 40120564647](https://github.com/danielforface/aura-lang/actions/runs/40120564647) at code SHA `24ba1a32bdbdab086d1ae439ddeb11abbf6cf0a4`, Ubuntu, BOTH jobs COMPLETED SUCCESS. No-Z3: `verify_report_durability` **5 passed/0 failed**, `verify_report_status` **2 passed/0 failed**. Z3: same **5 passed/0 failed** and original actual-Z3 `verify_report_status` **2 passed/0 failed**. All five durability cases include stale prior `ok:true` on missing input, invalid syntax replacing a prior proof, visible report-directory write errors, exact source destination rejection, and source symlink alias rejection.
+
+**Earlier actual failures are important history:** [baseline 40119465608](https://github.com/danielforface/aura-lang/actions/runs/40119465608) 1/4 passed (3 fail); [first patch 40119755541](https://github.com/danielforface/aura-lang/actions/runs/40119755541) 3/4 passed (1 fail); [Z3/no-Z3 extended run 40120058985](https://github.com/danielforface/aura-lang/actions/runs/40120058985) 4/5 passed per job (same missing-input fail). Root cause uncovered by CI: `Cmd::Verify` calls `resolve_manifest_config` before entering `verify_file_with_report`, so early missing-source error bypassed report invalidation. Final patch handles it upstream too. EV-047. No report proof may be claimed for an early error.
+
+**Next safe action:** read active PR #21 and parent PRs #19/#17/#15/#13/#11/#9 (all Draft, unmerged), latest branch SHA and CI. Pending explicit owner consent for any merge; engineering can continue in a separate stacked branch. Q01 still IN_PROGRESS because unknown timeout/cancelled, process exit taxonomy, full trust accounting and proof-cache semantics remain unqualified. CRASH durability, hardlink aliasing, symlink race and Windows behavior are NOT covered; see `VERIFY_REPORT_DESTINATION_POLICY.md`. Do not edit frozen master plan. Always synchronize PROGRESS + CONTEXT_HANDOFF with each increment.
