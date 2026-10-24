@@ -772,9 +772,10 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         // plus check-sat-assuming so we don't re-initialize Z3 for each obligation.
         let mut params = Params::new(ctx);
         params.set_u32("timeout", self.opts.timeout_ms);
-        // Determinism: ensure Z3 doesn't use random seeds that vary by run.
-        // This is especially important for CI reproducibility.
-        params.set_u32("smt.random_seed", 0);
+        // Do NOT override smt.random_seed. In z3 0.12.1 with this workspace's
+        // pinned Z3 backend, setting it to 0 made UNSAT obligations appear SAT
+        // (verified by the full 16-parameter matrix: Issue #24).
+        // Preserve SAT engine's deterministic default without the SMT override.
         params.set_u32("sat.random_seed", 0);
         // Best-effort: enable UNSAT core extraction.
         params.set_bool("unsat_core", true);
@@ -841,8 +842,11 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         label_to_smt.insert(goal_label.clone(), negated_goal.to_string());
         label_to_ast.insert(goal_label.clone(), negated_goal.clone());
 
-        solver.assert(&goal_track.implies(negated_goal));
-        assumption_lits.push(goal_track.clone());
+        // The negated goal is a *mandatory* assertion, not an optional premise.
+        // Use a tracked assertion (for unsat-core provenance) rather than
+        // implying it from an assumption literal. This guarantees the goal is
+        // present even if there are zero path constraints/assumptions.
+        solver.assert_and_track(negated_goal, &goal_track);
         label_to_origin.insert(
             goal_label.clone(),
             RelatedInfo {
@@ -852,7 +856,6 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         );
 
         let sat = solver.check_assumptions(&assumption_lits);
-
         let res = match sat {
             SatResult::Unsat => {
                 let core_labels = solver
@@ -1555,7 +1558,8 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                                 let solver = Solver::new(self.ctx());
                                 let mut params = Params::new(self.ctx());
                                 params.set_u32("timeout", self.opts.timeout_ms);
-                                params.set_u32("smt.random_seed", 0);
+                                // Do not override smt.random_seed: Issue #24
+                                // showed it can change even a contradiction to SAT.
                                 params.set_u32("sat.random_seed", 0);
                                 solver.set_params(&params);
                                 for a in &st.constraints {
