@@ -37,6 +37,11 @@ fn explicit_assume_is_separate_from_requires_even_without_a_solver(){
     assert_ne!(json["status"],"proved","report must never claim proof from absent/failed solver");
     assert_spans(&json,"explicit_assumes",1);
     assert_spans(&json,"preconditions",0);
+    let origins=json["trusted"]["assumption_origins"].as_array().expect("typed origin entries");
+    assert_eq!(origins.len(),1);
+    assert_eq!(origins[0]["kind"],"assume");
+    assert_eq!(origins[0]["cell"],"main");
+    assert!(origins[0]["span"]["offset"].is_number());
     assert!(out.status.success() == (json["status"]=="proved"),"CLI and report truthfulness must agree");
 }
 #[test]
@@ -45,6 +50,10 @@ fn contract_requires_is_not_mislabeled_user_assume(){
     let (_,json)=f.run();
     assert_spans(&json,"preconditions",1);
     assert_spans(&json,"explicit_assumes",0);
+    let origins=json["trusted"]["assumption_origins"].as_array().expect("typed origin entries");
+    assert_eq!(origins.len(),1);
+    assert_eq!(origins[0]["kind"],"requires");
+    assert_eq!(origins[0]["cell"],"main");
 }
 #[test]
 fn nested_unsafe_block_inside_cell_is_never_omitted(){

@@ -83,23 +83,67 @@ pub struct CellProofSummary {
     pub proofs: ProofSummary,
 }
 
+/// Origin is source-level syntax, not a claim that the premise is proved.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssumptionSourceKind {
+    Assume,
+    Requires,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AssumptionSource {
+    pub kind: AssumptionSourceKind,
+    pub span: SpanRange,
+    /// Owning cell where available; None for standalone top-level syntax.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TrustedSurface {
     pub unsafe_blocks: Vec<SpanRange>,
     pub extern_cells_trusted: Vec<SpanRange>,
     pub extern_cells_untrusted: Vec<SpanRange>,
+    /// Explicit user-supplied premises. These are trusted inputs, not proofs.
+    pub explicit_assumes: Vec<SpanRange>,
+    /// Contractual preconditions that callers are expected to establish.
+    pub preconditions: Vec<SpanRange>,
+    /// Typed source locations, including the cell owner, for machine consumers.
+    pub assumption_origins: Vec<AssumptionSource>,
 }
 
 pub fn analyze_trusted_surface(program: &Program) -> TrustedSurface {
     let mut out = TrustedSurface::default();
-    for s in &program.stmts {
-        analyze_stmt(&mut out, s);
+    for stmt in &program.stmts {
+        analyze_stmt(&mut out, stmt, None);
     }
     out
 }
 
-fn analyze_stmt(out: &mut TrustedSurface, stmt: &Stmt) {
+fn analyze_stmt(out: &mut TrustedSurface, stmt: &Stmt, cell: Option<&str>) {
     match stmt {
+        Stmt::CellDef(c) => {
+            for st in &c.body.stmts {
+                analyze_stmt(out, st, Some(c.name.node.as_str()));
+            }
+        }
+        Stmt::Assume(s) => {
+            out.explicit_assumes.push(s.span.into());
+            out.assumption_origins.push(AssumptionSource {
+                kind: AssumptionSourceKind::Assume,
+                span: s.span.into(),
+                cell: cell.map(str::to_owned),
+            });
+        }
+        Stmt::Requires(s) => {
+            out.preconditions.push(s.span.into());
+            out.assumption_origins.push(AssumptionSource {
+                kind: AssumptionSourceKind::Requires,
+                span: s.span.into(),
+                cell: cell.map(str::to_owned),
+            });
+        }
         Stmt::ExternCell(ExternCell { span, trusted, .. }) => {
             if *trusted {
                 out.extern_cells_trusted.push((*span).into());
@@ -109,40 +153,50 @@ fn analyze_stmt(out: &mut TrustedSurface, stmt: &Stmt) {
         }
         Stmt::UnsafeBlock(UnsafeBlock { span, body }) => {
             out.unsafe_blocks.push((*span).into());
-            for s in &body.stmts {
-                analyze_stmt(out, s);
+            for st in &body.stmts {
+                analyze_stmt(out, st, cell);
             }
         }
         Stmt::If(s) => {
             for st in &s.then_block.stmts {
-                analyze_stmt(out, st);
+                analyze_stmt(out, st, cell);
             }
             if let Some(else_block) = &s.else_block {
                 for st in &else_block.stmts {
-                    analyze_stmt(out, st);
+                    analyze_stmt(out, st, cell);
                 }
             }
         }
         Stmt::Match(s) => {
-            for a in &s.arms {
-                for st in &a.body.stmts {
-                    analyze_stmt(out, st);
+            for arm in &s.arms {
+                for st in &arm.body.stmts {
+                    analyze_stmt(out, st, cell);
                 }
             }
         }
         Stmt::While(s) => {
             for st in &s.body.stmts {
-                analyze_stmt(out, st);
+                analyze_stmt(out, st, cell);
             }
         }
         Stmt::Layout(s) => {
             for st in &s.body.stmts {
-                analyze_stmt(out, st);
+                analyze_stmt(out, st, cell);
             }
         }
         Stmt::FlowBlock(s) => {
             for st in &s.body.stmts {
-                analyze_stmt(out, st);
+                analyze_stmt(out, st, cell);
+            }
+        }
+        Stmt::MacroDef(m) => {
+            for st in &m.body.stmts {
+                analyze_stmt(out, st, cell);
+            }
+        }
+        Stmt::Render(r) => {
+            for st in &r.body.stmts {
+                analyze_stmt(out, st, cell);
             }
         }
         _ => {}
