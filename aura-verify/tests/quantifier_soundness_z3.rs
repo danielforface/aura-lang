@@ -114,3 +114,29 @@ fn aura_fast_false_ground_equality_must_not_prove() {
     verify_program_z3_profile(&parsed,&mut prover,&(),&mut nexus,SmtProfile::Fast)
         .expect_err("false ground equality must be refuted in Fast as well");
 }
+
+#[test]
+fn raw_z3_parameter_matrix_must_not_turn_contradiction_into_sat(){
+    use z3::{ast::{Ast,Bool,Int},Config,Context,Params,SatResult,Solver};
+    let ctx=Context::new(&Config::new());
+    let mut non_unsat=Vec::new();
+    // Bit0 timeout; bit1 smt.random_seed; bit2 sat.random_seed;
+    // bit3 unsat_core. Compare every subset, not just individual flags.
+    for mask in 0u8..16 {
+        let mut params=Params::new(&ctx);
+        if mask&1 != 0 {params.set_u32("timeout",2_000);}
+        if mask&2 != 0 {params.set_u32("smt.random_seed",0);}
+        if mask&4 != 0 {params.set_u32("sat.random_seed",0);}
+        if mask&8 != 0 {params.set_bool("unsat_core",true);}
+        let solver=Solver::new(&ctx);
+        // Control with no params at all, vs each nonempty combination.
+        if mask != 0 {solver.set_params(&params);}
+        let label=Bool::new_const(&ctx,format!("parameter_goal_{}",mask));
+        let equality=Int::from_u64(&ctx,1)._eq(&Int::from_u64(&ctx,1));
+        solver.assert(&label.implies(&equality.not()));
+        let observed=solver.check_assumptions(&[label]);
+        eprintln!("PARAM_MATRIX mask={mask:04b} result={observed:?}");
+        if observed!=SatResult::Unsat {non_unsat.push((mask,observed));}
+    }
+    assert!(non_unsat.is_empty(),"Z3 parameter combinations must never produce SAT for a contradiction: {non_unsat:?}");
+}
