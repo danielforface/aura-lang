@@ -772,9 +772,10 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         // plus check-sat-assuming so we don't re-initialize Z3 for each obligation.
         let mut params = Params::new(ctx);
         params.set_u32("timeout", self.opts.timeout_ms);
-        // Determinism: ensure Z3 doesn't use random seeds that vary by run.
-        // This is especially important for CI reproducibility.
-        params.set_u32("smt.random_seed", 0);
+        // Do NOT override smt.random_seed. In z3 0.12.1 with this workspace's
+        // pinned Z3 backend, setting it to 0 made UNSAT obligations appear SAT
+        // (verified by the full 16-parameter matrix: Issue #24).
+        // Preserve SAT engine's deterministic default without the SMT override.
         params.set_u32("sat.random_seed", 0);
         // Best-effort: enable UNSAT core extraction.
         params.set_bool("unsat_core", true);
@@ -855,17 +856,6 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         );
 
         let sat = solver.check_assumptions(&assumption_lits);
-        // Temporary, opt-in diagnostics for Issue #24. Removed when root cause is fixed.
-        if std::env::var_os("AURA_DIAG_SMT").is_some() {
-            eprintln!("AURA_DIAG_SMT params={:?} labels={:?} negative_goal={} sat={:?}",
-                self.opts.profile, assumption_lits.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
-                negated_goal, sat);
-            eprintln!("AURA_DIAG_SMT solver assertions: {}", solver);
-            let independent = Solver::new(ctx);
-            independent.assert(negated_goal);
-            eprintln!("AURA_DIAG_SMT independent goal query: {:?}", independent.check());
-        }
-
         let res = match sat {
             SatResult::Unsat => {
                 let core_labels = solver
@@ -1568,7 +1558,8 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                                 let solver = Solver::new(self.ctx());
                                 let mut params = Params::new(self.ctx());
                                 params.set_u32("timeout", self.opts.timeout_ms);
-                                params.set_u32("smt.random_seed", 0);
+                                // Do not override smt.random_seed: Issue #24
+                                // showed it can change even a contradiction to SAT.
                                 params.set_u32("sat.random_seed", 0);
                                 solver.set_params(&params);
                                 for a in &st.constraints {

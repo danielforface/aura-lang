@@ -44,10 +44,9 @@ fn genuinely_false_quantifier_is_failed_not_unsupported_under_thorough(){
   assert_eq!(json["ok"],false);
   assert!(json["verify"].is_null());
 }
-/// Known false-negative even without a quantifier. Issue #24 requires a
-/// separate proof-engine RED->GREEN repair before Thorough is qualified.
+/// Issue #24 RED->GREEN regression: proving a true ground assertion must
+/// work even when no prior path constraints exist.
 #[test]
-#[ignore = "Issue #24: Thorough rejects assertion 1 == 1 with no symbolic state"]
 fn ordinary_provable_assertion_still_succeeds_in_thorough(){
   let f=Fixture::new("cell main() ->:\n    assert 1 == 1\n");
   let (run,json)=f.verify("thorough");
@@ -56,12 +55,10 @@ fn ordinary_provable_assertion_still_succeeds_in_thorough(){
   assert_eq!(json["ok"],true);
   assert!(json["verify"].is_object());
 }
-/// Known failing real-CLI quantifier proof case; **DO NOT DELETE**.
-/// Issue #24 tracks the false-negative for the logically valid universal tautology.
-/// Not part of the scoped Unsupported status acceptance.
+/// Issue #24 RED->GREEN regression: full, active real-CLI proof of forall x. x=x.
+/// This case previously failed and was explicitly quarantined in parent PR #23.
 #[test]
-#[ignore = "Issue #24: Thorough prover currently rejects forall(x:u32): x == x"]
-fn known_bug_reflexive_universal_tautology_should_prove(){
+fn reflexive_universal_tautology_must_prove(){
   let f=Fixture::new(FORALL);
   let (run,json)=f.verify("thorough");
   assert!(run.status.success(),"Issue #24: universal reflexivity must prove, stderr={}",

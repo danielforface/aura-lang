@@ -17,3 +17,7 @@ The verifier's explicit refusal to analyze unsupported source-level expressions 
 ## Second independent Thorough false-negative
 
 [CI 40124194208](https://github.com/danielforface/aura-lang/actions/runs/40124194208) also found **plain `assert 1 == 1` under Thorough failed**, not only the universal tautology. That is now tracked in [Issue #24](https://github.com/danielforface/aura-lang/issues/24) as a proof-engine correctness defect, potentially affecting unassumed goals. Both named tests remain in the repository as `#[ignore]` **until** the dedicated fix is demonstrated with RED→GREEN; they are not pass evidence and do not qualify Thorough semantics. The scoped Unsupported taxonomy change is reviewed separately because it merely reports explicit refusal truthfully.
+
+## Subsequent correction on Issue #24 branch (Z3 parameter hazard)
+
+[Issue #24 / Draft PR #25](https://github.com/danielforface/aura-lang/pull/25) found that with this repository's pinned Z3 backend, `smt.random_seed=0` caused an impossible goal to be reported SAT in all 8/8 direct raw-Z3 parameter combinations, while all 8/8 combinations without it were UNSAT ([actual run 40128912419](https://github.com/danielforface/aura-lang/actions/runs/40128912419)). The correction removes that SMT seed override in source and restores active true-proof regressions on the child branch. No implication that unrelated SMT/Q04 soundness gaps are fixed, and no green acceptance before real CI. Keep parent PR #23 and new PR #25 stacked/unmerged.
