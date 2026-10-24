@@ -1,14 +1,14 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-24 (Issue #22 typed Unsupported, test-first CI pending)  
+**Updated at:** 2026-10-24 (Issue #24 Thorough model false-negative differential tests pending)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-005-typed-unsupported` (stacked on #21 → #19 → #17 → #15 → #13 → #11 → #9)  
+**Current working branch:** `qual/Q01-004-thorough-proof-soundness` (stacked on #23 → #21 → #19 → #17 → #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
-**Current focused scope:** [Issue #22](https://github.com/danielforface/aura-lang/issues/22), typed status `unsupported` for verifier/profile refusals; test-first branch pending CI. Prior [PR #21](https://github.com/danielforface/aura-lang/pull/21) scoped CI GREEN/unmerged.  
+**Current focused scope:** [Issue #24](https://github.com/danielforface/aura-lang/issues/24), false-negative even on `assert 1 == 1` under Thorough and `forall x: x=x`. Test-first differential branch; parent [PR #23](https://github.com/danielforface/aura-lang/pull/23) typestate classification under CI.  
 **Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17) → [#19](https://github.com/danielforface/aura-lang/pull/19) → [#21](https://github.com/danielforface/aura-lang/pull/21). **All Draft/unmerged**; user approval needed before any merge.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/22 (AURA-Q01-005/006 Unsupported), tests-first and report taxonomy.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/24 (AURA-Q01/Q04 true-property proof failure), raw-Z3 versus Aura model.  
 **Source of truth for current HEAD/CI:** fetch live `qual/Q01-005-typed-unsupported` and its Draft PR; historical SHAs are not current HEAD.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
@@ -267,3 +267,9 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 
 - Actual [PR #23 run 40124194208](https://github.com/danielforface/aura-lang/actions/runs/40124194208) on SHA `17ed8baa` reported Z3 4 tests: Fast explicitly unsupported **passed**; Thorough deliberately false quantified proposition **passed** as failed proof; direct ground tautology `assert 1==1` **FAILED** as `assertion failed (failed when negated_goal_0 = true)`; reflexive quantifier proof test remained ignored with live issue link. This expands [Issue #24](https://github.com/danielforface/aura-lang/issues/24) to possible empty-state/ground equality goal construction, not just forall binding. This is a genuine separate proof engine false-negative, NOT a mere schema issue and NOT claimed fixed.
 - Current narrow [Issue #22](https://github.com/danielforface/aura-lang/issues/22) acceptance keeps **both** false-negative tests as `#[ignore]` named regressions linked to #24. They are *not counted as passing*. Z3 CI must pass 2 active scope tests (fast typed refusal, false quantified under thorough), typed classifier unit tests, and prior real CLI proof regression; no-Z3 suite unchanged. Final test result pending. Dedicated P0 issue #24 is next engineering branch after narrow PR #23 GREEN; audit generated SMT and Z3 solver context before any semantic claims.
+
+## 36. Focus shifts to verified proof-engine semantics (2026-10-24)
+
+- Stacked branch `qual/Q01-004-thorough-proof-soundness` from current #23. [Issue #24](https://github.com/danielforface/aura-lang/issues/24) is now real: `forall x. x=x` and also plain `assert 1==1` under Thorough were **incorrectly rejected** by actual CLI. Different from [Issue #22](https://github.com/danielforface/aura-lang/issues/22) status classification; don't conflate or claim solved.
+- Test-first differential suite `aura-verify/tests/quantifier_soundness_z3.rs` logs parsed AST, checks raw Z3 `forall x. x=x` UNSAT of its negation, checks Aura verifier with Thorough for ground/quantified true, assignment equality control and deliberately false forall. Dedicated Actions `q01-thorough-proof.yml`, parent status regressions also run. New CI NOT YET RUN at creation. The raw Z3 test could expose API/version issues; fix test harness only if actual logs justify.
+- **Next safe action:** read real CI job logs: if raw Z3 passes but Aura fails, compare encoded AST / simplified goal and find the bug in Aura translation/solver proof. Fix and rerun until GREEN, then un-ignore Issue #24's known failing CLI tests on parent branch *in this stacked branch*. Parent #23's status test CI must independently be GREEN or accounted for. Update PROGRESS, this handoff and append-only evidence each increment. Frozen roadmap unchanged; never merge without owner approval.
