@@ -898,8 +898,7 @@ fn verify_with_manifest_plugins(
             );
             run_with_profile(program, prover, &plugins, nexus, smt_profile)
         }
-        other => Err(aura_verify::VerifyError {
-            message: format!(
+        other => Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                 "unsupported Nexus plugin set: {:?}. Supported built-ins: ['aura-iot', 'aura-ai']",
                 other
             ),
@@ -918,8 +917,7 @@ fn requested_plugins_from_manifest(
     let mut requested: Vec<String> = Vec::new();
     for p in manifest_plugins {
         if !p.trusted {
-            return Err(aura_verify::VerifyError {
-                message: format!(
+            return Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                     "Nexus plugin '{}' is not trusted. Set `trusted = true` in aura.toml to enable it.",
                     p.name
                 ),
@@ -2509,8 +2507,7 @@ fn run_incremental_verify_stage(
             other => vec![diagnostic_from_verify_error(
                 uri,
                 text,
-                aura_verify::VerifyError {
-                    message: format!(
+                aura_verify::VerifyError { kind: Default::default(), message: format!(
                         "unsupported Nexus plugin set: {:?}. Supported built-ins: ['aura-iot', 'aura-ai']",
                         other
                     ),

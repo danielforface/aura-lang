@@ -1,15 +1,15 @@
 # Aura Program — Always-Current Fresh-Chat Handoff
 
 **Read this first in any new conversation.** This is operational continuity, not a frozen spec.  
-**Updated at:** 2026-10-23 (Q01-006 typed report-v2 CI GREEN, PR #17 review pending)  
+**Updated at:** 2026-10-24 (issue #18 structured Unknown scoped CI GREEN; PR #19 ready for review)  
 **Repository:** https://github.com/danielforface/aura-lang  
-**Current working branch:** `qual/Q01-006-versioned-proof-report` (stacked on #15 → #13 → #11 → #9)  
+**Current working branch:** `qual/Q01-005-typed-solver-unknown` (stacked on #17 → #15 → #13 → #11 → #9)  
 **Base:** `main`, initial commit `e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Active gate/train:** Q00/R0 in review, Q01/R1 IN_PROGRESS with tested CLI/native/compatibility paths GREEN; issue #14 IN_REVIEW in Draft PR #15. **No releases or merges.**  
-**Current focused scope:** [Draft PR #17](https://github.com/danielforface/aura-lang/pull/17) / [issue #16](https://github.com/danielforface/aura-lang/issues/16), scoped typed verification-report v2 passed CI and is IN_REVIEW; prior parent PRs still unmerged.  
-**Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17). **All Draft/unmerged**; user approval needed before any merge.  
-**Current issue:** https://github.com/danielforface/aura-lang/issues/16 (typed proof report v2, AURA-Q01-006); issue #14 compatibility was GREEN in CI but not merged.  
-**Source of truth for current HEAD/CI:** fetch live `qual/Q01-006-versioned-proof-report` branch/PR via GitHub; historical SHAs in this journal are not current HEAD. GitHub permissions must be checked in a fresh chat.  
+**Current focused scope:** [issue #18](https://github.com/danielforface/aura-lang/issues/18): structural SMT Unknown propagation to CLI reports, under CI. Parent #17 green but unmerged.  
+**Draft PR chain:** [#9](https://github.com/danielforface/aura-lang/pull/9) → [#11](https://github.com/danielforface/aura-lang/pull/11) → [#13](https://github.com/danielforface/aura-lang/pull/13) → [#15](https://github.com/danielforface/aura-lang/pull/15) → [#17](https://github.com/danielforface/aura-lang/pull/17) → [#19](https://github.com/danielforface/aura-lang/pull/19). **All Draft/unmerged**; user approval needed before any merge.  
+**Current issue:** https://github.com/danielforface/aura-lang/issues/18 (AURA-Q01-005/006); #16 green/unmerged.  
+**Source of truth for current HEAD/CI:** fetch live `qual/Q01-005-typed-solver-unknown` and its Draft PR; historical SHAs are not current HEAD.  
 **Plan:** `docs/qualification/MASTER_ROADMAP_V1.md` — frozen definition. **Do not revise it to reflect progress.**
 
 ## 1. Why we are doing this — the user intent
@@ -203,3 +203,14 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 - [Actual GitHub Actions run 39963769042](https://github.com/danielforface/aura-lang/actions/runs/39963769042) COMPLETED SUCCESS at code SHA `8929561da`, on Ubuntu. `no-z3-report` job: `cargo test -p aura --locked --no-default-features --test verify_report_status -- --nocapture` **2 passed / 0 failed**; existing `verify_fail_closed` **2 passed / 0 failed**. `z3-report` job: `cargo test -p aura --locked --no-default-features --features z3 --test verify_report_status -- --nocapture` **2 passed / 0 failed**. Logs explicitly show every test `... ok`. EV-039 archives exact outcomes.
 - Implemented `schema=aura.trusted-core.v2`, typed `status` `proved|not_run|invalid_input|failed`, `reason_code`, derived legacy `ok`, and report-writer invariant ensuring proof metadata exists iff `proved`; unsupported solver error kinds remain undifferentiated intentionally. Source docs `VERIFY_REPORT_STATUS_V2.md` describe v2 as a schema change with limited scope. This is **NOT** a complete AURA-Q01-005/006 implementation: `unknown/timeout/cancelled/unsupported/internal-error` and distinct typed process exit codes still need work; Q01 gate stays IN_PROGRESS.
 - **Next safe action:** live-check PR #17 and parent PRs/CI; request maintainer review before any merge. For further engineering without a merge, open a new narrow branch based on current #17 head for structured solver-error classification/exit-code cases, or proof-cache adversarial regressions (Q04-004/Q08-005). Attach tests, CI and evidence; update PROGRESS + CONTEXT_HANDOFF with each commit. Never edit frozen MASTER_ROADMAP_V1.md or claim all verification soundness.
+
+## 25. Structural Unknown continuation (2026-10-23)
+
+- All prior PRs #9/#11/#13/#15/#17 are DRAFT/unmerged; #17 [latest CI 39965574132](https://github.com/danielforface/aura-lang/actions/runs/39965574132) SUCCESS. User need not act to continue engineering; explicit approval required for merging in dependency order.
+- New [Issue #18](https://github.com/danielforface/aura-lang/issues/18) on `qual/Q01-005-typed-solver-unknown`, based on #17. Replaced text-only verifier error classification with typed `VerifyFailureKind::{Failed,Unknown}`; tagged known Z3 Unknown returns in solver, verifier and geometry. Adjusted Rust constructors in CLI/LSP, and converted typed Unknown to report-v2 status/reason. Added deterministic unit tests preventing text-based false classification, plus workflow for both solver feature configurations. **No new CI results observed at this commit.**
+- Remaining: timeout/cancellation/unsupported/internal errors, process exit taxonomy, real forced Z3 Unknown reproducibility and full soundness. New [SOLVER_FAILURE_CLASSIFICATION.md](SOLVER_FAILURE_CLASSIFICATION.md) explains scope. Next action: inspect new Draft PR and GitHub Actions, fix compile/runtime test failures, update PROGRESS+handoff+EVIDENCE_LOG together, keep frozen plan unchanged and do not merge automatically.
+
+## 26. Structured SMT Unknown — scoped CI GREEN (2026-10-24)
+
+- Actual [Actions run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747) at `b27c6cd59e5854e9b0cdce11a8ff5c30bbe41109` finished SUCCESS: **Z3 job:** `typed_failure_tests` 2 passed / 0 failed, real-Z3 report CLI 2 passed / 0 failed, `cargo check` verifier+LSP passed. **No-Z3 job:** affected workspace cargo checks passed and both CLI test suites passed, 2/2 each. This validates the typed routing and previously tested paths, NOT deterministic Z3-Unknown end-to-end or full proof taxonomy. EV-041 appended. PR #19 remains Draft/unmerged with all ancestors.
+- Next safe action: inspect latest GitHub CI and branch head (docs commits schedule new run), proceed to bounded next Q01-005/006 improvement with explicit typed failure semantics and adversarial tests. A new chat should use live PR #19 and `docs/qualification/PROGRESS.md` + this handoff rather than old journal steps. Never edit frozen `MASTER_ROADMAP_V1.md`; do not merge without user approval.

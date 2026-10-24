@@ -660,8 +660,7 @@ where
         suggestions.push("Try adding: invariant true (for a minimal invariant)
 and/or strengthen it with bounds on mutated variables.".to_string());
 
-        Err(VerifyError {
-            message: "inductive verifier: could not infer a safe invariant; please add `invariant <expr>`".to_string(),
+        Err(VerifyError { kind: Default::default(), message: "inductive verifier: could not infer a safe invariant; please add `invariant <expr>`".to_string(),
             span: w.span,
             model: None,
             meta: Some(DiagnosticMetadata {
@@ -977,8 +976,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
 
                 hints.push(format!("Negated goal (SAT): {negated_goal}"));
 
-                Err(VerifyError {
-                    message: msg,
+                Err(VerifyError { kind: Default::default(), message: msg,
                     span,
                     model: model_text.clone(),
                     meta: Some(DiagnosticMetadata {
@@ -992,8 +990,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     }),
                 })
             }
-            SatResult::Unknown => Err(VerifyError {
-                message: format!("{message} (Z3 returned unknown)"),
+            SatResult::Unknown => Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unknown, message: format!("{message} (Z3 returned unknown)"),
                 span,
                 model: None,
                 meta: None,
@@ -1085,8 +1082,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             });
         }
 
-        Err(VerifyError {
-            message: format!("use-after-consume: '{name}' is not available"),
+        Err(VerifyError { kind: Default::default(), message: format!("use-after-consume: '{name}' is not available"),
             span: use_span,
             model: None,
             meta: Some(meta),
@@ -1103,8 +1099,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             })
             .collect::<Vec<_>>();
 
-        VerifyError {
-            message: format!("Sentinel Alert: {}: {}", d.plugin, d.message),
+        VerifyError { kind: Default::default(), message: format!("Sentinel Alert: {}: {}", d.plugin, d.message),
             span: d.span,
             model: d.model.clone(),
             meta: Some(DiagnosticMetadata {
@@ -1172,8 +1167,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             ExprKind::IntLit(_) => Ok(Sort::Int),
             ExprKind::StringLit(_) => Ok(Sort::Int),
             ExprKind::StyleLit { .. } => Ok(Sort::Int),
-            ExprKind::RecordLit { .. } => Err(VerifyError {
-                message: "record literals are not supported in verifier yet".to_string(),
+            ExprKind::RecordLit { .. } => Err(VerifyError { kind: Default::default(), message: "record literals are not supported in verifier yet".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,
@@ -1182,8 +1176,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 .sorts
                 .get(&id.node)
                 .copied()
-                .ok_or_else(|| VerifyError {
-                    message: format!("unknown identifier '{}' in verifier", id.node),
+                .ok_or_else(|| VerifyError { kind: Default::default(), message: format!("unknown identifier '{}' in verifier", id.node),
                     span: id.span,
                     model: None,
                     meta: None,
@@ -1215,8 +1208,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 }
             }
             ExprKind::Lambda { .. } => Ok(Sort::Int),
-            ExprKind::Member { .. } => Err(VerifyError {
-                message: "unexpected member expression in verifier".to_string(),
+            ExprKind::Member { .. } => Err(VerifyError { kind: Default::default(), message: "unexpected member expression in verifier".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,
@@ -1288,8 +1280,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     };
                     Ok(b)
                 }
-                other => Err(VerifyError {
-                    message: format!("expected boolean operator, got {other:?}"),
+                other => Err(VerifyError { kind: Default::default(), message: format!("expected boolean operator, got {other:?}"),
                     span: expr.span,
                     model: None,
                     meta: None,
@@ -1302,8 +1293,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 st.bools
                     .get(&id.node)
                     .cloned()
-                    .ok_or_else(|| VerifyError {
-                        message: format!("'{0}' is not a bool in verifier", id.node),
+                    .ok_or_else(|| VerifyError { kind: Default::default(), message: format!("'{0}' is not a bool in verifier", id.node),
                         span: id.span,
                         model: None,
                         meta: None,
@@ -1311,8 +1301,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
             }
             ExprKind::ForAll { binders, body } | ExprKind::Exists { binders, body } => {
                 if !self.opts.allow_quantifiers {
-                    return Err(VerifyError {
-                        message: format!(
+                    return Err(VerifyError { kind: Default::default(), message: format!(
                             "quantifiers are disabled under SMT profile {:?}; use --smt-profile thorough",
                             self.opts.profile
                         ),
@@ -1322,8 +1311,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     });
                 }
                 if binders.len() > self.opts.max_quant_binders {
-                    return Err(VerifyError {
-                        message: format!(
+                    return Err(VerifyError { kind: Default::default(), message: format!(
                             "too many quantifier binders (max {})",
                             self.opts.max_quant_binders
                         ),
@@ -1365,8 +1353,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 };
                 Ok(q)
             }
-            _ => Err(VerifyError {
-                message: "unsupported boolean expression in verifier".to_string(),
+            _ => Err(VerifyError { kind: Default::default(), message: "unsupported boolean expression in verifier".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,
@@ -1412,8 +1399,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 st.ints
                     .get(&id.node)
                     .cloned()
-                    .ok_or_else(|| VerifyError {
-                        message: format!("'{0}' is not an int in verifier", id.node),
+                    .ok_or_else(|| VerifyError { kind: Default::default(), message: format!("'{0}' is not an int in verifier", id.node),
                         span: id.span,
                         model: None,
                         meta: None,
@@ -1428,8 +1414,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 aura_ast::BinOp::Sub => Ok(self.eval_int_with_mode(left, st, nexus, mode)? - self.eval_int_with_mode(right, st, nexus, mode)?),
                 aura_ast::BinOp::Mul => Ok(self.eval_int_with_mode(left, st, nexus, mode)? * self.eval_int_with_mode(right, st, nexus, mode)?),
                 aura_ast::BinOp::Div => Ok(self.eval_int_with_mode(left, st, nexus, mode)? / self.eval_int_with_mode(right, st, nexus, mode)?),
-                other => Err(VerifyError {
-                    message: format!("expected integer operator, got {other:?}"),
+                other => Err(VerifyError { kind: Default::default(), message: format!("expected integer operator, got {other:?}"),
                     span: expr.span,
                     model: None,
                     meta: None,
@@ -1440,8 +1425,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 match name.as_str() {
                     "tensor.new" => {
                         if all_args.len() != 1 {
-                            return Err(VerifyError {
-                                message: "tensor.new expects 1 arg".to_string(),
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.new expects 1 arg".to_string(),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1470,8 +1454,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     }
                     "tensor.len" => {
                         if all_args.len() != 1 {
-                            return Err(VerifyError {
-                                message: "tensor.len expects 1 arg".to_string(),
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.len expects 1 arg".to_string(),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1488,8 +1471,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     }
                     "tensor.get" => {
                         if all_args.len() != 2 {
-                            return Err(VerifyError {
-                                message: "tensor.get expects 2 args".to_string(),
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.get expects 2 args".to_string(),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1526,8 +1508,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     }
                     "tensor.set" => {
                         if all_args.len() != 3 {
-                            return Err(VerifyError {
-                                message: "tensor.set expects 3 args".to_string(),
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.set expects 3 args".to_string(),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1560,8 +1541,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     "io.println" => {
                         // Z3-verified boundary check (prototype): only allow string literals.
                         if all_args.len() != 1 {
-                            return Err(VerifyError {
-                                message: "io.println expects 1 arg".to_string(),
+                            return Err(VerifyError { kind: Default::default(), message: "io.println expects 1 arg".to_string(),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1587,24 +1567,21 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                                 solver.assert(&len_i.gt(&max_i));
                                 match solver.check() {
                                     SatResult::Unsat => Ok(Int::from_u64(self.ctx(), 0)),
-                                    SatResult::Sat => Err(VerifyError {
-                                        message: format!(
+                                    SatResult::Sat => Err(VerifyError { kind: Default::default(), message: format!(
                                             "io.println boundary check failed: string length {len} exceeds MAX={MAX}"
                                         ),
                                         span: all_args[0].span,
                                         model: solver.get_model().map(|m| m.to_string()),
                                         meta: None,
                                     }),
-                                    SatResult::Unknown => Err(VerifyError {
-                                        message: "io.println boundary check returned unknown".to_string(),
+                                    SatResult::Unknown => Err(VerifyError { kind: crate::solver::VerifyFailureKind::Unknown, message: "io.println boundary check returned unknown".to_string(),
                                         span: all_args[0].span,
                                         model: None,
                                         meta: None,
                                     }),
                                 }
                             }
-                            _ => Err(VerifyError {
-                                message: "io.println expects a string literal".to_string(),
+                            _ => Err(VerifyError { kind: Default::default(), message: "io.println expects a string literal".to_string(),
                                 span: all_args[0].span,
                                 model: None,
                                 meta: None,
@@ -1632,8 +1609,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                         }
 
                         if name.starts_with("hw.") || name.starts_with("ai.") {
-                            return Err(VerifyError {
-                                message: format!("no Nexus plugin handled call '{name}'"),
+                            return Err(VerifyError { kind: Default::default(), message: format!("no Nexus plugin handled call '{name}'"),
                                 span: expr.span,
                                 model: None,
                                 meta: None,
@@ -1691,8 +1667,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 }
 
                 if name.starts_with("hw.") || name.starts_with("ai.") {
-                    return Err(VerifyError {
-                        message: format!("no Nexus plugin handled call '{name}'"),
+                    return Err(VerifyError { kind: Default::default(), message: format!("no Nexus plugin handled call '{name}'"),
                         span: expr.span,
                         model: None,
                         meta: None,
@@ -1712,7 +1687,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                 let out = match name.as_str() {
                     "tensor.set" => {
                         if vals.len() != 3 {
-                            return Err(VerifyError { message: "tensor.set expects 3 args".to_string(), span: expr.span, model: None, meta: None });
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.set expects 3 args".to_string(), span: expr.span, model: None, meta: None });
                         }
                         let t = vals[0].clone();
                         let idx = vals[1].clone();
@@ -1731,7 +1706,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
                     }
                     "tensor.get" => {
                         if vals.len() != 2 {
-                            return Err(VerifyError { message: "tensor.get expects 2 args".to_string(), span: expr.span, model: None, meta: None });
+                            return Err(VerifyError { kind: Default::default(), message: "tensor.get expects 2 args".to_string(), span: expr.span, model: None, meta: None });
                         }
                         let t = vals[0].clone();
                         let idx = vals[1].clone();
@@ -1769,8 +1744,7 @@ and/or strengthen it with bounds on mutated variables.".to_string());
 
                 out
             }
-            _ => Err(VerifyError {
-                message: "unsupported integer expression in verifier".to_string(),
+            _ => Err(VerifyError { kind: Default::default(), message: "unsupported integer expression in verifier".to_string(),
                 span: expr.span,
                 model: None,
                 meta: None,

@@ -1157,11 +1157,12 @@ fn verify_file_with_report(
         ) {
             Ok(rep) => Some(report::analyze_verify_evidence(&program, &rep.proofs)),
             Err(e) => {
+                let (status, reason_code) = report::classify_verifier_failure(&e);
                 let e = miette::Report::new(e).with_source_code(source.clone());
                 let _ = report::write_verify_report(
                     path,
-                    report::VerificationStatus::Failed,
-                    Some("verification_failed"),
+                    status,
+                    Some(reason_code),
                     Some(format!("{e:?}")),
                     Some(&program),
                     None,
@@ -2266,8 +2267,7 @@ fn verify_program_z3_with_manifest_plugins(
     let mut requested: Vec<String> = Vec::new();
     for p in nexus_plugins {
         if !p.trusted {
-            return Err(aura_verify::VerifyError {
-                message: format!(
+            return Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                     "Nexus plugin '{}' is not trusted. Set `trusted = true` in aura.toml to enable it.",
                     p.name
                 ),
@@ -2303,8 +2303,7 @@ fn verify_program_z3_with_manifest_plugins(
             let plugins = (aura_plugin_iot::AuraIotPlugin::new(), aura_plugin_ai::AuraAiPlugin::new());
             aura_verify::verify_program_z3_profile(program, prover, &plugins, &mut nexus, profile)
         }
-        other => Err(aura_verify::VerifyError {
-            message: format!(
+        other => Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                 "unsupported Nexus plugin set: {:?}. Supported built-ins: ['aura-iot', 'aura-ai']",
                 other
             ),
@@ -2328,8 +2327,7 @@ fn verify_program_z3_report_with_manifest_plugins(
     let mut requested: Vec<String> = Vec::new();
     for p in nexus_plugins {
         if !p.trusted {
-            return Err(aura_verify::VerifyError {
-                message: format!(
+            return Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                     "Nexus plugin '{}' is not trusted. Set `trusted = true` in aura.toml to enable it.",
                     p.name
                 ),
@@ -2370,8 +2368,7 @@ fn verify_program_z3_report_with_manifest_plugins(
             let proofs = aura_nexus::drain_proofs(&mut nexus);
             Ok(aura_verify::VerificationReport { status: aura_verify::VerificationStatus::Success, proofs })
         }
-        other => Err(aura_verify::VerifyError {
-            message: format!(
+        other => Err(aura_verify::VerifyError { kind: Default::default(), message: format!(
                 "unsupported Nexus plugin set: {:?}. Supported built-ins: ['aura-iot', 'aura-ai']",
                 other
             ),

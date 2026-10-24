@@ -31,11 +31,19 @@ pub struct TypedBinding {
     pub value: String,
 }
 
+/// Origin of verifier failure, explicitly preserved from an SMT result.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VerifyFailureKind {
+    #[default]
+    Failed,
+    Unknown,
+}
 #[derive(Debug, Error, Diagnostic)]
 #[error("verification error: {message}")]
 #[diagnostic(code(aura::verify))]
 #[allow(unused_assignments)]
 pub struct VerifyError {
+    pub kind: VerifyFailureKind,
     pub message: String,
     #[label]
     pub span: aura_ast::Span,
@@ -76,8 +84,7 @@ impl Prover for NoZ3Prover {
         _lo: u64,
         _hi: u64,
     ) -> Result<(), VerifyError> {
-        Err(VerifyError {
-            message: "Z3 prover is not enabled. Rebuild with `--features aura-verify/z3`.".to_string(),
+        Err(VerifyError { kind: Default::default(), message: "Z3 prover is not enabled. Rebuild with `--features aura-verify/z3`.".to_string(),
             span,
             model: None,
             meta: None,
@@ -87,7 +94,7 @@ impl Prover for NoZ3Prover {
 
 #[cfg(feature = "z3")]
 pub mod z3_prover {
-    use super::{Prover, VerifyError};
+    use super::{Prover, VerifyError, VerifyFailureKind};
     use aura_ast::{Expr, ExprKind, Span};
 
     use z3::{
@@ -167,8 +174,7 @@ pub mod z3_prover {
             let expr_ast = match &value_expr.kind {
                 ExprKind::IntLit(n) => Int::from_u64(self.ctx, *n),
                 _ => {
-                    return Err(VerifyError {
-                        message: "Z3 prover currently only supports integer literals (symbolic execution TBD)".to_string(),
+                    return Err(VerifyError { kind: Default::default(), message: "Z3 prover currently only supports integer literals (symbolic execution TBD)".to_string(),
                         span,
                         model: None,
                         meta: None,
@@ -188,15 +194,13 @@ pub mod z3_prover {
                 SatResult::Unsat => Ok(()),
                 SatResult::Sat => {
                     let model = solver.get_model().map(|m| m.to_string());
-                    Err(VerifyError {
-                        message: format!("range proof failed: value may be outside [{lo}..{hi}]"),
+                    Err(VerifyError { kind: Default::default(), message: format!("range proof failed: value may be outside [{lo}..{hi}]"),
                         span,
                         model,
                         meta: None,
                     })
                 }
-                SatResult::Unknown => Err(VerifyError {
-                    message: "Z3 returned unknown for range proof".to_string(),
+                SatResult::Unknown => Err(VerifyError { kind: VerifyFailureKind::Unknown, message: "Z3 returned unknown for range proof".to_string(),
                     span,
                     model: None,
                     meta: None,

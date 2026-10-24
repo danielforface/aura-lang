@@ -18,3 +18,7 @@ In Rust, the writer derives `ok` from the typed enum, rejects success without pr
 **Assurance limitations:** passing tests proves CLI serialization behavior on tested Ubuntu configurations only. Neither reports nor `proved` certify backend translation correctness, C integer semantics, trust assumptions, memory safety or general verifier soundness. See the frozen Q01/Q02/Q04 requirements.
 
 **Test gate:** real binary `verify --report` in builds both with and without `z3`; expected no-solver, parse-error, false assertion and true assertion statuses, exit code and proof metadata. Collect CI links and results before marking IN_REVIEW. Keep this work in a stacked Draft PR; no autonomous merge.
+
+## Addendum — structured Unknown (2026-10-24)
+
+The later [Issue #18 / PR #19](https://github.com/danielforface/aura-lang/pull/19) extends this v2 enum with `unknown` and `reason_code=solver_unknown` *only* for explicitly typed `VerifyFailureKind::Unknown` originating from recognized Z3 `SatResult::Unknown` paths. Scoped [CI run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747) passed. `failed` remains generic for other errors. Timeout, cancelled, unsupported, internal error and exact exit-code taxonomy remain open; no deterministic forced Z3-Unknown end-to-end test exists yet. This addendum does not retroactively change v2's original baseline review claim or the frozen roadmap.

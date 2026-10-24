@@ -1,0 +1,44 @@
+name: Q01 typed solver outcome
+on:
+  push:
+    branches: ['qual/Q01-005-typed-solver-unknown']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Check workspace consumers without Z3
+        run: cargo check --locked -p aura -p aura-verify -p aura-lsp --no-default-features
+      - name: CLI no-Z3 report and fail-closed tests
+        run: |
+          cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture
+          cargo test --locked -p aura --no-default-features --test verify_fail_closed -- --nocapture
+  z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native solver dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Typed failure unit tests
+        run: cargo test --locked -p aura --no-default-features --features z3 --bin aura typed_failure_tests -- --nocapture
+      - name: Real Z3 report CLI tests
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_report_status -- --nocapture
+      - name: Check verifier and LSP
+        run: |
+          cargo check --locked -p aura-verify --features z3
+          cargo check --locked -p aura-lsp
