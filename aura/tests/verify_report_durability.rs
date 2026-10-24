@@ -69,3 +69,18 @@ fn report_destination_must_not_destroy_its_input_source() {
     assert!(diagnostic.contains("report") && diagnostic.contains("source"),
         "rejection must explain invalid report destination: {diagnostic}");
 }
+
+#[cfg(unix)]
+#[test]
+fn symlink_alias_to_source_must_not_destroy_input() {
+    let code = "cell main() ->:\n    assert true\n";
+    let f = Fixture::new(code);
+    let alias=f.dir.join("source-alias.aura");
+    std::os::unix::fs::symlink(&f.src,&alias).expect("make alias");
+    let out=f.verify(&f.src,&alias);
+    assert!(!out.status.success(),"alias report target must be rejected");
+    assert_eq!(fs::read_to_string(&f.src).expect("source still exists"),code);
+    let diagnostic=String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    assert!(diagnostic.contains("report") && diagnostic.contains("source"),
+        "explain unsafe alias: {diagnostic}");
+}

@@ -21,3 +21,19 @@ jobs:
         run: cargo test --locked -p aura --no-default-features --test verify_report_durability -- --nocapture
       - name: Existing no-Z3 report regression
         run: cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture
+
+  report-durability-with-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native solver prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Real CLI report durability tests with solver
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_report_durability -- --nocapture
+      - name: Existing Z3 report behavior
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_report_status -- --nocapture
