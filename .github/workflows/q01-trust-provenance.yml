@@ -19,6 +19,8 @@ jobs:
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
       - name: Real no-Z3 trust-origin contract tests
         run: cargo test --locked -p aura --no-default-features --test verify_trust_provenance -- --nocapture
+      - name: Reviewed v2 trust-surface audit (must be NOT_RUN without Z3)
+        run: bash tools/trusted-core/check.sh
       - name: Existing verifier fail-closed regressions
         run: cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture
   trust-provenance-z3:

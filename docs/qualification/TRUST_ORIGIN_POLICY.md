@@ -11,3 +11,7 @@ CI must show baseline RED due to missing trust fields/recursion, then a scoped G
 ## Baseline and implementation status (2026-10-24)
 
 [Baseline 40132655326](https://github.com/danielforface/aura-lang/actions/runs/40132655326) no-Z3 0/4 PASS, all failures demonstrate missing distinct trust sources or unsafe-in-cell recursion. The first code patch adds typed `AssumptionSourceKind` and `AssumptionSource{kind,span,cell}`, with corresponding arrays on `TrustedSurface`, and descends into cells, macros, render and nested control flow. The legacy `verify.assumptions` array remains backward compatible. `docs/trusted-core.md` updated from obsolete v1 description. **New code CI pending.** Next repair the legacy audit script and v1 baseline without allowing a no-Z3 report to be mistaken for proof. No automatic merge.
+
+## Trust-core golden audit migration
+
+The repository's former `tools/trusted-core/check.sh` + `compat-smoke.trusted-core.json` assumed no-Z3 CLI success and `v1/ok:true`. The updated audit must require a nonzero CLI outcome and `v2/not_run/ok:false` before comparing *source trust category projection only*. The script now emits a stable reviewed v2 projection including `assumption_origins`, `explicit_assumes`, `preconditions`, unsafe and extern lists; it never counts no-Z3 as proved. Baseline offsets should only be accepted after real GitHub Actions validates exact output. The audit is not a proof engine or TCB soundness certification.

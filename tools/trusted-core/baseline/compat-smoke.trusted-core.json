@@ -1,23 +1,26 @@
 {
-  "schema": "aura.trusted-core.v1",
-  "input": "tests/compat/smoke.aura",
-  "ok": true,
+  "ok": false,
+  "schema": "aura.trusted-core.v2",
+  "status": "not_run",
   "trusted": {
-    "unsafe_blocks": [],
+    "assumption_origins": [],
+    "explicit_assumes": [],
     "extern_cells_trusted": [
       {
-        "offset": 317,
-        "len": 41
+        "len": 41,
+        "offset": 317
       },
       {
-        "offset": 367,
-        "len": 38
+        "len": 38,
+        "offset": 367
       },
       {
-        "offset": 414,
-        "len": 47
+        "len": 47,
+        "offset": 414
       }
     ],
-    "extern_cells_untrusted": []
+    "extern_cells_untrusted": [],
+    "preconditions": [],
+    "unsafe_blocks": []
   }
 }
