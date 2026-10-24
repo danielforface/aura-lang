@@ -852,6 +852,16 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         );
 
         let sat = solver.check_assumptions(&assumption_lits);
+        // Temporary, opt-in diagnostics for Issue #24. Removed when root cause is fixed.
+        if std::env::var_os("AURA_DIAG_SMT").is_some() {
+            eprintln!("AURA_DIAG_SMT params={:?} labels={:?} negative_goal={} sat={:?}",
+                self.opts.profile, assumption_lits.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+                negated_goal, sat);
+            eprintln!("AURA_DIAG_SMT solver assertions: {}", solver);
+            let independent = Solver::new(ctx);
+            independent.assert(negated_goal);
+            eprintln!("AURA_DIAG_SMT independent goal query: {:?}", independent.check());
+        }
 
         let res = match sat {
             SatResult::Unsat => {
