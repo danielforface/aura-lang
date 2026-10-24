@@ -1,5 +1,5 @@
 # Q01 typed SMT Unknown — bounded status propagation
-**Issue:** [#18](https://github.com/danielforface/aura-lang/issues/18). **State:** source patch; CI evidence required before IN_REVIEW.
+**Issue:** [#18](https://github.com/danielforface/aura-lang/issues/18). **State:** scoped CI green ([run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747)); [Draft PR #19](https://github.com/danielforface/aura-lang/pull/19) IN_REVIEW, unmerged; full taxonomy remains open.
 
 `VerifyError.kind` carries a structural `VerifyFailureKind::{Failed,Unknown}`. Known Z3 `SatResult::Unknown` paths in the verifier and geometry are tagged explicitly and become report-v2 `status=unknown`, `reason_code=solver_unknown`, `ok=false`. Generic errors remain failed. Classifying based on text is forbidden.
 
