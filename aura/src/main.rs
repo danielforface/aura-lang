@@ -1099,6 +1099,59 @@ fn verify_file(
     Ok(())
 }
 
+/// A report from a previous invocation must never survive a fresh failure.
+/// Reject source/output aliases *before* invalidating prior output.
+fn prepare_verify_report_destination(source: &Path, out: &Path) -> miette::Result<()> {
+    let same_path = source == out
+        || match (fs::canonicalize(source), fs::canonicalize(out)) {
+            (Ok(source_real), Ok(out_real)) => source_real == out_real,
+            _ => false,
+        };
+    if same_path {
+        return Err(miette::miette!(
+            "verification report destination '{}' must not be the Aura source '{}'",
+            out.display(),
+            source.display()
+        ));
+    }
+    match fs::remove_file(out) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(miette::miette!(
+            "cannot invalidate previous verification report destination '{}': {e}",
+            out.display()
+        )),
+    }
+}
+
+/// A report output failure is part of the observable command failure. Never
+/// silently return only the parse/sema/solver error and leave an old proof.
+fn fail_verify_with_report(
+    source: &Path,
+    status: report::VerificationStatus,
+    reason: &'static str,
+    program: Option<&aura_ast::Program>,
+    out: &Path,
+    cause: miette::Report,
+) -> miette::Result<()> {
+    report::write_verify_report(
+        source,
+        status,
+        Some(reason),
+        Some(format!("{cause:?}")),
+        program,
+        None,
+        out,
+    )
+    .map_err(|write_error| {
+        miette::miette!(
+            "verification failed ({cause}); additionally could not write verification report '{}': {write_error}",
+            out.display()
+        )
+    })?;
+    Err(cause)
+}
+
 fn verify_file_with_report(
     path: &Path,
     parse_cfg: &ParseConfig,
@@ -1106,8 +1159,34 @@ fn verify_file_with_report(
     smt_profile: aura_verify::SmtProfile,
     report_out: &Path,
 ) -> miette::Result<()> {
-    let src = fs::read_to_string(path).into_diagnostic()?;
-    let src = augment_with_sdk_std(&src)?;
+    prepare_verify_report_destination(path, report_out)?;
+
+    let src = match fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(e) => {
+            return fail_verify_with_report(
+                path,
+                report::VerificationStatus::InvalidInput,
+                "io_error",
+                None,
+                report_out,
+                miette::miette!("cannot read Aura source '{}': {e}", path.display()),
+            );
+        }
+    };
+    let src = match augment_with_sdk_std(&src) {
+        Ok(src) => src,
+        Err(e) => {
+            return fail_verify_with_report(
+                path,
+                report::VerificationStatus::InvalidInput,
+                "input_preparation_failed",
+                None,
+                report_out,
+                e,
+            );
+        }
+    };
     let source = NamedSource::new(display_path(path), src.clone());
 
     let program = match aura_parse::parse_source_with_config(&src, parse_cfg)
@@ -1115,16 +1194,10 @@ fn verify_file_with_report(
     {
         Ok(p) => p,
         Err(e) => {
-            let _ = report::write_verify_report(
-                path,
-                report::VerificationStatus::InvalidInput,
-                Some("parse_error"),
-                Some(format!("{e:?}")),
-                None,
-                None,
-                report_out,
+            return fail_verify_with_report(
+                path, report::VerificationStatus::InvalidInput, "parse_error",
+                None, report_out, e,
             );
-            return Err(e);
         }
     };
 
@@ -1134,52 +1207,30 @@ fn verify_file_with_report(
         .check_program(&program)
         .map_err(|e| miette::Report::new(e).with_source_code(source.clone()))
     {
-        let _ = report::write_verify_report(
-            path,
-            report::VerificationStatus::InvalidInput,
-            Some("type_error"),
-            Some(format!("{e:?}")),
-            Some(&program),
-            None,
-            report_out,
+        return fail_verify_with_report(
+            path, report::VerificationStatus::InvalidInput, "type_error",
+            Some(&program), report_out, e,
         );
-        return Err(e);
     }
 
     #[cfg(feature = "z3")]
     {
         let mut prover = aura_verify::Z3Prover::new();
         let verify = match verify_program_z3_report_with_manifest_plugins(
-            &program,
-            &mut prover,
-            nexus_plugins,
-            smt_profile,
+            &program, &mut prover, nexus_plugins, smt_profile,
         ) {
             Ok(rep) => Some(report::analyze_verify_evidence(&program, &rep.proofs)),
             Err(e) => {
                 let (status, reason_code) = report::classify_verifier_failure(&e);
-                let e = miette::Report::new(e).with_source_code(source.clone());
-                let _ = report::write_verify_report(
-                    path,
-                    status,
-                    Some(reason_code),
-                    Some(format!("{e:?}")),
-                    Some(&program),
-                    None,
-                    report_out,
+                return fail_verify_with_report(
+                    path, status, reason_code, Some(&program), report_out,
+                    miette::Report::new(e).with_source_code(source.clone()),
                 );
-                return Err(e);
             }
         };
-
         report::write_verify_report(
-            path,
-            report::VerificationStatus::Proved,
-            None,
-            None,
-            Some(&program),
-            verify,
-            report_out,
+            path, report::VerificationStatus::Proved, None, None,
+            Some(&program), verify, report_out,
         )?;
         return Ok(());
     }
@@ -1187,17 +1238,11 @@ fn verify_file_with_report(
     #[cfg(not(feature = "z3"))]
     {
         let _ = (nexus_plugins, smt_profile);
-        // Retain trusted-surface metadata, but do not invent successful proof evidence.
-        report::write_verify_report(
-            path,
-            report::VerificationStatus::NotRun,
-            Some("verifier_unavailable"),
-            Some(Z3_UNAVAILABLE_MESSAGE.to_string()),
-            Some(&program),
-            None,
-            report_out,
-        )?;
-        return Err(miette::miette!("{}", Z3_UNAVAILABLE_MESSAGE));
+        return fail_verify_with_report(
+            path, report::VerificationStatus::NotRun, "verifier_unavailable",
+            Some(&program), report_out,
+            miette::miette!("{}", Z3_UNAVAILABLE_MESSAGE),
+        );
     }
 }
 
