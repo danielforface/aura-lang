@@ -648,7 +648,30 @@ fn main() -> miette::Result<()> {
             smt_profile,
             report,
         } => {
-            let resolved = resolve_manifest_config(&path, &[], &[], &[])?;
+            // Even manifest/dependency initialization can fail before verification.
+            // With --report, never leave a previous ok:true artifact at that path.
+            let resolved = match resolve_manifest_config(&path, &[], &[], &[]) {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    if let Some(report_path) = report.as_deref() {
+                        prepare_verify_report_destination(&path, report_path)?;
+                        let reason = if !path.exists() {
+                            "io_error"
+                        } else {
+                            "input_preparation_failed"
+                        };
+                        return fail_verify_with_report(
+                            &path,
+                            report::VerificationStatus::InvalidInput,
+                            reason,
+                            None,
+                            report_path,
+                            e,
+                        );
+                    }
+                    return Err(e);
+                }
+            };
             let parse_cfg = build_parse_config(&cli.edition, &cli.feature, &resolved);
             let smt_profile: aura_verify::SmtProfile = smt_profile
                 .unwrap_or_else(|| profile.default_smt_profile())
