@@ -2,13 +2,13 @@
 
 **Updated:** 2026-10-24  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
-**Working branch:** `qual/Q01-005-typed-solver-unknown` (stacked on #17 → #15 → #13 → #11 → #9; unmerged)  
+**Working branch:** `qual/Q01-002-report-durability` (stacked on #19 → #17 → #15 → #13 → #11 → #9; unmerged)  
 **Active gate:** **Q01 — Fail-closed verifier and CLI** (Q00 governance branch remains in review)  
 **Active release train:** **R1 — Trust emergency** (R0 remains unmerged)  
-**Status:** **IN_PROGRESS** (Q01-005 typed SMT Unknown scoped CI GREEN; PR #19 IN_REVIEW and unmerged; remaining taxonomy and assurance tasks open)  
+**Status:** **IN_PROGRESS** (Issue #20 report durability GREEN on real CLI with and without Z3, Draft PR #21 IN_REVIEW; overall Q01 remains open)  
 **Release:** none created in this work; no new stable-language claim.  
-**Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3](https://github.com/danielforface/aura-lang/pull/11) → [#13 — Native](https://github.com/danielforface/aura-lang/pull/13) → [#15 — check](https://github.com/danielforface/aura-lang/pull/15) → [#17 — report v2](https://github.com/danielforface/aura-lang/pull/17). All remain Draft/unmerged. **Current issue:** [#18](https://github.com/danielforface/aura-lang/issues/18), narrow typed Unknown result. [Draft PR #19](https://github.com/danielforface/aura-lang/pull/19) stacked onto #17; all drafts unmerged.  
-**Next planned task:** review stacked PR #19 and predecessors without automatic merge; scope next Q01-005/006 test-first slice for non-Unknown result taxonomy and proof-failure reporting, maintaining explicit limitations on unsupported/timeout/cancelled outcomes.
+**Draft PR stack:** [#9 — R0](https://github.com/danielforface/aura-lang/pull/9) → [#11 — no-Z3](https://github.com/danielforface/aura-lang/pull/11) → [#13 — Native](https://github.com/danielforface/aura-lang/pull/13) → [#15 — check](https://github.com/danielforface/aura-lang/pull/15) → [#17 — report v2](https://github.com/danielforface/aura-lang/pull/17) → [#19 — typed Unknown](https://github.com/danielforface/aura-lang/pull/19) → [#21 — report integrity](https://github.com/danielforface/aura-lang/pull/21). All remain Draft/unmerged. **Current issue:** [#20](https://github.com/danielforface/aura-lang/issues/20), report integrity. [Draft PR #21](https://github.com/danielforface/aura-lang/pull/21) stacked onto [#19](https://github.com/danielforface/aura-lang/pull/19); all drafts unmerged.  
+**Next planned task:** review Draft PR #21 and all ancestors in dependency order; do not merge without explicit maintainer approval. Next engineering slice: remaining Q01-005/006 outcome taxonomy and adversarial trust/proof cache testing, with test-first evidence.
 
 This file is an evolving dashboard, **not** the immutable plan. Gate completion means supporting evidence exists in [EVIDENCE_LOG.md](EVIDENCE_LOG.md); a status table is not evidence.
 
@@ -17,7 +17,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Gate | Track | State | Verified exit evidence |
 |---|---|---|---|
 | Q00 | Governance, baseline and continuity | IN_PROGRESS | PENDING |
-| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Q01-001/002 [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39929440082), Q01-003/004 [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39949851377), Q01-006 report-v2 scoped [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39963769042); rest pending |
+| Q01 | Fail-closed verifier and CLI | IN_PROGRESS | Q01-001/002 [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39929440082), Q01-003/004 [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39949851377), report v2 [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39963769042), typed Unknown [GREEN](https://github.com/danielforface/aura-lang/actions/runs/39973715747), report integrity [GREEN](https://github.com/danielforface/aura-lang/actions/runs/40120564647); other obligations pending |
 | Q02 | Typed numeric semantics | NOT_STARTED | PENDING |
 | Q03 | Composite/IR/backend fidelity | NOT_STARTED | PENDING |
 | Q04 | Formal soundness and trust accounting | NOT_STARTED | PENDING |
@@ -124,3 +124,22 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - **2026-10-23:** [Issue #18](https://github.com/danielforface/aura-lang/issues/18) begun on stacked branch with typed VerifyFailureKind, direct Z3 Unknown propagation, v2 report mapping and unit/CLI regression checks. Parent #17 latest [CI 39965574132](https://github.com/danielforface/aura-lang/actions/runs/39965574132) PASS. New code test results **NOT YET OBSERVED**; no full taxonomy claim.
 
 - **2026-10-24 (Q01-005 scoped GREEN):** [PR #19](https://github.com/danielforface/aura-lang/pull/19) code SHA `b27c6cd59e5854e9b0cdce11a8ff5c30bbe41109`, [GitHub Actions run 39973715747](https://github.com/danielforface/aura-lang/actions/runs/39973715747) completed SUCCESS (both jobs). Z3: **2/2 typed-status unit tests** and **2/2 real solver report regressions** passed, plus verifier and LSP check success. No-Z3: `aura`, `aura-verify`, `aura-lsp` compile checks passed; **2/2 report + 2/2 fail-closed real CLI tests** passed. IN_REVIEW until review/merge, not Q01-wide VERIFIED. Does not force real Z3 Unknown or test timeout/cancellation. EV-041. All stacked PRs remain unmerged.
+
+- **2026-10-24 (Q01 report durability tests prepared):** [Issue #20](https://github.com/danielforface/aura-lang/issues/20), branch `qual/Q01-002-report-durability` based on PR #19. Four real-CLI negative tests target stale `ok:true` report after unreadable source, silent output-write failure, same source and report path, and preservation of existing correct parse-error report. Dedicated no-Z3 Actions workflow added. **Baseline RED not yet observed when committed; no code fix in test-first commit.** Next examine actual logs before implementation. Frozen roadmap unchanged, parent #19 unmerged.
+
+- **2026-10-24 (Issue #20 production patch following isolated test-first SHA `89b6048`):** `verify --report` now validates source/output distinctness (including canonical aliases), invalidates prior report before reading source, emits a truthful `invalid_input/io_error` report for missing sources, and never swallows report output errors when parser/sema/Z3 fails. All paths use shared `fail_verify_with_report`; no-Z3 still fails closed. Test-first baseline CI [run 40119465608](https://github.com/danielforface/aura-lang/actions/runs/40119465608) had not yet completed during source patch preparation; **do not assume observed RED**. Patched CI **NOT YET OBSERVED**. Atomic durable fsync / concurrency are explicitly out of scope.
+
+- **2026-10-24 (expanded Issue #20 regression matrix):** added a Unix symlink-alias-to-input source path negative test and parallel real-Z3 report-durability CI job. The initial baseline RED and the initial patch's GREEN **had not finished at this subsequent commit's creation**. The enhanced job must pass with real Z3 as well as no-Z3; do not mark accepted before observed outcomes. The code patch remains unchanged in this commit.
+
+- **2026-10-24 (Issue #20 CI defect follow-up):** [baseline RED 40119465608](https://github.com/danielforface/aura-lang/actions/runs/40119465608) on test-only SHA `89b6048` compiled 4 real CLI tests: **1 passed, 3 failed as expected** (stale `ok:true` on missing source, swallowed output-write error, source overwritten by report). [First implementation run 40119755541](https://github.com/danielforface/aura-lang/actions/runs/40119755541) at `f0a11ff` compiled 4 tests, **3 passed / 1 failed**: source protection and write-error visibility fixed, but missing file still left old success. Root cause: `resolve_manifest_config` failed *before* `verify_file_with_report` report invalidation. New patch adds report preflight + invalid-input failure JSON to the `Cmd::Verify` manifest-resolution error branch. New CI outcome **NOT YET OBSERVED**; must rerun until GREEN, including Z3 and symlink alias. EV-045/046.
+
+## Issue #20 report integrity — scoped GREEN (2026-10-24)
+
+| Observed run | Code | Real CLI outcome |
+|---|---|---|
+| [Baseline 40119465608](https://github.com/danielforface/aura-lang/actions/runs/40119465608) | `89b6048` tests-only | RED, 1/4 passed: stale `ok:true`, swallowed report error, input source overwritten |
+| [First patch 40119755541](https://github.com/danielforface/aura-lang/actions/runs/40119755541) | `f0a11ff` | RED, 3/4 passed: missing-input report path still stale |
+| [Extended tests 40120058985](https://github.com/danielforface/aura-lang/actions/runs/40120058985) | `de0b5ac` | RED, 4/5 passed with AND without Z3: same missing-input early manifest failure remained |
+| [Accepted patch 40120564647](https://github.com/danielforface/aura-lang/actions/runs/40120564647) | `24ba1a3` | **GREEN**, BOTH no-Z3 and Z3: 5/5 report durability tests and 2/2 existing report tests each, total 14 passed |
+
+- **Acceptance scope:** input/file aliases tested on Ubuntu, missing input invalidates old success, explicit output failure and regression preservation. PR #21 remains Draft/IN_REVIEW; no release or merge. **Not established:** full crash-atomic report commit, concurrent report-path/symlink races, hardlink identity, portable cross-platform file safety or comprehensive Q01 proof results. See EV-047 and [VERIFY_REPORT_DESTINATION_POLICY.md](VERIFY_REPORT_DESTINATION_POLICY.md).
