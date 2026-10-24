@@ -65,3 +65,38 @@ fn aura_fast_ground_integer_reflexivity_must_prove(){
     verify_program_z3_profile(&parsed,&mut prover,&(),&mut nexus,SmtProfile::Fast)
         .expect("Fast must prove plain ground reflexivity too");
 }
+
+#[test]
+fn raw_z3_replicates_aura_solver_parameters_on_empty_state(){
+    use z3::{ast::{Ast,Bool,Int},Config,Context,Params,SatResult,Solver};
+    let ctx=Context::new(&Config::new());
+    let mut params=Params::new(&ctx);
+    params.set_u32("timeout",2_000);
+    params.set_u32("smt.random_seed",0);
+    params.set_u32("sat.random_seed",0);
+    params.set_bool("unsat_core",true);
+    let solver=Solver::new(&ctx);
+    solver.set_params(&params);
+    let label=Bool::new_const(&ctx,"negated_goal_0");
+    let eq=Int::from_u64(&ctx,1)._eq(&Int::from_u64(&ctx,1));
+    let negative=eq.not();
+    solver.assert(&label.implies(&negative));
+    let assumptions=[label];
+    eprintln!("REPLICATED raw params, guarded goal: {}",negative);
+    let result=solver.check_assumptions(&assumptions);
+    eprintln!("REPLICATED raw params, result: {:?}", result);
+    assert_eq!(result,SatResult::Unsat,"same params and proof protocol must be UNSAT");
+}
+#[test]
+fn prover_context_raw_negation_is_unsat(){
+    use z3::{ast::{Ast,Bool,Int},SatResult,Solver};
+    let prover=Z3Prover::new();
+    let ctx=prover.ctx_static();
+    let solver=Solver::new(ctx);
+    let label=Bool::new_const(ctx,"negated_goal_0");
+    let eq=Int::from_u64(ctx,1)._eq(&Int::from_u64(ctx,1));
+    solver.assert(&label.implies(&eq.not()));
+    let sat=solver.check_assumptions(&[label]);
+    eprintln!("LEAKED prover context raw check: {:?}",sat);
+    assert_eq!(sat,SatResult::Unsat);
+}
