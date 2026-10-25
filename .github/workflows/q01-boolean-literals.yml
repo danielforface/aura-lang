@@ -22,6 +22,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Strict vendored Z3 v0.8.1 build-source compatibility preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
       - name: Real no-Z3 boolean literal fail-closed CLI regressions
         run: cargo test --locked -p aura --no-default-features --test verify_bool_literals -- --nocapture
       - name: Existing no-Z3 truthfulness regressions
@@ -39,6 +43,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Strict vendored Z3 v0.8.1 build-source compatibility preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
       - name: Real Z3 true/false and branch-path regressions
         run: cargo test --locked -p aura --no-default-features --features z3 --test verify_bool_literals -- --nocapture
       - name: Existing Z3 report, trust-origin and proof differential regressions
