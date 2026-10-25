@@ -338,6 +338,25 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
+impl Expr {
+    /// Decode the two reserved Boolean literal lexemes from the current AST.
+    ///
+    /// The parser currently stores these as identifiers rather than a dedicated
+    /// BoolLit variant. This exact AST-level conversion is shared by semantic
+    /// typing and SMT translation; it must not infer a constant from free-form
+    /// source text, diagnostics or a similarly named variable.
+    pub fn boolean_literal(&self) -> Option<bool> {
+        match &self.kind {
+            ExprKind::Ident(id) => match id.node.as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
     Ident(Ident),

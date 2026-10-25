@@ -71,7 +71,6 @@ fn nested_assume_inside_conditional_is_counted(){
 
 #[cfg(feature = "z3")]
 #[test]
-#[ignore = "Issue #28: verifier rejects if true as non-Boolean; not a trust-provenance failure"]
 fn known_bug_boolean_literal_if_true_should_verify(){
     let f=Fixture::new("cell main() ->:\n    if true:\n        assume 1 == 1\n    assert 1 == 1\n");
     let (out,json)=f.run();

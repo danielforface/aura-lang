@@ -1743,7 +1743,8 @@ impl Checker {
                 }
             }
             ExprKind::Ident(id) => {
-                if id.node == "true" || id.node == "false" {
+                // Same exact reserved AST-literal decoding used by the SMT verifier.
+                if expr.boolean_literal().is_some() {
                     return Ok(Type::Bool);
                 }
 
