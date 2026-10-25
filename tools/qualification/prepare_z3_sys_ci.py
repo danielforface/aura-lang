@@ -23,9 +23,21 @@ if not vendored.is_file():
 before = vendored.read_text(encoding="utf-8")
 broken = "m_lower_bound == c.m_low_bound"
 correct = "m_lower_bound == c.m_lower_bound"
-if before.count(broken) != 1:
-    raise SystemExit(f"Unexpected vendored Z3 source drift: expected one exact {broken!r} in {vendored}")
-vendored.write_text(before.replace(broken, correct), encoding="utf-8")
-after = vendored.read_text(encoding="utf-8")
-assert broken not in after and after.count(correct) == before.count(correct) + 1
-print(f"Patched exactly one known z3-sys 0.8.1 vendored column_info.h reference: {vendored}")
+broken_count = before.count(broken)
+correct_count = before.count(correct)
+if broken_count == 1 and correct_count == 0:
+    # First clean build: apply exactly one known upstream member-reference fix.
+    vendored.write_text(before.replace(broken, correct), encoding="utf-8")
+    print(f"Patched one pinned z3-sys 0.8.1 column_info.h reference: {vendored}")
+elif broken_count == 0 and correct_count == 1:
+    # Rust cache may restore the same source after a previous CI preflight.
+    # Re-accept only the exact expected postimage, never arbitrary drift.
+    print(f"Confirmed exact prior pinned Z3 compatibility correction: {vendored}")
+else:
+    raise SystemExit(
+        f"Unexpected vendored Z3 source drift in {vendored}: "
+        f"broken occurrences={broken_count}, expected postimage occurrences={correct_count}"
+    )
+verified = vendored.read_text(encoding="utf-8")
+if verified.count(broken) != 0 or verified.count(correct) != 1:
+    raise SystemExit(f"Vendored Z3 source validation failed after preflight: {vendored}")
