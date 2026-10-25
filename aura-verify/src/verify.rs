@@ -1166,6 +1166,11 @@ and/or strengthen it with bounds on mutated variables.".to_string());
     }
 
     fn infer_sort(&self, expr: &Expr, st: &mut SymState<'static>) -> Result<Sort, VerifyError> {
+        // The parser currently encodes the exact reserved true/false tokens
+        // as Ident; they are constants, not symbolic state variables.
+        if expr.boolean_literal().is_some() {
+            return Ok(Sort::Bool);
+        }
         match &expr.kind {
             ExprKind::IntLit(_) => Ok(Sort::Int),
             ExprKind::StringLit(_) => Ok(Sort::Int),
@@ -1249,6 +1254,11 @@ and/or strengthen it with bounds on mutated variables.".to_string());
         nexus: &mut NexusContext,
         mode: EvalMode,
     ) -> Result<Bool<'static>, VerifyError> {
+        // Preserve both truth values exactly. Never replace a failed lookup
+        // with an assumed-true proposition: only reserved AST literals qualify.
+        if let Some(value) = expr.boolean_literal() {
+            return Ok(Bool::from_bool(self.ctx(), value));
+        }
         match &expr.kind {
             ExprKind::Unary { op: aura_ast::UnaryOp::Not, expr: inner } => {
                 Ok(self.eval_bool_with_mode(inner, st, nexus, mode)?.not())
