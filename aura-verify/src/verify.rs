@@ -515,6 +515,20 @@ where
 
                 Ok(())
             }
+            Stmt::Match(m) => {
+                // Match arm conditions and execution are not yet translated to SMT.
+                // It is unsound to treat this executable statement as a no-op:
+                // assertions in reachable arms would otherwise be skipped and
+                // the containing cell could be reported as fully proved.
+                Err(VerifyError {
+                    kind: crate::solver::VerifyFailureKind::Unsupported,
+                    message: "match statement proof obligations are not supported by the verifier"
+                        .to_string(),
+                    span: m.span,
+                    model: None,
+                    meta: None,
+                })
+            }
             Stmt::While(w) => {
                 let _ = self.eval_bool(&w.cond, st, nexus)?;
 

@@ -1,0 +1,61 @@
+name: Q01 match proof obligation fail-closed
+on:
+  push:
+    branches: ['qual/Q01-009-match-proof-obligations']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CC: clang
+  CXX: clang++
+jobs:
+  match-no-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Strict pinned Z3 0.8.1 vendored-source preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
+      - name: Real no-Z3 match fail-closed and controls
+        run: cargo test --locked -p aura --no-default-features --test verify_match_fail_closed -- --nocapture
+      - name: Existing no-Z3 reports and Boolean controls
+        run: |
+          cargo test --locked -p aura --no-default-features --test verify_fail_closed -- --nocapture
+          cargo test --locked -p aura --no-default-features --test verify_report_status -- --nocapture
+          cargo test --locked -p aura --no-default-features --test verify_bool_literals -- --nocapture
+  match-z3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native and SMT dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config libz3-dev
+      - name: Strict pinned Z3 0.8.1 vendored-source preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
+      - name: Real Z3 match proof omission regressions
+        run: cargo test --locked -p aura --no-default-features --features z3 --test verify_match_fail_closed -- --nocapture
+      - name: Existing Z3 report, Boolean, trust and unsupported controls
+        run: |
+          cargo test --locked -p aura --no-default-features --features z3 --test verify_report_status -- --nocapture
+          cargo test --locked -p aura --no-default-features --features z3 --test verify_report_unsupported -- --nocapture
+          cargo test --locked -p aura --no-default-features --features z3 --test verify_bool_literals -- --nocapture
+          cargo test --locked -p aura --no-default-features --features z3 --test verify_trust_provenance -- --nocapture
+          cargo test --locked -p aura-verify --features z3 --test quantifier_soundness_z3 -- --nocapture
+      - name: Verifier and editor compile checks
+        run: |
+          cargo check --locked -p aura-verify --no-default-features --features z3
+          cargo check --locked -p aura-lsp
