@@ -565,6 +565,20 @@ where
                     meta: None,
                 })
             }
+            Stmt::UnsafeBlock(unsafe_block) => {
+                // Semantic analysis visits unsafe bodies, but the verifier has
+                // no qualified proof model for their trust boundary.
+                // Silently ignoring this node would erase assertions and
+                // assumptions from reachable paths and return a false proof.
+                Err(VerifyError {
+                    kind: crate::solver::VerifyFailureKind::Unsupported,
+                    message: "unsafe block proof obligations are not supported by the verifier"
+                        .to_string(),
+                    span: unsafe_block.span,
+                    model: None,
+                    meta: None,
+                })
+            }
             Stmt::While(w) => {
                 let _ = self.eval_bool(&w.cond, st, nexus)?;
 
