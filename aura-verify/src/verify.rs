@@ -341,8 +341,44 @@ where
                 let mut st = SymState::new(self.ctx());
                 self.check_block(&rb.body, &mut st, nexus)
             }
-            _ => Ok(()),
+            // Declarations have no executable body to discharge at this level.
+            // Their own contract and import trust boundaries need separate Q04 qualification.
+            Stmt::MacroDef(_) | Stmt::TraitDef(_) | Stmt::RecordDef(_) | Stmt::EnumDef(_) => Ok(()),
+
+            // A source-level assertion or conditional at file scope is an actual
+            // proof obligation, just as it is inside a cell. It must not be
+            // discarded by an implicit top-level wildcard.
+            Stmt::Assert(_) | Stmt::If(_) => {
+                let mut st = SymState::new(self.ctx());
+                self.check_stmt(stmt, &mut st, nexus)
+            }
+
+            // Global executable state, contracts, explicit trust and unmodeled
+            // match/loop paths currently have no qualified cross-cell model.
+            // Reject with typed Unsupported rather than manufacturing a proof.
+            Stmt::StrandDef(s) => self.unsupported_top_level(s.span),
+            Stmt::UnsafeBlock(s) => self.unsupported_top_level(s.span),
+            Stmt::Prop(s) => self.unsupported_top_level(s.span),
+            Stmt::Assign(s) => self.unsupported_top_level(s.span),
+            Stmt::Match(s) => self.unsupported_top_level(s.span),
+            Stmt::While(s) => self.unsupported_top_level(s.span),
+            Stmt::Requires(s) => self.unsupported_top_level(s.span),
+            Stmt::Ensures(s) => self.unsupported_top_level(s.span),
+            Stmt::Assume(s) => self.unsupported_top_level(s.span),
+            Stmt::MacroCall(s) => self.unsupported_top_level(s.span),
+            Stmt::ExprStmt(s) => self.unsupported_top_level(s.span),
         }
+    }
+
+    fn unsupported_top_level(&self, span: aura_ast::Span) -> Result<(), VerifyError> {
+        Err(VerifyError {
+            kind: crate::solver::VerifyFailureKind::Unsupported,
+            message: "top-level executable or trust-producing statement is not yet modeled by the verifier"
+                .to_string(),
+            span,
+            model: None,
+            meta: None,
+        })
     }
 
     fn check_block(
