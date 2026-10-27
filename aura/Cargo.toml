@@ -17,7 +17,7 @@ aura-stdlib = { path = "../aura-stdlib" }
 aura-ai-opt = { path = "../aura-ai-opt" }
 aura-bridge = { path = "../aura-bridge" }
 aura-pkg = { path = "../aura-pkg" }
-aura-interpret = { path = "../aura-interpret" }
+aura-interpret = { path = "../aura-interpret", default-features = false }
 aura-nexus = { path = "../aura-nexus" }
 aura-plugin-lumina = { path = "../aura-plugin-lumina" }
 aura-plugin-iot = { path = "../aura-plugin-iot", default-features = false, optional = true }
@@ -39,6 +39,7 @@ proptest = "1.6"
 default = ["lumina-raylib"]
 # Enable Z3-based verification in `aura-verify`
 z3 = [
+	"aura-interpret/z3",
 	"aura-verify/z3",
 	"aura-nexus/z3",
 	"aura-plugin-iot",

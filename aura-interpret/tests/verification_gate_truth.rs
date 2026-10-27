@@ -45,3 +45,18 @@ fn cli_no_z3_json_must_not_report_verified_true() {
     assert_eq!(response["verified"], false,
         "without Z3 CLI must not claim verified: {response}");
 }
+
+#[cfg(not(feature = "z3"))]
+#[test]
+fn solver_free_build_requested_verification_fails_closed() {
+    let mut vm = Avm::new(AvmConfig {
+        enable_z3_gate: true,
+        ..Default::default()
+    });
+    let result = vm.exec_entry_cell(SOURCE, "main")
+        .expect("unavailable solver returns a truthful nonverified outcome");
+    assert!(!result.verified);
+    assert!(matches!(result.value, AvmValue::Unit),
+        "requested proof with no compiled solver must not execute");
+    assert!(result.gate_error.as_deref().unwrap_or("").contains("unavailable"));
+}
