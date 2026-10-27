@@ -500,7 +500,9 @@ fn emit_function(
         emit_line_directive(out, debug, b.span);
         out.push_str("\n");
         out.push_str(&bb_label(b.id));
-        out.push_str(":\n");
+        // C11 requires a label to precede a statement, not a declaration.
+        // Record and scalar SSA blocks may begin with variable declarations.
+        out.push_str(":\n  ;\n");
 
         for inst in &b.insts {
             emit_line_directive(out, debug, inst.span);

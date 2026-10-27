@@ -558,3 +558,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 native local scalar Record candidate after true source RED
 
 - Test-only `93d906fc` [Actions 40543852043](https://github.com/danielforface/aura-lang/actions/runs/40543852043) **0 PASS/2 FAIL** by expected `CBackendError` on source-valid real Aura Record constructs; no Clang executable yet. EV-133. Candidate source implementation now carries ordered non-generic Record declaration field types in `ModuleIR.record_layouts`, emits C structs with C-safe encoded names and exact scalar field types, handles reordered construction and local alias/field-get/set, rejects unsupported/missing layout/field/type/ABI instead of Tensor default. Real C executable `-O0/-O2` and inherited safety CI **not yet observed**. This is only a local scalar slice; Q03-001 remains IN_PROGRESS, no release/merge/Master change.
+
+
+## 2026-10-27 — Q03-001 actual C11 label grammar regression, candidate portable fix
+
+- First typed Record source candidate `e2fb936` [40544654175](https://github.com/danielforface/aura-lang/actions/runs/40544654175) compiled Rust and emitted typed C structs/field reads; *real* Clang `-std=gnu11 -Werror` blocked both O0 native tests before executable with C23-extension diagnostic: `bb0:` label followed immediately by variable declaration. Source semantic RED earlier remains 40543852043; **no native GREEN**. Inserted C11 null statement after each generated label before instruction declarations; this is a narrow general C syntax correction. EV-134. New CI not yet observed, inherited regressions skipped on first failure. Master frozen, no merge/release, Draft #57.
