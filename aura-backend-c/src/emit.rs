@@ -432,6 +432,62 @@ fn emit_function(
         if !progressed { break; }
     }
 
+    // Nominal Record SSA prepass. Unlike primitive CType inference, a Record
+    // must carry its exact declared name across copies, functional SetField
+    // updates, and join-block Phi nodes. Never infer it as Tensor from width
+    // or initializer shape. Fixed-point inference handles predecessor blocks
+    // appearing after a join in the serialized IR.
+    let mut known_record_types: HashMap<ValueId, String> = HashMap::new();
+    for _ in 0..max_rounds {
+        let mut progressed = false;
+        for block in &f.blocks {
+            for inst in &block.insts {
+                let Some(dest) = inst.dest else { continue };
+                let inferred = match &inst.kind {
+                    InstKind::ConstructRecord { record_name, .. } => {
+                        // Missing or unqualified layouts cannot become a
+                        // nominal Record at Phi simply by supplying a name.
+                        qualified_record_fields(record_layouts, record_name)?;
+                        Some(record_name.clone())
+                    }
+                    InstKind::BindStrand { expr: RValue::Local(source), .. } =>
+                        known_record_types.get(source).cloned(),
+                    InstKind::SetField { base, .. } =>
+                        known_record_types.get(base).cloned(),
+                    InstKind::Phi { incomings } if !incomings.is_empty() => {
+                        let incoming_names = incomings.iter()
+                            .map(|(_, incoming)| known_record_types.get(incoming).cloned())
+                            .collect::<Option<Vec<_>>>();
+                        incoming_names.and_then(|names| {
+                            names.first().cloned().filter(|name|
+                                names.iter().all(|candidate| candidate == name)
+                            )
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(record) = inferred {
+                    if let Some(scalar) = known_ssa_types.get(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified Record SSA v{} conflicts with scalar type {scalar:?}",
+                            dest.0,
+                        ) });
+                    }
+                    match known_record_types.get(&dest) {
+                        Some(previous) if previous != &record =>
+                            return Err(CBackendError { message: format!(
+                                "unqualified Record SSA v{} mixes '{}' and '{}'",
+                                dest.0, previous, record,
+                            ) }),
+                        Some(_) => {}
+                        None => { known_record_types.insert(dest, record); progressed = true; }
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+
     // A Phi is SSA-level typed storage whose writes occur on its incoming
     // predecessor edges. Declare it before all block labels so every goto
     // and edge assignment references an in-scope C variable.
@@ -440,18 +496,60 @@ fn emit_function(
     // consistently; unresolved, cyclic or unmodeled producers fail closed.
     let mut phi_inj: HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>> = HashMap::new();
     let mut phi_decls: Vec<(ValueId, CType)> = Vec::new();
+    let mut record_phi_decls: Vec<(ValueId, String)> = Vec::new();
     for b in &f.blocks {
         for inst in &b.insts {
             if let InstKind::Phi { incomings } = &inst.kind {
                 let dest = inst.dest.ok_or_else(|| CBackendError {
                     message: "Phi instruction is missing its SSA destination".to_string(),
                 })?;
-                let mut unified: Option<CType> = None;
                 if incomings.is_empty() {
                     return Err(CBackendError {
                         message: format!("Phi v{} has no predecessor values", dest.0),
                     });
                 }
+                // All incoming values must be the SAME nominal Record. A
+                // scalar/Record mix or distinct Record names is a typed error,
+                // never a Tensor fallback or raw struct bitcast.
+                if incomings.iter().any(|(_, incoming)| known_record_types.contains_key(incoming)) {
+                    let mut nominal: Option<&str> = None;
+                    for (pred, incoming) in incomings {
+                        let incoming_name = known_record_types.get(incoming).ok_or_else(|| {
+                            CBackendError { message: format!(
+                                "unqualified Record Phi v{} missing nominal type of incoming v{}",
+                                dest.0, incoming.0,
+                            ) }
+                        })?;
+                        if let Some(previous) = nominal {
+                            if previous != incoming_name {
+                                return Err(CBackendError { message: format!(
+                                    "unqualified Record Phi v{} mixes nominal layouts '{}' and '{}'",
+                                    dest.0, previous, incoming_name,
+                                ) });
+                            }
+                        } else {
+                            nominal = Some(incoming_name);
+                        }
+                        if known_ssa_types.contains_key(incoming) {
+                            return Err(CBackendError { message: format!(
+                                "unqualified Record Phi v{} incoming v{} is also scalar",
+                                dest.0, incoming.0,
+                            ) });
+                        }
+                        phi_inj.entry((*pred, b.id)).or_default().push((dest, *incoming));
+                    }
+                    let record_name = nominal.expect("nonempty Record Phi");
+                    qualified_record_fields(record_layouts, record_name)?;
+                    if values.contains_key(&dest) || records.contains_key(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified Record Phi v{} duplicate SSA destination", dest.0,
+                        ) });
+                    }
+                    records.insert(dest, (record_name.to_string(), format!("v{}", dest.0)));
+                    record_phi_decls.push((dest, record_name.to_string()));
+                    continue;
+                }
+                let mut unified: Option<CType> = None;
                 for (pred, incoming) in incomings {
                     let incoming_type = known_ssa_types.get(incoming)
                         .copied()
@@ -488,6 +586,10 @@ fn emit_function(
     }
     for (dest, ty) in &phi_decls {
         out.push_str(&format!("  {} v{};\n", map_ctype_decl(*ty), dest.0));
+    }
+
+    for (dest, record) in &record_phi_decls {
+        out.push_str(&format!("  {} v{};\n", record_type_symbol(record), dest.0));
     }
 
     // Emit an entry jump (we use gotos for CFG).
