@@ -574,3 +574,9 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 SetField Oracle mismatch actual RED, targeted fail-closed candidate
 
 - [Actions 40545588484](https://github.com/danielforface/aura-lang/actions/runs/40545588484) test-only SHA `46b7f518`: local scalar Record Native 2/2 still PASS; one new valid-IR SetField-vs-Oracle test **FAILED** because Oracle x=7 unchanged on dest=None but C emitter emitted mutating assignment and `Ok`; inherited tests skipped after fail-first. EV-136. Production candidate now refuses all currently unqualified `InstKind::SetField` with typed span-diagnostic instead of silently mutating an immutable Record; `ConstructRecord/GetField` local scalar remains supported. **Patch CI not observed yet**, no broad Record write support claim. Frozen Master, Draft #57 and ancestors unmerged, no release.
+
+
+## 2026-10-27 — Q03-001 SetField refusal GREEN; native-IR Oracle and layout guard tests added
+
+- Source guard `b2ea536` [Actions 40546009799](https://github.com/danielforface/aura-lang/actions/runs/40546009799) full GREEN: 2/2 real C11 Clang O0/O2 Aura Record Native, 1/1 Oracle SetField refusal, direct Record 3/3, source 2/2, Enum 3/3, Return 3/3, C lib 1/1, native numeric 6/6 and Phi 9/9. EV-137. Current supported subset remains local scalar Construct/Get ONLY; SetField rejected.
+- Added five **not yet run** direct SSA negative boundary tests: record field type width mismatch, omitted required field, nested field, composite Record return ABI, opaque Record parameter ABI. Added IR Oracle U32 observation comparison to the *same* real source/native field test (Clang O0/O2 already checks expected outputs). This strengthens fail-closed and partial differential but **not** broad compositional/alias/ABI/Q03-001 qualification. No new production changes; separate CI result pending. All Draft and frozen Master/ledger unchanged.

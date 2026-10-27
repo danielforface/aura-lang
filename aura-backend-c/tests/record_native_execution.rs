@@ -65,6 +65,18 @@ cell point_y() ->:
 "#;
     let driver = "#include <stdint.h>\nuint32_t point_x(void);\nuint32_t point_y(void);\nint main(void) { return point_x() == 7u && point_y() == 13u ? 0 : 1; }\n";
     check_native(source, driver);
+    // Same parsed program must report the same scalar values in the IR
+    // oracle as the -O0/-O2 native executables above.
+    let ast = aura_parse::parse_source(source).expect("Record source parses twice");
+    let ir = lower_program(&ast).expect("Record source lowers for Oracle");
+    for (function, expected) in [("point_x", 7u32), ("point_y", 13u32)] {
+        let observation = aura_ir::run_oracle_entry(
+            &ir, function, &[], aura_ir::OracleConfig::default()
+        ).expect("IR Oracle executes source Record field");
+        assert!(observation.ok && observation.stderr.is_empty());
+        assert_eq!(observation.return_value, Some(aura_ir::OracleValue::U32(expected)),
+            "real native result and IR Oracle field semantics differ for {function}");
+    }
 }
 
 #[test]

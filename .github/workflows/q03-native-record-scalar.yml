@@ -19,6 +19,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
       - name: Record SetField versus Oracle semantics must fail closed
         run: cargo test --locked -p aura-backend-c --test record_setfield_oracle_boundary -- --nocapture
+      - name: Local Record negative field typing, missing layout and function ABI
+        run: cargo test --locked -p aura-backend-c --test record_layout_guards -- --nocapture
       - name: Preserve previous Record, Enum and unemitted Return fail-closed regressions
         run: |
           cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
