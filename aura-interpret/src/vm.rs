@@ -1409,8 +1409,10 @@ impl Avm {
         }
 
         let key = stable_hash(&normalized);
-        let (verified, gate_error, gate_span) = if !self.cfg.enable_z3_gate {
-            (true, None, None)
+        // Gate skipped means execution without proof, not successful verification.
+        let verification_skipped = !self.cfg.enable_z3_gate;
+        let (verified, gate_error, gate_span) = if verification_skipped {
+            (false, Some("verification not run: Z3 gate disabled".to_string()), None)
         } else if let Some(v) = self.verify_cache.get(&key).copied() {
             (v, None, None)
         } else {
@@ -1419,7 +1421,7 @@ impl Avm {
             (ok, err, span)
         };
 
-        if !verified {
+        if !verification_skipped && !verified {
             return Ok(ExecOutcome {
                 verified,
                 gate_error,
@@ -1445,8 +1447,8 @@ impl Avm {
 
         Ok(ExecOutcome {
             verified,
-            gate_error: None,
-            gate_span: None,
+            gate_error,
+            gate_span,
             value: last,
             stdout: self.stdout.clone(),
         })
@@ -1474,8 +1476,10 @@ impl Avm {
         }
 
         let key = stable_hash(&normalized);
-        let (verified, gate_error, gate_span) = if !self.cfg.enable_z3_gate {
-            (true, None, None)
+        // Gate skipped means execution without proof, not successful verification.
+        let verification_skipped = !self.cfg.enable_z3_gate;
+        let (verified, gate_error, gate_span) = if verification_skipped {
+            (false, Some("verification not run: Z3 gate disabled".to_string()), None)
         } else if let Some(v) = self.verify_cache.get(&key).copied() {
             (v, None, None)
         } else {
@@ -1484,7 +1488,7 @@ impl Avm {
             (ok, err, span)
         };
 
-        if !verified {
+        if !verification_skipped && !verified {
             return Ok(ExecOutcome {
                 verified,
                 gate_error,
@@ -1531,8 +1535,8 @@ impl Avm {
 
         Ok(ExecOutcome {
             verified,
-            gate_error: None,
-            gate_span: None,
+            gate_error,
+            gate_span,
             value: last,
             stdout: self.stdout.clone(),
         })
@@ -2184,6 +2188,7 @@ impl Avm {
     }
 }
 
+#[cfg(feature = "z3")]
 fn verify_source_z3(
     source: &str,
     profile: aura_verify::SmtProfile,
@@ -2252,6 +2257,18 @@ fn verify_source_z3(
     };
 
     Ok((ok, err, span))
+}
+
+#[cfg(not(feature = "z3"))]
+fn verify_source_z3(
+    _source: &str,
+    _profile: aura_verify::SmtProfile,
+) -> miette::Result<(bool, Option<String>, Option<Span>)> {
+    Ok((
+        false,
+        Some("Z3 verification unavailable: interpreter compiled without z3 feature".to_string()),
+        None,
+    ))
 }
 
 fn normalize_source_for_plugin_imports(source: &str) -> String {
