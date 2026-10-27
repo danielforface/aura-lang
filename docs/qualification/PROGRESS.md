@@ -641,3 +641,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 FieldAssign cross-crate compilation correction, new source GREEN pending
 
 - Source candidate 1e49683 [Actions 40580953319](https://github.com/danielforface/aura-lang/actions/runs/40580953319) native job failed Rust E0004 at lower.rs collect_assigned_names new Stmt::FieldAssign variant, so **not a feature semantic RED** and source tests not run. EV-148. Fixed assigned-name collector to register updated Record receiver for SSA merge; post-fix native/CLI CI not yet observed. Draft #57 unmerged, Master/ledger unchanged, no source qualification claim.
+
+
+## 2026-10-27 — Q03-001 source FieldAssign Native GREEN, independent parser/AVM tests newly staged
+
+- Implementation + exhaustive assigned-name collector fix 2f26c690 [Actions 40581296235](https://github.com/danielforface/aura-lang/actions/runs/40581296235) full BOTH jobs SUCCESS: original source Record C11 clang O0/O2, new actual source p.x=19 fresh SSA SetField / Oracle / strict native O0/O2; checker rejects immutable receiver and ghost field; direct-IR update and parent safety gates pass, no-Z3 public CLI regressions pass. EV-149. New TEST-ONLY format/parse AST roundtrip + source interpreter (AVM) no-Z3 proof disclosure scenarios **NOT YET RUN**, workflow split maintains native/CLI isolation. Do not claim verified AVM equality until CI. Full Q03-001 remains IN_PROGRESS, source assignment limited to one-level scalar non-generic record. All Draft/unmerged; Master and ledger untouched.

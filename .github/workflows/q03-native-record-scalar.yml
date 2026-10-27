@@ -17,6 +17,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Real Aura Record C Clang O0/O2 compiled executable tests
         run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
+      - name: Record source field assignment parser and formatter round trip
+        run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
         run: cargo test --locked -p aura-backend-c --test record_source_field_assign_native -- --nocapture
       - name: Functional Record SSA SetField Oracle and true native O0/O2
@@ -59,3 +61,5 @@ jobs:
         run: cargo check --locked -p aura --no-default-features
       - name: Actual Aura check and C artifact build for Record
         run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
+      - name: AVM source Record functional field assignment without claiming proof
+        run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
