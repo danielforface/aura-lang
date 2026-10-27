@@ -1,0 +1,23 @@
+name: Q06 Reject unknown discarded callee (test first)
+on:
+  push:
+    branches: ['qual/Q06-002-unknown-callee-resolution']
+  pull_request:
+    branches: ['qual/Q01-013-solver-free-avm-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-source-callee-resolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: New real Aura parse/check/lower call-resolution negatives and controls
+        run: cargo test --locked -p aura-core --test unknown_callee_resolution -- --nocapture
+      - name: Existing unknown-return lowerer regression (compatibility control)
+        run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
+      - name: Existing core unit suite
+        run: cargo test --locked -p aura-core --lib -- --nocapture
