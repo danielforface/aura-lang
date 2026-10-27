@@ -262,22 +262,64 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         values.insert(p.value, binding);
     }
 
-    // Precompute Phi injections: (pred, target) -> [(dest, incoming)]
+    // A Phi is SSA-level typed storage whose writes occur on its incoming
+    // predecessor edges. Declare it before all block labels so every goto
+    // and edge assignment references an in-scope C variable.
+    //
+    // The IR currently has no per-Phi result-type annotation. Until a
+    // complete typed SSA value map is available, accept only Phi operands
+    // whose type is already known (function parameters in this subset).
+    // Unknown or disagreeing operands fail closed instead of defaulting U32.
     let mut phi_inj: HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>> = HashMap::new();
+    let mut phi_decls: Vec<(ValueId, CType)> = Vec::new();
     for b in &f.blocks {
         for inst in &b.insts {
             if let InstKind::Phi { incomings } = &inst.kind {
-                let Some(dest) = inst.dest else { continue };
-                for (pred, incoming) in incomings {
-                    phi_inj
-                        .entry((*pred, b.id))
-                        .or_default()
-                        .push((dest, *incoming));
+                let dest = inst.dest.ok_or_else(|| CBackendError {
+                    message: "Phi instruction is missing its SSA destination".to_string(),
+                })?;
+                let mut unified: Option<CType> = None;
+                if incomings.is_empty() {
+                    return Err(CBackendError {
+                        message: format!("Phi v{} has no predecessor values", dest.0),
+                    });
                 }
-                // Create a name for dest so we can assign to it.
-                values.entry(dest).or_insert((CType::U32, format!("v{}", dest.0)));
+                for (pred, incoming) in incomings {
+                    let incoming_type = values.get(incoming)
+                        .map(|(ty, _)| *ty)
+                        .ok_or_else(|| CBackendError {
+                            message: format!(
+                                "unqualified Phi v{}: type of incoming v{} is not available",
+                                dest.0, incoming.0
+                            ),
+                        })?;
+                    if let Some(ty) = unified {
+                        if ty != incoming_type {
+                            return Err(CBackendError {
+                                message: format!(
+                                    "Phi v{} merges incompatible types {ty:?} and {incoming_type:?}",
+                                    dest.0
+                                ),
+                            });
+                        }
+                    } else {
+                        unified = Some(incoming_type);
+                    }
+                    phi_inj.entry((*pred, b.id)).or_default().push((dest, *incoming));
+                }
+                let ty = unified.expect("nonempty Phi");
+                if ty == CType::Void || values.contains_key(&dest) {
+                    return Err(CBackendError {
+                        message: format!("Phi v{} has void or duplicate SSA destination", dest.0),
+                    });
+                }
+                values.insert(dest, (ty, format!("v{}", dest.0)));
+                phi_decls.push((dest, ty));
             }
         }
+    }
+    for (dest, ty) in &phi_decls {
+        out.push_str(&format!("  {} v{};\\n", map_ctype_decl(*ty), dest.0));
     }
 
     // Emit an entry jump (we use gotos for CFG).
