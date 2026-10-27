@@ -9,8 +9,8 @@ aura-parse = { path = "../aura-parse" }
 aura-core = { path = "../aura-core" }
 aura-verify = { path = "../aura-verify", default-features = false }
 aura-nexus = { path = "../aura-nexus", default-features = false }
-aura-plugin-iot = { path = "../aura-plugin-iot", default-features = false }
-aura-plugin-ai = { path = "../aura-plugin-ai", default-features = false }
+aura-plugin-iot = { path = "../aura-plugin-iot", default-features = false, optional = true }
+aura-plugin-ai = { path = "../aura-plugin-ai", default-features = false, optional = true }
 
 miette = { workspace = true }
 thiserror = { workspace = true }
@@ -24,4 +24,8 @@ rodio = "0.20"
 [features]
 # Preserve standalone interpreter solver default; Aura CLI explicitly opts out.
 default = ["z3"]
-z3 = ["aura-verify/z3", "aura-plugin-iot/z3", "aura-plugin-ai/z3"]
+z3 = [
+    "aura-verify/z3",
+    "dep:aura-plugin-iot", "aura-plugin-iot/z3",
+    "dep:aura-plugin-ai", "aura-plugin-ai/z3",
+]
