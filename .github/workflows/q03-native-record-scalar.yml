@@ -57,7 +57,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
-      - name: Compile external AST consumers no-Z3 (LSP, verifier, AVM)
+      - name: Prepare pinned LSP Z3 0.8.1 CI-only compatibility preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "${RUNNER_TEMP}/aura-z3-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "${RUNNER_TEMP}/aura-z3-metadata.json"
+      - name: Compile AST consumers including mandatory LSP Z3 dependency (CI-only preflight)
         run: cargo check --locked --no-default-features -p aura-lsp -p aura-verify -p aura-interpret
       - name: Public Aura CLI no-Z3 compilation
         run: cargo check --locked -p aura --no-default-features

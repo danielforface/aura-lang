@@ -656,3 +656,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03 source FieldAssign concurrent PR CI Phi fixture collision, atomic isolation
 
 - Source-format/AVM code SHA eac141ab [40581992998](https://github.com/danielforface/aura-lang/actions/runs/40581992998) **push both jobs PASS**, but concurrent PR [40582002899](https://github.com/danielforface/aura-lang/actions/runs/40582002899) native inherited Phi **7/9** due missing driver.c in identical timestamp+PID Scratch path shared by parallel tests. Not a semantic regression. EV-151. Test-only fix adds per-process AtomicU64 unique scratch suffix; no source production changes, post-fix CI pending. External AST consumer check step added separately at fbfa14d1 is not yet observed. Q03-001 remains IN_PROGRESS; Draft/unmerged, Master/ledger unchanged.
+
+
+## 2026-10-27 — Q03 consumer gate Z3 dependency known pinned vendored typo; controlled CI preflight
+
+- [Actions 40582618336](https://github.com/danielforface/aura-lang/actions/runs/40582618336) public additional AST-consumer check failed building z3-sys 0.8.1 C++ column_info.h c.m_low_bound typo, while native source Record FieldAssign tests passed. aura-lsp unconditionally enables z3 despite cargo --no-default-features, thus a build-system/compiler input blocker, not Type/AST/Record semantic failure. Existing separate Q04 debt Issue #30 documents exact source flaw and CI-only pinned preflight. EV-152. Reused tools/qualification/prepare_z3_sys_ci.py with exact Cargo metadata and source pre/postimage validation before LSP/Verifier/AVM compile; release source/Cargo.lock unmodified. **Post-preflight CI not observed**. Q03-001 IN_PROGRESS, all Draft/unmerged, Master/ledger frozen.
