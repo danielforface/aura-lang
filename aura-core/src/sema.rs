@@ -2124,8 +2124,15 @@ impl Checker {
 
                     Ok(sig.ret)
                 } else {
-                    // Unknown call: allow but type becomes unknown.
-                    Ok(Type::Unknown)
+                    // No implicit external/plugin signature: an unknown callable is
+                    // not safe merely because the call result is discarded.
+                    Err(SemanticError {
+                        message: format!(
+                            "unknown callable '{}' (declare a cell/extern or use a registered builtin)",
+                            name
+                        ),
+                        span: expr.span,
+                    })
                 }
             }
             ExprKind::ForAll { binders, body } | ExprKind::Exists { binders, body } => {
@@ -2242,8 +2249,17 @@ impl Checker {
 
                         Ok(sig.ret)
                     } else {
-                        // Unknown call through flow: allow, but type becomes unknown.
-                        Ok(Type::Unknown)
+                        // Flow injection cannot bypass callable resolution.
+                        // Only a declared cell/extern or registered builtin
+                        // may be a call target, independent of whether its
+                        // result is consumed by the surrounding expression.
+                        Err(SemanticError {
+                            message: format!(
+                                "unknown callable '{}' in Flow (declare a cell/extern or use a registered builtin)",
+                                name
+                            ),
+                            span: callee.span,
+                        })
                     }
                 } else {
                     self.infer_expr(right)

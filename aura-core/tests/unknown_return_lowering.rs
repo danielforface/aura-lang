@@ -32,8 +32,28 @@ fn require_typed_rejection(source: &str) {
 
 #[test]
 fn unknown_external_call_yield_must_not_fabricate_u32_return() {
-    require_typed_rejection(
-        "cell mystery_bridge() ->:\n    yield unknown_external()\n"
+    // Issue #47: unregistered free callees are now rejected in sema;
+    // the older Issue #45 lowerer case remains for declared-but-unknown returns.
+    let source = "cell mystery_bridge() ->:\n    yield unknown_external()\n";
+    let ast = aura_parse::parse_source(source).expect("valid Aura source syntax");
+    let mut checker = Checker::new();
+    let error = checker
+        .check_program(&ast)
+        .expect_err("unregistered external call must fail during name resolution");
+    assert!(
+        error.message.to_ascii_lowercase().contains("unknown")
+            && error.message.contains("unknown_external"),
+        "unexpected semantic error: {error}"
+    );
+    assert_eq!(
+        error.span.offset(),
+        source.find("unknown_external()").expect("call in fixture")
+    );
+    let lowering_error = lower_program(&ast)
+        .expect_err("unregistered external call must not produce executable IR");
+    assert!(
+        lowering_error.message.to_ascii_lowercase().contains("unknown"),
+        "unexpected lowering error: {lowering_error}"
     );
 }
 

@@ -1,0 +1,41 @@
+name: Q06 Reject unknown discarded callee (test first)
+on:
+  push:
+    branches: ['qual/Q06-002-unknown-callee-resolution']
+  pull_request:
+    branches: ['qual/Q01-013-solver-free-avm-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-source-callee-resolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: New real Aura parse/check/lower call-resolution negatives and controls
+        run: cargo test --locked -p aura-core --test unknown_callee_resolution -- --nocapture
+      - name: Existing unknown-return lowerer regression (compatibility control)
+        run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
+      - name: Existing core unit suite
+        run: cargo test --locked -p aura-core --lib -- --nocapture
+      - name: All core library and integration regressions
+        run: cargo test --locked -p aura-core -- --nocapture
+  public-cli-callee-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real Aura CLI native prerequisites (no solver)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real Aura CLI check and C backend smoke
+        run: cargo test --locked -p aura --no-default-features --test unknown_callee_cli -- --nocapture
