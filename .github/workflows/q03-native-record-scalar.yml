@@ -19,6 +19,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
       - name: Real Record across if-else SSA Phi Clang O0 O2 (test first)
         run: cargo test --locked -p aura-backend-c --test record_source_phi_native -- --nocapture
+      - name: Guard nominal Record Phi mismatches and scalar mixes
+        run: cargo test --locked -p aura-backend-c --test record_phi_guards -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
