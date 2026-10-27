@@ -548,3 +548,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 real native local Record scalar test-first, support not yet implemented
 
 - Building on scoped C fail-closed safety chain #49/#50/#52/#54/#56 all Draft/unmerged, and prior real CI success [40539148808](https://github.com/danielforface/aura-lang/actions/runs/40539148808). New branch `qual/Q03-001-native-record-scalar` test-first creates true Aura source Record declaration/construct/local field-read cases compiled with real Clang `-O0/-O2`, executed for field reorder and high u64 width. Two prospective tests **NOT YET RUN**, current Record C Backend rejection expected, no source code changed. EV-131. Q03-001 IN_PROGRESS, do not claim native Record support or broad record layouts until actual execution GREEN; frozen Master/ledger unchanged.
+
+
+## 2026-10-27 — Q03-001 Record Native baseline test harness Rust 2024 repair, actual RED pending
+
+- Test-only `38157825` [40543412684](https://github.com/danielforface/aura-lang/actions/runs/40543412684) failed Rust test compilation before real Aura/C due reserved Rust 2024 identifier `gen`; this is INVALID as a backend RED. Renamed only generated C file path local to `generated_source`, acceptance unchanged; repaired CI not yet observed. EV-132; no production implementation, Master/ledger untouched, Draft #57 stacked on #56. Next obtain real parsed/Checker/IR/C red, repair any other test fixture error without conflating as semantic failure.

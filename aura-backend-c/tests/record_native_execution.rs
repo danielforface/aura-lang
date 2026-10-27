@@ -29,15 +29,15 @@ fn check_native(source: &str, driver: &str) {
         "real typed Record field access and named struct must be emitted: {}", artifacts.module_c);
     let temp = Scratch::new();
     fs::write(temp.path.join("aura_runtime.h"), artifacts.runtime_h).unwrap();
-    let gen = temp.path.join("module.c");
+    let generated_source = temp.path.join("module.c");
     let harness = temp.path.join("driver.c");
-    fs::write(&gen, &artifacts.module_c).unwrap();
+    fs::write(&generated_source, &artifacts.module_c).unwrap();
     fs::write(&harness, driver).unwrap();
     for opt in ["-O0", "-O2"] {
         let binary = temp.path.join(format!("record_{}", &opt[1..]));
         let compilation = Command::new("clang")
             .args(["-std=gnu11", opt, "-Werror", "-I"]).arg(&temp.path)
-            .arg(&gen).arg(&harness).arg("-o").arg(&binary)
+            .arg(&generated_source).arg(&harness).arg("-o").arg(&binary)
             .output().expect("clang present in CI");
         assert!(compilation.status.success(),
             "{opt} actual emitted C must compile, stderr={}\nC={}",
