@@ -585,13 +585,18 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         // Terminator
         match &b.term {
             Terminator::Return(Some(v)) => {
-                if let Some((_ct, name)) = values.get(v) {
-                    out.push_str("  return ");
-                    out.push_str(name);
-                    out.push_str(";\n");
-                } else {
-                    out.push_str("  return (Tensor){0};\n");
-                }
+                // An SSA value that was valid in the IR but never emitted as a
+                // C value is an unsupported instruction path, not a default
+                // Tensor zero. Returning a fabricated value is miscompilation.
+                let (_ct, name) = values.get(v).ok_or_else(|| CBackendError {
+                    message: format!(
+                        "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
+                        v.0, f.name, b.id.0, b.span,
+                    ),
+                })?;
+                out.push_str("  return ");
+                out.push_str(name);
+                out.push_str(";\n");
             }
             Terminator::Return(None) => {
                 out.push_str("  return;\n");
