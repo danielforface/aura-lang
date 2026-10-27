@@ -17,6 +17,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test-first real public C emitter with SSA-valid record fixtures
         run: cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+      - name: Real Aura parser checker IR C-Backend Record fail-closed integration
+        run: cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
       - name: Existing C backend library unit controls
         run: cargo test --locked -p aura-backend-c --lib -- --nocapture
       - name: Existing real Clang native scalar and SSA Phi regression suites
