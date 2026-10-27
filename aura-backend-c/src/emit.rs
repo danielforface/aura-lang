@@ -450,7 +450,16 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 InstKind::ConstructEnumVariant { .. }
                 | InstKind::GetEnumTag { .. }
                 | InstKind::GetEnumPayload { .. } => {
-                    // Separate Q03-002 enum backend work, not qualified here.
+                    // Tagged Enum layout, payload widths and discriminant
+                    // projection have not been qualified in this C backend.
+                    // Never silently emit a valid-looking C artifact whose
+                    // live Enum value was discarded.
+                    return Err(CBackendError {
+                        message: format!(
+                            "unqualified C Enum emission: unsupported instruction {:?} at source span {:?}; typed tag and payload representation required",
+                            &inst.kind, inst.span,
+                        ),
+                    });
                 }
 
                 InstKind::BindStrand { name, expr } => {
