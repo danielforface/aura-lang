@@ -28,21 +28,25 @@ fn compile_and_execute(module: &ModuleIR, driver: &str, expected_type: Option<&s
     let h = temp.root.join("aura_runtime.h");
     let c = temp.root.join("module.c");
     let d = temp.root.join("driver.c");
-    let exe = temp.root.join("phi-case");
     fs::write(&h, emitted.runtime_h).unwrap();
     fs::write(&c, &emitted.module_c).unwrap();
     fs::write(&d, driver).unwrap();
-    let compile = Command::new("clang")
-        .args(["-std=gnu11", "-O0", "-I"]).arg(&temp.root)
-        .arg(&c).arg(&d).arg("-o").arg(&exe)
-        .output().expect("clang installed in CI");
-    assert!(compile.status.success(),
-        "generated C must compile: stderr={}\nC={}\ndriver={}",
-        String::from_utf8_lossy(&compile.stderr), emitted.module_c, driver);
-    let out = Command::new(&exe).output().expect("run native output");
-    assert!(out.status.success(),
-        "wrong Phi branch value: status={:?}; stderr={}\nC={}",
-        out.status, String::from_utf8_lossy(&out.stderr), emitted.module_c);
+    // Exercise the SAME emitted C under both unoptimized and optimized
+    // Clang pipelines. Optimizations must not alter either SSA join path.
+    for optimization in ["-O0", "-O2"] {
+        let exe = temp.root.join(format!("phi-case-{}", &optimization[1..]));
+        let compile = Command::new("clang")
+            .args(["-std=gnu11", optimization, "-I"]).arg(&temp.root)
+            .arg(&c).arg(&d).arg("-o").arg(&exe)
+            .output().expect("clang installed in CI");
+        assert!(compile.status.success(),
+            "{optimization} generated C must compile: stderr={}\nC={}\ndriver={}",
+            String::from_utf8_lossy(&compile.stderr), emitted.module_c, driver);
+        let out = Command::new(&exe).output().expect("run native output");
+        assert!(out.status.success(),
+            "{optimization} wrong Phi branch value: status={:?}; stderr={}\nC={}",
+            out.status, String::from_utf8_lossy(&out.stderr), emitted.module_c);
+    }
     if let Some(ct) = expected_type {
         assert!(emitted.module_c.contains(&format!("{ct} v3;")),
             "Phi destination should be explicitly declared with correct width {ct}: {}",
