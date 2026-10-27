@@ -563,3 +563,9 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 actual C11 label grammar regression, candidate portable fix
 
 - First typed Record source candidate `e2fb936` [40544654175](https://github.com/danielforface/aura-lang/actions/runs/40544654175) compiled Rust and emitted typed C structs/field reads; *real* Clang `-std=gnu11 -Werror` blocked both O0 native tests before executable with C23-extension diagnostic: `bb0:` label followed immediately by variable declaration. Source semantic RED earlier remains 40543852043; **no native GREEN**. Inserted C11 null statement after each generated label before instruction declarations; this is a narrow general C syntax correction. EV-134. New CI not yet observed, inherited regressions skipped on first failure. Master frozen, no merge/release, Draft #57.
+
+
+## 2026-10-27 — Q03-001 real native local scalar Record O0/O2 GREEN; SetField semantic risk test-first
+
+- [Actions 40544973064](https://github.com/danielforface/aura-lang/actions/runs/40544973064) on `781ff0ab` **COMPLETED SUCCESS**: real Aura source two Record programs compiled with strict Clang C11 and executed under O0/O2, exact reordered u32 field values and full-width u64/bool PASS (2/2). Ancestor Record metadata-less refusal 3/3, source 2/2, Enum 3/3, Return 3/3 and compiled native numeric 6/6+Phi 9/9 PASS. EV-135. This is bounded implementation progress, NOT completion of AURA-Q03-001.
+- NEW risk: C emitter `SetField` currently mutates base even for `inst.dest=None`, while IR Oracle does not alter original unless dest is Some; this can silently change observable results. Test-only Oracle-vs-C fixture created, predicts original x=7 and insists explicit fail closed for unqualified write semantics. **New test NOT YET RUN**; do not represent as reproduced RED until CI. Scope remains IN_PROGRESS and Draft, Master/release ledger unchanged.

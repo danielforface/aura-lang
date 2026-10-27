@@ -17,6 +17,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Real Aura Record C Clang O0/O2 compiled executable tests (test-first)
         run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
+      - name: Record SetField versus Oracle semantics must fail closed
+        run: cargo test --locked -p aura-backend-c --test record_setfield_oracle_boundary -- --nocapture
       - name: Preserve previous Record, Enum and unemitted Return fail-closed regressions
         run: |
           cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
