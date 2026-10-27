@@ -17,3 +17,5 @@ jobs:
         run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
       - name: Existing aura-core library tests
         run: cargo test --locked -p aura-core --lib -- --nocapture
+      - name: Aura CLI compile check without Z3
+        run: cargo check --locked -p aura --no-default-features

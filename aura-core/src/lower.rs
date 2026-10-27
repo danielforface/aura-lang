@@ -1509,3 +1509,69 @@ fn format_style_lit(fields: &[(Ident, Expr)]) -> String {
     out.push('}');
     out
 }
+
+
+#[cfg(test)]
+mod lower_type_truth_tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_semantic_types_are_rejected_inside_supported_type_containers() {
+        use crate::types::Type as SemaType;
+        let span: aura_ast::Span = (0, 0).into();
+        let cases = vec![
+            SemaType::Unknown,
+            SemaType::Ref {
+                mutable: false,
+                inner: Box::new(SemaType::Unknown),
+                region: None,
+            },
+            SemaType::Tensor {
+                elem: Box::new(SemaType::Unknown),
+                shape: None,
+            },
+            SemaType::Record {
+                name: "R".into(),
+                fields: vec![("f".into(), SemaType::Unknown)],
+            },
+            SemaType::Enum {
+                name: "E".into(),
+                variants: vec![("V".into(), vec![SemaType::Unknown])],
+            },
+            SemaType::Tuple(vec![SemaType::Unknown]),
+            SemaType::Applied {
+                name: "Box".into(),
+                args: vec![SemaType::Unknown],
+            },
+            SemaType::ConstrainedRange {
+                base: Box::new(SemaType::Unknown),
+                lo: 0,
+                hi: 1,
+            },
+        ];
+        for ty in cases {
+            let err = lower_sema_type_to_ir(&ty, span)
+                .expect_err("an Unknown nested semantic type must not become U32/Opaque");
+            assert!(
+                err.message.contains("unresolved return type"),
+                "typed failure should explain Unknown, got: {}",
+                err.message
+            );
+            assert_eq!(err.span, span, "preserve diagnostic source location");
+        }
+    }
+
+    #[test]
+    fn known_nested_reference_type_preserves_64_bit_width() {
+        use crate::types::Type as SemaType;
+        let span: aura_ast::Span = (0, 0).into();
+        let ty = SemaType::Ref {
+            mutable: false,
+            inner: Box::new(SemaType::U64),
+            region: None,
+        };
+        let ir = lower_sema_type_to_ir(&ty, span)
+            .expect("known U64 nested type must stay lowerable");
+        assert!(matches!(ir, Type::Ptr(inner) if *inner == Type::U64));
+    }
+}
