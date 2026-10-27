@@ -82,3 +82,52 @@ fn local_function_call_must_still_build_with_c_backend() {
         "registered local call must still build C artifact; stdout={}, stderr={}",
         String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn unknown_flow_literal_must_fail_public_check_and_c_build() {
+    reject_unknown(
+        "cell main() ->:\n    yield 1 -> unknown_flow()\n",
+        "unknown_flow",
+    );
+}
+#[test]
+fn unknown_flow_named_local_must_fail_public_check_and_c_build() {
+    reject_unknown(
+        "cell main() ->:\n    val n: u32 = 1\n    n -> missing_flow()\n",
+        "missing_flow",
+    );
+}
+#[test]
+fn unknown_flow_qualified_must_fail_public_check_and_c_build() {
+    reject_unknown(
+        "import aura::io\n\ncell main() ->:\n    yield \"hello\" -> io::ghost_flow()\n",
+        "ghost_flow",
+    );
+}
+#[test]
+fn known_injected_local_flow_must_pass_public_check() {
+    accept_check(
+        "cell sink(n: u32) ->:\n    yield n\n\ncell main() ->:\n    yield 1 -> sink()\n",
+    );
+}
+#[test]
+fn known_injected_builtin_flow_must_pass_public_check() {
+    accept_check(
+        "import aura::io\n\ncell main() ->:\n    yield \"hello\" -> io::println()\n",
+    );
+}
+#[test]
+fn known_injected_local_flow_c_artifact_build_smoke() {
+    // Artifact production only, not native binary execution.
+    let f = Fixture::new(
+        "cell sink(n: u32) ->:\n    yield n\n\ncell main() ->:\n    yield 1 -> sink()\n",
+    );
+    let output = f.command(
+        "build",
+        &["--mode", "hybrid", "--backend", "c", "--profile", "dev"],
+    );
+    assert!(output.status.success(),
+        "declared injected Flow must still build C artifact; stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr));
+}

@@ -465,3 +465,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 - Validated test-only `ab59b260` [Actions 40527909927](https://github.com/danielforface/aura-lang/actions/runs/40527909927): 5 real Flow-source fixtures: **2/2 declared builtin/local PASS**, **3/3 unknown literal/named/imported-module callee FAIL** because checker incorrectly accepted them; parse now succeeds, so genuine RED. Earlier first Flow run 40520026931 had four bad syntactic fixtures and one source-valid semantic RED; EV-116/117. Old ordinary-call CLI remains prior 7/7 SUCCESS, not evidence that Flow was safe.
 - Focused source candidate in `aura-core/src/sema.rs` now rejects unregistered **Flow-injected calls** with a typed source-anchored semantic diagnostic instead of `Type::Unknown`. No change to valid declared callable and argument handling. **No patched CI result yet**; current scope IN_PROGRESS, not VERIFIED. Next inspect latest two CI jobs, repair regressions, then add Flow path to real CLI and C build tests and repeat; no merge, Master frozen, no release.
+
+
+## 2026-10-27 — Issue #47 Flow public CLI regression gate extended (no test outcome yet)
+
+- Source-only Flow fix candidate `7446d84c` comes after real 2 PASS/3 FAIL test-only [40527909927](https://github.com/danielforface/aura-lang/actions/runs/40527909927). Its CI must be checked before declaring success. Added SIX public CLI cases to `aura/tests/unknown_callee_cli.rs`: reject 3 unknown Flow callees in `check` AND `build --backend c`; accept 2 known Flow calls via `check`; known Flow C artifact build smoke. These 6 cases are **NOT YET RUN at authoring**; scope remains IN_PROGRESS, no native execution/complete Q06 claim. EV-118. No release or merge, Master frozen.
