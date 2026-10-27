@@ -1,0 +1,29 @@
+name: Q03 Enum C-emitter fail-closed truth
+on:
+  push:
+    branches: ['qual/Q03-002-enum-c-emitter-truth']
+  pull_request:
+    branches: ['qual/Q03-001-record-c-emitter-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  enum-c-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real SSA-valid Enum C emitter test-first negatives and scalar control
+        run: cargo test --locked -p aura-backend-c --test enum_emission_truth -- --nocapture
+      - name: Preserve explicit Record refusal via IR and real Aura source
+        run: |
+          cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
+      - name: C backend library and real Clang native numerical/Phi controls
+        run: |
+          clang --version
+          cargo test --locked -p aura-backend-c --lib -- --nocapture
+          cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+          cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
