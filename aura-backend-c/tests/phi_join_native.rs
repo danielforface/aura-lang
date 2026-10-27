@@ -186,3 +186,32 @@ fn computed_predecessor_u32_phi_keeps_control_flow_results() {
         "#include <stdint.h>\n#include <stdbool.h>\nuint32_t choose_wide(bool cond,uint32_t x,uint32_t y);\nint main(void){ return choose_wide(true,100u,7u)==107u && choose_wide(false,100u,7u)==93u ? 0 : 1; }\n",
         Some("uint32_t"));
 }
+
+
+#[test]
+fn computed_predecessor_f64_phi_keeps_fractional_values() {
+    compile_and_execute(&diamond_with_computed_incomings(Type::F64),
+        "#include <stdint.h>\n#include <stdbool.h>\ndouble choose_wide(bool cond,double x,double y);\nint main(void){ return choose_wide(true,1.5,2.25)==3.75 && choose_wide(false,1.5,2.25)==-0.75 ? 0 : 1; }\n",
+        Some("double"));
+}
+
+#[test]
+fn mixed_signed_unsigned_phi_inputs_do_not_silently_coerce_or_default_u32() {
+    // This deliberately exercises the C backend boundary with an invalid
+    // mixed-width signedness Phi. Either IR validation or the C emitter must
+    // explicitly reject it, not return an executable artifact or cast to U32.
+    let mut module = diamond(Type::U64);
+    let f = module.functions.get_mut("choose_wide").expect("test function");
+    f.params[2].ty = Type::I64;
+    match emit_module(&module, None) {
+        Ok(_) => panic!("mixed U64/I64 Phi is unqualified, must fail closed"),
+        Err(e) => {
+            let msg = e.message.to_ascii_lowercase();
+            assert!(
+                msg.contains("incompatible") || msg.contains("unqualified")
+                    || msg.contains("validation") || msg.contains("type"),
+                "failure must explain a typing/validation boundary: {e}"
+            );
+        }
+    }
+}
