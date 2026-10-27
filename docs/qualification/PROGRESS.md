@@ -435,3 +435,10 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Issue #47 draft child PR now opened; genuine test-only result still queued
 
 - [Draft PR #50](https://github.com/danielforface/aura-lang/pull/50) now **OPEN/DRAFT** against parent Draft #49, test-only SHA `1f70f1fdfd92bad6b4e12f34383ba9ae58df69a0`. [Push 40516637135](https://github.com/danielforface/aura-lang/actions/runs/40516637135) and [PR 40516688724](https://github.com/danielforface/aura-lang/actions/runs/40516688724) are both QUEUED; **no real baseline RED/GREEN yet**, so do not patch source or classify runtime until logs. Child test-only changes: 6 source tests, one workflow, progress/handoff/evidence. Parent #49 docs-only [40516045765](https://github.com/danielforface/aura-lang/actions/runs/40516045765) independently COMPLETED SUCCESS. EV-111. No merges, roadmap edit or release.
+
+
+## 2026-10-27 — Issue #47 actual RED and candidate source fix, no GREEN claimed
+
+- [Actions 40516637135](https://github.com/danielforface/aura-lang/actions/runs/40516637135) test-only `1f70f1f`, Ubuntu: 6 real Aura parsed source cases, **3 controls PASS / 3 unknown-callee cases FAIL** because checker incorrectly permitted unknown free/nested/qualified call statements; job exit 101, inherited regression steps skipped. EV-112.
+- Candidate `aura-core/src/sema.rs` missing callable signature now returns typed `SemanticError` with callee name/span instead of fabricating `Type::Unknown` for any discarded arbitrary call. Migrated one inherited `unknown_return_lowering` test to checker refusal; forward known/unresolved return still tests lowerer. Expanded workflow to run entire aura-core matrix. **No new CI observed for this patch yet.** Current status IN_PROGRESS, Draft #50 / #49 unmerged, no native execution claim, frozen master unchanged, no release.
+- Next: inspect exact patched run; if genuine failures, repair. Add real CLI build/native positive call smoke separately before closing issue.

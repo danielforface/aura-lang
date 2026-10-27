@@ -2124,8 +2124,15 @@ impl Checker {
 
                     Ok(sig.ret)
                 } else {
-                    // Unknown call: allow but type becomes unknown.
-                    Ok(Type::Unknown)
+                    // No implicit external/plugin signature: an unknown callable is
+                    // not safe merely because the call result is discarded.
+                    Err(SemanticError {
+                        message: format!(
+                            "unknown callable '{}' (declare a cell/extern or use a registered builtin)",
+                            name
+                        ),
+                        span: expr.span,
+                    })
                 }
             }
             ExprKind::ForAll { binders, body } | ExprKind::Exists { binders, body } => {

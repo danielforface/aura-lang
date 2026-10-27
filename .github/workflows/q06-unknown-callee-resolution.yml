@@ -21,3 +21,5 @@ jobs:
         run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
       - name: Existing core unit suite
         run: cargo test --locked -p aura-core --lib -- --nocapture
+      - name: All core library and integration regressions
+        run: cargo test --locked -p aura-core -- --nocapture
