@@ -10,20 +10,16 @@ permissions:
 jobs:
   local-record-native:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Actual Aura CLI native libraries (same tested requirements as Q06 CLI)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
-      - name: Real Aura Record C Clang O0/O2 compiled executable tests (test-first)
+      - name: Real Aura Record C Clang O0/O2 compiled executable tests
         run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
       - name: Functional Record SSA SetField Oracle and true native O0/O2
         run: cargo test --locked -p aura-backend-c --test record_functional_update_native -- --nocapture
-      - name: Record SetField versus Oracle semantics must fail closed
+      - name: Record SetField without destination must fail closed
         run: cargo test --locked -p aura-backend-c --test record_setfield_oracle_boundary -- --nocapture
       - name: Local Record negative field typing, missing layout and function ABI
         run: cargo test --locked -p aura-backend-c --test record_layout_guards -- --nocapture
@@ -33,15 +29,31 @@ jobs:
           cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
           cargo test --locked -p aura-backend-c --test enum_emission_truth -- --nocapture
           cargo test --locked -p aura-backend-c --test unemitted_return_truth -- --nocapture
-      - name: Preserve numeric and Phi actual Clang native behavior
+      - name: Preserve C library and actual Clang executable scalar/Phi behavior
         run: |
+          clang --version
           cargo test --locked -p aura-backend-c --lib
           cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
           cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
-      - name: Ensure typed IR propagation keeps public no-Z3 CLI and core compatible
+      - name: Full IR and core regressions after typed Record IR changes
         run: |
-          cargo check --locked -p aura --no-default-features
           cargo test --locked -p aura-ir -- --nocapture
           cargo test --locked -p aura-core -- --nocapture
-      - name: Actual no-Z3 Aura CLI Record check and C artifact build
+  public-cli-record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native CLI dependencies (do not block Record native tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Public Aura CLI no-Z3 compilation
+        run: cargo check --locked -p aura --no-default-features
+      - name: Actual Aura check and C artifact build for Record
         run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
