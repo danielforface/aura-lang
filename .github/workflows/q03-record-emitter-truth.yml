@@ -1,0 +1,28 @@
+name: Q03 C Record emission must fail closed until typed layout
+on:
+  push:
+    branches: ['qual/Q03-001-record-c-emitter-truth']
+  pull_request:
+    branches: ['qual/Q06-002-unknown-callee-resolution']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  record-emitter-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test-first real public C emitter with SSA-valid record fixtures
+        run: cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+      - name: Real Aura parser checker IR C-Backend Record fail-closed integration
+        run: cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
+      - name: Existing C backend library unit controls
+        run: cargo test --locked -p aura-backend-c --lib -- --nocapture
+      - name: Existing real Clang native scalar and SSA Phi regression suites
+        run: |
+          clang --version
+          cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+          cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture

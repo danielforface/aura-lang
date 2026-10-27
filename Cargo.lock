@@ -205,7 +205,9 @@ name = "aura-backend-c"
 version = "0.2.0"
 dependencies = [
  "aura-ast",
+ "aura-core",
  "aura-ir",
+ "aura-parse",
  "miette",
  "thiserror 2.0.17",
 ]
