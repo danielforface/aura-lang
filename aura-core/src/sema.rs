@@ -2249,8 +2249,17 @@ impl Checker {
 
                         Ok(sig.ret)
                     } else {
-                        // Unknown call through flow: allow, but type becomes unknown.
-                        Ok(Type::Unknown)
+                        // Flow injection cannot bypass callable resolution.
+                        // Only a declared cell/extern or registered builtin
+                        // may be a call target, independent of whether its
+                        // result is consumed by the surrounding expression.
+                        Err(SemanticError {
+                            message: format!(
+                                "unknown callable '{}' in Flow (declare a cell/extern or use a registered builtin)",
+                                name
+                            ),
+                            span: callee.span,
+                        })
                     }
                 } else {
                     self.infer_expr(right)
