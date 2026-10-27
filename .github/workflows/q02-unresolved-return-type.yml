@@ -1,0 +1,32 @@
+name: Q02 Reject unresolved return type fabrication
+on:
+  push:
+    branches: ['qual/Q02-002-reject-unknown-return-type']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CC: clang
+  CXX: clang++
+jobs:
+  semantic-to-ir-return-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real source parser sema lowerer unknown-return and controls
+        run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
+      - name: Existing aura-core library tests
+        run: cargo test --locked -p aura-core --lib -- --nocapture
+      - name: Native dependencies for the workspace CLI graph
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Strict pinned Z3 vendored source preflight for transitive CLI dependencies
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
+      - name: Aura CLI compile check without Z3
+        run: cargo check --locked -p aura --no-default-features

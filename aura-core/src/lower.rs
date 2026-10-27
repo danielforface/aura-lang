@@ -14,8 +14,14 @@ use aura_ir::{
 
 use crate::{Checker, SemanticError};
 
-fn lower_sema_type_to_ir(ty: &crate::types::Type) -> Type {
-    match ty {
+// Conversion from semantic type to the compiled IR must never *invent* a
+// concrete runtime scalar for an unresolved type. Preserve the caller's
+// source span through nested types so this remains a user-facing error.
+fn lower_sema_type_to_ir(
+    ty: &crate::types::Type,
+    span: aura_ast::Span,
+) -> Result<Type, SemanticError> {
+    Ok(match ty {
         crate::types::Type::Unit => Type::Unit,
         crate::types::Type::Bool => Type::Bool,
         crate::types::Type::Char => Type::Char,
@@ -37,22 +43,51 @@ fn lower_sema_type_to_ir(ty: &crate::types::Type) -> Type {
         crate::types::Type::String => Type::String,
         crate::types::Type::Style => Type::Opaque("Style".to_string()),
         crate::types::Type::Model => Type::Opaque("Model".to_string()),
-        crate::types::Type::Tensor { .. } => Type::Tensor,
-        crate::types::Type::Ref { inner, .. } => Type::Ptr(Box::new(lower_sema_type_to_ir(inner))),
+        crate::types::Type::Tensor { elem, .. } => {
+            let _ = lower_sema_type_to_ir(elem, span)?;
+            Type::Tensor
+        }
+        crate::types::Type::Ref { inner, .. } => {
+            Type::Ptr(Box::new(lower_sema_type_to_ir(inner, span)?))
+        }
         crate::types::Type::Record { name, fields } => Type::Record {
             name: name.clone(),
-            fields: fields.iter().map(|(f, t)| (f.clone(), lower_sema_type_to_ir(t))).collect(),
+            fields: fields.iter().map(|(name, field)| {
+                lower_sema_type_to_ir(field, span).map(|lowered| (name.clone(), lowered))
+            }).collect::<Result<Vec<_>, SemanticError>>()?,
         },
         crate::types::Type::Enum { name, variants } => Type::Enum {
             name: name.clone(),
-            variants: variants.iter().map(|(v, tys)| (v.clone(), tys.iter().map(lower_sema_type_to_ir).collect())).collect(),
+            variants: variants.iter().map(|(name, fields)| {
+                let lowered = fields.iter()
+                    .map(|field| lower_sema_type_to_ir(field, span))
+                    .collect::<Result<Vec<_>, SemanticError>>()?;
+                Ok((name.clone(), lowered))
+            }).collect::<Result<Vec<_>, SemanticError>>()?,
         },
-        crate::types::Type::Tuple(elems) => Type::Opaque(format!("Tuple_{}", elems.len())),
-        crate::types::Type::ConstrainedRange { base, .. } => lower_sema_type_to_ir(base),
+        crate::types::Type::Tuple(elems) => {
+            for elem in elems {
+                let _ = lower_sema_type_to_ir(elem, span)?;
+            }
+            // Existing prototype tuple representation; qualification is Q03.
+            Type::Opaque(format!("Tuple_{}", elems.len()))
+        }
+        crate::types::Type::ConstrainedRange { base, .. } => {
+            lower_sema_type_to_ir(base, span)?
+        }
         crate::types::Type::Named(n) => Type::Opaque(n.clone()),
-        crate::types::Type::Applied { name, .. } => Type::Opaque(name.clone()),
-        crate::types::Type::Unknown => Type::U32,
-    }
+        crate::types::Type::Applied { name, args } => {
+            for arg in args {
+                let _ = lower_sema_type_to_ir(arg, span)?;
+            }
+            // Existing nominal/generic representation, separately unqualified.
+            Type::Opaque(name.clone())
+        }
+        crate::types::Type::Unknown => return Err(SemanticError {
+            message: "unresolved return type cannot be lowered to IR without a concrete type".to_string(),
+            span,
+        }),
+    })
 }
 
 pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
@@ -166,7 +201,8 @@ impl<'c> Lowerer<'c> {
         let ret = self
             .checker
             .function_ret_type(&cell.name.node)
-            .map(lower_sema_type_to_ir)
+            .map(|ty| lower_sema_type_to_ir(ty, cell.span))
+            .transpose()?
             .unwrap_or(Type::Unit);
 
         let blocks = std::mem::take(&mut self.blocks);
@@ -200,7 +236,8 @@ impl<'c> Lowerer<'c> {
             ret: self
                 .checker
                 .function_ret_type(&fb.name.node)
-                .map(lower_sema_type_to_ir)
+                .map(|ty| lower_sema_type_to_ir(ty, fb.span))
+                .transpose()?
                 .unwrap_or(Type::Unit),
             blocks,
             entry,
@@ -1471,4 +1508,70 @@ fn format_style_lit(fields: &[(Ident, Expr)]) -> String {
     }
     out.push('}');
     out
+}
+
+
+#[cfg(test)]
+mod lower_type_truth_tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_semantic_types_are_rejected_inside_supported_type_containers() {
+        use crate::types::Type as SemaType;
+        let span: aura_ast::Span = (0, 0).into();
+        let cases = vec![
+            SemaType::Unknown,
+            SemaType::Ref {
+                mutable: false,
+                inner: Box::new(SemaType::Unknown),
+                region: None,
+            },
+            SemaType::Tensor {
+                elem: Box::new(SemaType::Unknown),
+                shape: None,
+            },
+            SemaType::Record {
+                name: "R".into(),
+                fields: vec![("f".into(), SemaType::Unknown)],
+            },
+            SemaType::Enum {
+                name: "E".into(),
+                variants: vec![("V".into(), vec![SemaType::Unknown])],
+            },
+            SemaType::Tuple(vec![SemaType::Unknown]),
+            SemaType::Applied {
+                name: "Box".into(),
+                args: vec![SemaType::Unknown],
+            },
+            SemaType::ConstrainedRange {
+                base: Box::new(SemaType::Unknown),
+                lo: 0,
+                hi: 1,
+            },
+        ];
+        for ty in cases {
+            let err = lower_sema_type_to_ir(&ty, span)
+                .expect_err("an Unknown nested semantic type must not become U32/Opaque");
+            assert!(
+                err.message.contains("unresolved return type"),
+                "typed failure should explain Unknown, got: {}",
+                err.message
+            );
+            assert_eq!(err.span, span, "preserve diagnostic source location");
+        }
+    }
+
+    #[test]
+    fn known_nested_reference_type_preserves_64_bit_width() {
+        use crate::types::Type as SemaType;
+        let span: aura_ast::Span = (0, 0).into();
+        let ty = SemaType::Ref {
+            mutable: false,
+            inner: Box::new(SemaType::U64),
+            region: None,
+        };
+        let ir = lower_sema_type_to_ir(&ty, span)
+            .expect("known U64 nested type must stay lowerable");
+        assert!(matches!(ir, Type::Ptr(inner) if *inner == Type::U64));
+    }
 }
