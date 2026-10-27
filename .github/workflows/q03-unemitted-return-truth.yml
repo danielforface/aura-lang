@@ -1,0 +1,30 @@
+name: Q03 C backend unemitted return truth
+on:
+  push:
+    branches: ['qual/Q03-007-unemitted-c-return-truth']
+  pull_request:
+    branches: ['qual/Q03-002-enum-c-emitter-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  c-return-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: New validated SSA return truth tests
+        run: cargo test --locked -p aura-backend-c --test unemitted_return_truth -- --nocapture
+      - name: Preserve Enum and Record strict refusal
+        run: |
+          cargo test --locked -p aura-backend-c --test enum_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
+      - name: Preserve C library and actual Clang executable scalar/Phi behavior
+        run: |
+          clang --version
+          cargo test --locked -p aura-backend-c --lib -- --nocapture
+          cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+          cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
