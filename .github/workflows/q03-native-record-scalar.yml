@@ -57,6 +57,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Compile external AST consumers no-Z3 (LSP, verifier, AVM)
+        run: cargo check --locked --no-default-features -p aura-lsp -p aura-verify -p aura-interpret
       - name: Public Aura CLI no-Z3 compilation
         run: cargo check --locked -p aura --no-default-features
       - name: Actual Aura check and C artifact build for Record
