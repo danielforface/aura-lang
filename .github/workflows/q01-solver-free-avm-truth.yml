@@ -1,0 +1,42 @@
+name: Q01 Solver-free graph and AVM proof truth
+on:
+  push:
+    branches: ['qual/Q01-013-solver-free-avm-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CC: clang
+  CXX: clang++
+jobs:
+  solver-free-cli-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prove --no-default-features CLI has zero Z3 package dependencies
+        run: |
+          cargo tree --locked -p aura --no-default-features --prefix none -e normal --format '{p}' > "$RUNNER_TEMP/aura-no-z3-tree.txt"
+          if grep -E '^(z3|z3-sys) v[0-9]' "$RUNNER_TEMP/aura-no-z3-tree.txt"; then
+            echo "ERROR: --no-default-features still brings in Z3, not a genuinely solver-free dependency graph"
+            exit 1
+          fi
+          echo "OK: no Z3 or z3-sys in the Aura CLI normal dependency graph"
+  avm-report-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native deps required by current accidentally Z3-enabled interpreter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang build-essential libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Strict pinned Z3 preflight while legacy interpreter still requests solver
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/aura-cargo-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
+      - name: Real AVM source API and public CLI JSON verification truth
+        run: cargo test --locked -p aura-interpret --test verification_gate_truth -- --nocapture
