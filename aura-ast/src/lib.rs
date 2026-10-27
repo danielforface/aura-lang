@@ -55,6 +55,7 @@ pub enum Stmt {
     Render(RenderBlock),
     Prop(PropStmt),
     Assign(AssignStmt),
+    FieldAssign(FieldAssignStmt),
     If(IfStmt),
     Match(MatchStmt),
     While(WhileStmt),
@@ -278,6 +279,15 @@ pub struct Param {
 pub struct AssignStmt {
     pub span: Span,
     pub target: Ident,
+    pub expr: Expr,
+}
+
+/// Single-level Record field update is not a bare local assignment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldAssignStmt {
+    pub span: Span,
+    pub target: Ident,
+    pub field: Ident,
     pub expr: Expr,
 }
 

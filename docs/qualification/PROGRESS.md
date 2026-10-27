@@ -631,3 +631,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 true Aura source field-assignment test-first
 
 - After successful parent #57 8ceb51e on actions 40569516881 both native/CLI jobs, introduced TEST-ONLY source p.x=19 native O0/O2 and Oracle fixture plus Checker negative immutable and missing field. EV-146; true RED and future source support NOT YET OBSERVED. Existing direct IR SetField has qualified behavior but Aura source cannot emit it. Freeze Master/ledger, Draft PR unmerged; Q03-001 stays IN_PROGRESS.
+
+
+## 2026-10-27 — Q03-001 first true Aura p.x = value source implementation candidate
+
+- [Actions 40579738404](https://github.com/danielforface/aura-lang/actions/runs/40579738404) test-only baseline 0/3 due Parser expected end of line; previous source Record Native 2/2 still PASS. EV-147. Implemented candidate in explicit AST FieldAssign, parser, Checker receiver mutable/live/nominal non-generic with known scalar field, lowerer fresh SSA SetField and local rebind; formatter/macro/LSP, AVM functional clone/rebind, SMT verifier explicitly Unsupported. **No production candidate CI observed yet, cannot claim GREEN or public Aura field write support**. Q03-001 remains IN_PROGRESS, immutable Master/ledger unchanged, Draft #57 and ancestors unmerged.

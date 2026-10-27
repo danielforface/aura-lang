@@ -880,6 +880,9 @@ impl Checker {
                 Stmt::Assign(a) => {
                     self.check_assign(a)?;
                 }
+                Stmt::FieldAssign(a) => {
+                    self.check_field_assign(a)?;
+                }
                 Stmt::If(i) => {
                     self.check_if(i)?;
                 }
@@ -1012,6 +1015,7 @@ impl Checker {
                     let _ = self.infer_expr(&p.expr)?;
                 }
                 Stmt::Assign(a) => self.check_assign(a)?,
+                Stmt::FieldAssign(a) => self.check_field_assign(a)?,
                 Stmt::If(i) => self.check_if(i)?,
                 Stmt::Match(m) => self.check_match(m)?,
                 Stmt::While(w) => self.check_while(w)?,
@@ -1202,6 +1206,60 @@ impl Checker {
             }
         }
         self.define_val(&sd.name, final_ty, sd.mutable)
+    }
+
+    fn check_field_assign(&mut self, a: &aura_ast::FieldAssignStmt) -> Result<(), SemanticError> {
+        let Some(target_ty) = self.lookup_val(&a.target.node) else {
+            return Err(SemanticError {
+                message: format!("unknown identifier '{}'", a.target.node),
+                span: a.target.span,
+            });
+        };
+        self.cap.ensure_alive(&a.target.node, a.target.span)?;
+        if !self.is_mutable(&a.target.node) {
+            return Err(SemanticError {
+                message: format!("cannot assign to immutable val '{}'", a.target.node),
+                span: a.target.span,
+            });
+        }
+        // Only single-level, concrete nominal Records with scalar fields
+        // have a qualified local C layout/SSA update contract.
+        let Type::Named(rec_name) = base_type(&target_ty) else {
+            return Err(SemanticError {
+                message: format!("field assignment target '{}' must be a concrete Record", a.target.node),
+                span: a.target.span,
+            });
+        };
+        let Some(def) = self.record_defs.get(rec_name) else {
+            return Err(SemanticError {
+                message: format!("field assignment target '{}' is not a known Record", rec_name),
+                span: a.target.span,
+            });
+        };
+        if !def.params.is_empty() {
+            return Err(SemanticError {
+                message: format!("generic Record '{}' field assignment is unqualified", rec_name),
+                span: a.span,
+            });
+        }
+        let Some(field) = def.fields.iter().find(|f| f.name.node == a.field.node) else {
+            return Err(SemanticError {
+                message: format!("unknown field '{}' for record '{}'", a.field.node, rec_name),
+                span: a.field.span,
+            });
+        };
+        let expected = self.resolve_type_ref(&field.ty)?;
+        if !matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
+            Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+            Type::I64 | Type::F32 | Type::F64) {
+            return Err(SemanticError {
+                message: format!("unqualified non-scalar Record field assignment '{}.{}'",
+                    a.target.node, a.field.node),
+                span: a.field.span,
+            });
+        }
+        let actual = self.infer_expr(&a.expr)?;
+        self.check_assignable(&expected, &actual, &a.expr)
     }
 
     fn check_assign(&mut self, assign: &AssignStmt) -> Result<(), SemanticError> {

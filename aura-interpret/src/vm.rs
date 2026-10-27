@@ -57,6 +57,7 @@ fn stmt_kind_name(stmt: &Stmt) -> &'static str {
         Stmt::Render(_) => "Render",
         Stmt::Prop(_) => "Prop",
         Stmt::Assign(_) => "Assign",
+        Stmt::FieldAssign(_) => "FieldAssign",
         Stmt::If(_) => "If",
         Stmt::Match(_) => "Match",
         Stmt::While(_) => "While",
@@ -1199,6 +1200,7 @@ impl Avm {
             Stmt::Render(x) => x.span,
             Stmt::Prop(x) => x.span,
             Stmt::Assign(x) => x.span,
+            Stmt::FieldAssign(x) => x.span,
             Stmt::If(x) => x.span,
             Stmt::Match(x) => x.span,
             Stmt::While(x) => x.span,
@@ -1782,6 +1784,20 @@ impl Avm {
                 self.env.insert(a.target.node.clone(), v);
                 Ok(AvmValue::Unit)
             }
+            Stmt::FieldAssign(a) => {
+                let before = self.env.get(&a.target.node).cloned()
+                    .ok_or_else(|| miette::miette!("AVM: unknown Record local '{}'", a.target.node))?;
+                let AvmValue::Record { name, mut fields } = before else {
+                    return Err(miette::miette!("AVM: '{}' is not a Record", a.target.node));
+                };
+                if !fields.contains_key(&a.field.node) {
+                    return Err(miette::miette!("AVM: unknown Record field '{}'", a.field.node));
+                }
+                let value = self.eval_expr(&a.expr)?;
+                fields.insert(a.field.node.clone(), value);
+                self.env.insert(a.target.node.clone(), AvmValue::Record { name, fields });
+                Ok(AvmValue::Unit)
+            }
             Stmt::Prop(p) => {
                 let _ = self.eval_expr(&p.expr)?;
                 Ok(AvmValue::Unit)
@@ -2345,6 +2361,7 @@ fn stmt_span(stmt: &Stmt) -> Span {
         Stmt::ExternCell(s) => s.span,
         Stmt::UnsafeBlock(s) => s.span,
         Stmt::Assign(s) => s.span,
+        Stmt::FieldAssign(s) => s.span,
         Stmt::If(s) => s.span,
         Stmt::Match(s) => s.span,
         Stmt::While(s) => s.span,

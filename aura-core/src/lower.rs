@@ -275,6 +275,7 @@ impl<'c> Lowerer<'c> {
                 Ok(())
             }
             Stmt::Assign(a) => self.lower_assign(a),
+            Stmt::FieldAssign(a) => self.lower_field_assign(a),
             Stmt::If(i) => self.lower_if(i),
             Stmt::Match(m) => self.lower_match(m),
             Stmt::While(w) => self.lower_while(w),
@@ -324,6 +325,29 @@ impl<'c> Lowerer<'c> {
             },
         });
         self.locals.insert(sd.name.node.clone(), v);
+        Ok(())
+    }
+
+    fn lower_field_assign(&mut self, a: &aura_ast::FieldAssignStmt) -> Result<(), SemanticError> {
+        let Some(base) = self.locals.get(&a.target.node).copied() else {
+            return Err(SemanticError {
+                message: format!("lowering: unknown Record local '{}'", a.target.node),
+                span: a.target.span,
+            });
+        };
+        let value = self.lower_expr(&a.expr)?;
+        let updated = self.id.fresh_value();
+        self.push_inst(Inst {
+            span: a.span,
+            dest: Some(updated),
+            kind: InstKind::SetField {
+                base,
+                field_name: a.field.node.clone(),
+                value,
+            },
+        });
+        // Rebind the mutable source variable to its new immutable SSA Record.
+        self.locals.insert(a.target.node.clone(), updated);
         Ok(())
     }
 

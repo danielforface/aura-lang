@@ -328,6 +328,7 @@ fn compute_checkable_stmt_merkle_hashes(
         match stmt {
             Stmt::StrandDef(sd) => walk_expr_call_names(out, &sd.expr),
             Stmt::Assign(a) => walk_expr_call_names(out, &a.expr),
+            Stmt::FieldAssign(a) => walk_expr_call_names(out, &a.expr),
             Stmt::Prop(p) => walk_expr_call_names(out, &p.expr),
             Stmt::ExprStmt(e) => walk_expr_call_names(out, e),
             Stmt::Requires(r) => walk_expr_call_names(out, &r.expr),
@@ -2012,6 +2013,15 @@ fn collect_file_symbols(uri: &Url, text: &str) -> (Vec<DefInfo>, Vec<RefInfo>) {
                 walk_expr(refs, scopes, globals, uri, text, &sd.expr);
                 // Then define name for subsequent statements.
                 add_def(defs, scopes, uri, text, &sd.name, "val");
+            }
+            aura_ast::Stmt::FieldAssign(a) => {
+                if let Some(key) = resolve_name(scopes, globals, &a.target.node) {
+                    refs.push(RefInfo {
+                        key,
+                        range: range_from_source_span(text, a.target.span),
+                    });
+                }
+                walk_expr(refs, scopes, globals, uri, text, &a.expr);
             }
             aura_ast::Stmt::Assign(a) => {
                 // Assign target is a reference.
@@ -3881,6 +3891,7 @@ impl LanguageServer for Backend {
                     walk_expr_for_hints(hints, checker, text, &sd.expr);
                 }
                 aura_ast::Stmt::Assign(a) => walk_expr_for_hints(hints, checker, text, &a.expr),
+                aura_ast::Stmt::FieldAssign(a) => walk_expr_for_hints(hints, checker, text, &a.expr),
                 aura_ast::Stmt::Prop(p) => walk_expr_for_hints(hints, checker, text, &p.expr),
                 aura_ast::Stmt::ExprStmt(e) => walk_expr_for_hints(hints, checker, text, e),
                 aura_ast::Stmt::Requires(r) => walk_expr_for_hints(hints, checker, text, &r.expr),
