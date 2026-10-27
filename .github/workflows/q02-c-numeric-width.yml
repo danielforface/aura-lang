@@ -1,0 +1,24 @@
+name: Q02 Native C numeric width reproduction
+on:
+  push:
+    branches: ['qual/Q02-001-c-numeric-width-baseline']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  c-native-numeric-width:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native C compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang build-essential
+          clang --version
+      - name: Real generated C compiled and executed (native numeric fidelity)
+        run: cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+      - name: Existing C backend library regressions
+        run: cargo test --locked -p aura-backend-c --lib -- --nocapture
