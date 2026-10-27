@@ -88,3 +88,39 @@ fn record_opaque_function_parameter_abi_is_explicitly_unqualified() {
     m.functions.get_mut("get_x").unwrap().params[0].ty = Type::Opaque("Point".into());
     error(m, "function ABI");
 }
+
+fn functional_setfield_fixture(field_name: &str, replacement_type: Type) -> ModuleIR {
+    let span: Span = (0, 0).into();
+    let mut module = ir(
+        vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::U32,
+    );
+    let f = module.functions.get_mut("get_x").unwrap();
+    f.params.push(Param {
+        name: "replacement".into(), ty: replacement_type, span, value: ValueId(4),
+    });
+    // Introduce a NEW Record destination; the original remains at v2.
+    f.blocks[0].insts.insert(1, Inst {
+        span, dest: Some(ValueId(5)),
+        kind: InstKind::SetField {
+            base: ValueId(2),
+            field_name: field_name.into(),
+            value: ValueId(4),
+        },
+    });
+    f.blocks[0].insts[2].kind = InstKind::GetField {
+        base: ValueId(5), field_name: "x".into(),
+    };
+    module
+}
+
+#[test]
+fn functional_setfield_unknown_field_rejects_valid_ir_without_fabricated_c() {
+    error(functional_setfield_fixture("missing_field", Type::U32), "unknown SetField");
+}
+
+#[test]
+fn functional_setfield_u64_into_u32_rejects_implicit_truncation() {
+    error(functional_setfield_fixture("x", Type::U64), "type mismatch");
+}
