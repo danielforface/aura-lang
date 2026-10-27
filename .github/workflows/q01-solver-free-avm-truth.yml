@@ -15,6 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install native audio and C build dependencies for genuine CLI compile
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang build-essential libclang-dev libasound2-dev cmake ninja-build pkg-config
       - name: Prove --no-default-features CLI has zero Z3 package dependencies
         run: |
           cargo tree --locked -p aura --no-default-features --prefix none -e normal --format '{p}' > "$RUNNER_TEMP/aura-no-z3-tree.txt"
@@ -23,6 +27,12 @@ jobs:
             exit 1
           fi
           echo "OK: no Z3 or z3-sys in the Aura CLI normal dependency graph"
+      - name: Actual solver-free Aura CLI compiles without pinned Z3 workaround
+        run: cargo check --locked -p aura --no-default-features
+      - name: Explicit Aura Z3 feature still pulls the solver
+        run: |
+          cargo tree --locked -p aura --no-default-features --features z3 --prefix none -e normal --format '{p}' > "$RUNNER_TEMP/aura-optin-z3-tree.txt"
+          grep -E '^z3-sys v[0-9]' "$RUNNER_TEMP/aura-optin-z3-tree.txt"
   avm-report-truth:
     runs-on: ubuntu-latest
     timeout-minutes: 80
@@ -40,3 +50,17 @@ jobs:
           python3 tools/qualification/prepare_z3_sys_ci.py "$RUNNER_TEMP/aura-cargo-metadata.json"
       - name: Real AVM source API and public CLI JSON verification truth
         run: cargo test --locked -p aura-interpret --test verification_gate_truth -- --nocapture
+
+  truly-solver-free-avm-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native ALSA development dependencies, no solver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang build-essential libasound2-dev pkg-config
+      - name: Real AVM API/CLI and missing-solver gate truth with no Z3 feature
+        run: cargo test --locked -p aura-interpret --no-default-features --test verification_gate_truth -- --nocapture
