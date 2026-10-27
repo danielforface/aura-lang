@@ -262,14 +262,89 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         values.insert(p.value, binding);
     }
 
+    // Static SSA type prepass for supported value-producing instructions.
+    // Phi incoming definitions can be in any predecessor block; the normal
+    // code emitter has not yet visited those blocks when it allocates Phi
+    // storage. Infer types from the same typed operands used by codegen,
+    // iterating to a fixed point for chains and other already-resolved Phi.
+    //
+    // This is intentionally NOT a default U32, a full IR type checker, or
+    // inference for opaque/composite instructions: unresolved Phi inputs
+    // remain rejected below, never treated as a successful C emission.
+    let mut known_ssa_types: HashMap<ValueId, CType> = values
+        .iter()
+        .map(|(value, (ty, _))| (*value, *ty))
+        .collect();
+    let max_rounds = f.blocks.iter().map(|b| b.insts.len()).sum::<usize>() + 1;
+    for _ in 0..max_rounds {
+        let mut progressed = false;
+        for b in &f.blocks {
+            for inst in &b.insts {
+                let Some(dest) = inst.dest else { continue };
+                let inferred = match &inst.kind {
+                    InstKind::BindStrand { expr, .. } => match expr {
+                        RValue::ConstU32(_) => Some(CType::U32),
+                        RValue::ConstI64(_) => Some(CType::I64),
+                        RValue::ConstF64(_) => Some(CType::F64),
+                        RValue::ConstChar(_) => Some(CType::Char),
+                        RValue::ConstBool(_) => Some(CType::Bool),
+                        RValue::ConstString(_) => Some(CType::CString),
+                        RValue::Local(source) => known_ssa_types.get(source).copied(),
+                    },
+                    InstKind::Unary { op, operand } => known_ssa_types
+                        .get(operand)
+                        .copied()
+                        .and_then(|ty| match op {
+                            UnaryOp::Neg if matches!(
+                                ty, CType::I32 | CType::I64 | CType::U32 | CType::U64
+                                    | CType::F32 | CType::F64
+                            ) => Some(ty),
+                            UnaryOp::Not if ty == CType::Bool => Some(CType::Bool),
+                            _ => None,
+                        }),
+                    InstKind::Binary { op, left, right } => {
+                        match (known_ssa_types.get(left), known_ssa_types.get(right)) {
+                            (Some(&lt), Some(&rt)) => emit_binop(*op, lt, rt, "lhs", "rhs")
+                                .ok()
+                                .map(|(ty, _)| ty),
+                            _ => None,
+                        }
+                    }
+                    InstKind::Phi { incomings } if !incomings.is_empty() => incomings
+                        .iter()
+                        .map(|(_, value)| known_ssa_types.get(value).copied())
+                        .collect::<Option<Vec<_>>>()
+                        .and_then(|ts| {
+                            ts.first().copied().filter(|first| ts.iter().all(|ty| ty == first))
+                        }),
+                    _ => None,
+                };
+                if let Some(ty) = inferred {
+                    match known_ssa_types.get(&dest) {
+                        Some(previous) if *previous != ty => return Err(CBackendError {
+                            message: format!(
+                                "conflicting inferred SSA types for v{}: {previous:?} vs {ty:?}",
+                                dest.0
+                            ),
+                        }),
+                        Some(_) => {}
+                        None => {
+                            known_ssa_types.insert(dest, ty);
+                            progressed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+
     // A Phi is SSA-level typed storage whose writes occur on its incoming
     // predecessor edges. Declare it before all block labels so every goto
     // and edge assignment references an in-scope C variable.
     //
-    // The IR currently has no per-Phi result-type annotation. Until a
-    // complete typed SSA value map is available, accept only Phi operands
-    // whose type is already known (function parameters in this subset).
-    // Unknown or disagreeing operands fail closed instead of defaulting U32.
+    // A Phi is emitted only if all incoming SSA types were inferred
+    // consistently; unresolved, cyclic or unmodeled producers fail closed.
     let mut phi_inj: HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>> = HashMap::new();
     let mut phi_decls: Vec<(ValueId, CType)> = Vec::new();
     for b in &f.blocks {
@@ -285,8 +360,8 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                     });
                 }
                 for (pred, incoming) in incomings {
-                    let incoming_type = values.get(incoming)
-                        .map(|(ty, _)| *ty)
+                    let incoming_type = known_ssa_types.get(incoming)
+                        .copied()
                         .ok_or_else(|| CBackendError {
                             message: format!(
                                 "unqualified Phi v{}: type of incoming v{} is not available",
