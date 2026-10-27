@@ -1,0 +1,19 @@
+name: Q02 Reject unresolved return type fabrication
+on:
+  push:
+    branches: ['qual/Q02-002-reject-unknown-return-type']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  semantic-to-ir-return-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real source parser sema lowerer unknown-return and controls
+        run: cargo test --locked -p aura-core --test unknown_return_lowering -- --nocapture
+      - name: Existing aura-core library tests
+        run: cargo test --locked -p aura-core --lib -- --nocapture
