@@ -589,25 +589,19 @@ fn emit_function(
                         map_ctype_decl(*ty), dest_name, cname, record_field_symbol(field_name)));
                     values.insert(dest, (*ty, dest_name));
                 }
-                InstKind::SetField { base, field_name, value } => {
-                    let (record, cname) = records.get(base).ok_or_else(|| CBackendError {
-                        message: format!("unqualified C Record SetField from unavailable v{}", base.0),
-                    })?;
-                    let layout = qualified_record_fields(record_layouts, record)?;
-                    let (_, ty) = layout.iter().find(|(name, _)| name == field_name)
-                        .ok_or_else(|| CBackendError { message: format!(
-                            "unqualified C Record '{}' unknown field '{}'", record, field_name
-                        ) })?;
-                    let (actual, rhs) = values.get(value).ok_or_else(|| CBackendError {
-                        message: format!("unqualified C Record SetField unemitted SSA v{}", value.0),
-                    })?;
-                    if actual != ty {
-                        return Err(CBackendError { message: format!(
-                            "unqualified C Record '{}' SetField '{}' type mismatch", record, field_name
-                        ) });
-                    }
-                    out.push_str(&format!("  {}.{} = {};\n",
-                        cname, record_field_symbol(field_name), rhs));
+                InstKind::SetField { .. } => {
+                    // Q03-001: the IR Oracle only installs a changed Record
+                    // value when this instruction has a destination. The
+                    // earlier C implementation mutated the original even
+                    // for dest=None, causing observable semantic divergence.
+                    // Do not claim support until the same functional update
+                    // contract is implemented and differentially tested.
+                    return Err(CBackendError {
+                        message: format!(
+                            "unqualified C Record SetField semantics at source span {:?}; refusing divergent in-place mutation",
+                            inst.span,
+                        ),
+                    });
                 }
 
                 InstKind::ConstructEnumVariant { .. }
