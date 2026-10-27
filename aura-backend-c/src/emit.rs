@@ -156,7 +156,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map);
+        emit_function(&mut out, debug, &f, &ret_map)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
