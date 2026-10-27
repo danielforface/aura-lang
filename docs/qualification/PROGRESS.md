@@ -676,3 +676,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 - Candidate `7a59ddac` [Actions 40597344353](https://github.com/danielforface/aura-lang/actions/runs/40597344353), independent native job **COMPLETED SUCCESS**: real source branches update same Record via SSA Phi, Oracle true 19/false 23, real Clang strict C11 -O0/-O2 executed with correct outputs; ancestor native Record, FieldAssign, direct SetField, scalar Phi, Enum/Return, IR/core all green. EV-155. Public CLI job still running at observation.
 - Added two TEST-ONLY negative valid structural IR cases for Phi merging nominal Point/Other with identical layouts or Record/scalar; must explicitly reject both, **new CI not observed**. This moves branch merge to nominal type precision, not generic Record ABI/structured nested Phi proof. Master/ledger frozen, Draft #57 unmerged, Q03-001 IN_PROGRESS.
+
+## 2026-10-28 — Q03 Record Phi nominal safety Native GREEN, AVM/CLI source branch tests staged
+
+- Candidate `a7e57800` [Actions 40597674003](https://github.com/danielforface/aura-lang/actions/runs/40597674003) native independent job **SUCCESS**: true Aura source Record Phi C11 Clang O0/O2 and Oracle 19/23, nominal mismatch/mixed scalar guards 2/2, all previous native/core tests pass. Public CLI job still pending at observation. EV-156.
+- New tests appended to `aura/tests/record_field_assign_avm.rs` assert true/false source `if` Record updates return 19/23 in AVM with no false proof claim, and `aura/tests/local_record_cli.rs` asserts actual `aura check` + `aura build --backend c` accepts branched Record. **New CI NOT YET OBSERVED**. This remains flat single-level typed local Record; Q03-001 IN_PROGRESS, frozen Master/ledger, Draft #57 unmerged.

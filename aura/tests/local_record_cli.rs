@@ -43,3 +43,28 @@ cell main() ->:
         "source Record C build failed; stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_cli_accepts_record_field_assign_through_if_else_join() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell main() ->:
+    val mut p: Point = Point { x: 7, y: 13 }
+    if true:
+        p.x = 19
+    else:
+        p.x = 23
+    yield p.x
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura check must accept typed flat Record Phi source, stderr={}",
+        String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no Z3 enabled: check cannot claim proof");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public Aura C build must preserve Record Phi, stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
