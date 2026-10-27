@@ -128,3 +128,61 @@ fn direct_parameter_return_without_phi_compiles_and_runs() {
         None,
     );
 }
+
+
+// Issue #43: the previous Phi prepass only knew function-parameter types.
+// These incoming SSA values are computed separately inside predecessor blocks.
+fn diamond_with_computed_incomings(ty: Type) -> ModuleIR {
+    use aura_ir::BinOp;
+    let span: Span = (0,0).into();
+    let mk = |id: u32, insts: Vec<Inst>, term: Terminator| BasicBlock {
+        id: BlockId(id), span, hint: ExecutionHint::Sequential, insts, term
+    };
+    let compute = |id: u32, op: BinOp| Inst {
+        span, dest: Some(ValueId(id)),
+        kind: InstKind::Binary { op, left: ValueId(1), right: ValueId(2) }
+    };
+    let phi = Inst {
+        span, dest: Some(ValueId(3)), kind: InstKind::Phi {
+            incomings: vec![(BlockId(1), ValueId(4)), (BlockId(2), ValueId(5))]
+        }
+    };
+    let mut module = ModuleIR::new();
+    module.functions.insert("choose_wide".into(), FunctionIR {
+        name: "choose_wide".into(), span,
+        params: vec![
+            Param { name: "cond".into(), ty: Type::Bool, span, value: ValueId(0) },
+            Param { name: "x".into(), ty: ty.clone(), span, value: ValueId(1) },
+            Param { name: "y".into(), ty: ty.clone(), span, value: ValueId(2) },
+        ],
+        ret: ty, entry: BlockId(0),
+        blocks: vec![
+            mk(0, vec![], Terminator::CondBr {
+                cond: ValueId(0), then_bb: BlockId(1), else_bb: BlockId(2)
+            }),
+            mk(1, vec![compute(4, BinOp::Add)], Terminator::Br(BlockId(3))),
+            mk(2, vec![compute(5, BinOp::Sub)], Terminator::Br(BlockId(3))),
+            mk(3, vec![phi], Terminator::Return(Some(ValueId(3))))
+        ]
+    });
+    module
+}
+
+#[test]
+fn computed_predecessor_i64_phi_preserves_negative_high_bits() {
+    compile_and_execute(&diamond_with_computed_incomings(Type::I64),
+        "#include <stdint.h>\n#include <stdbool.h>\nint64_t choose_wide(bool cond,int64_t x,int64_t y);\nint main(void){ return choose_wide(true,-4294967300LL,7LL)==-4294967293LL && choose_wide(false,-4294967300LL,7LL)==-4294967307LL ? 0 : 1; }\n",
+        Some("int64_t"));
+}
+#[test]
+fn computed_predecessor_u64_phi_preserves_positive_high_bits() {
+    compile_and_execute(&diamond_with_computed_incomings(Type::U64),
+        "#include <stdint.h>\n#include <stdbool.h>\nuint64_t choose_wide(bool cond,uint64_t x,uint64_t y);\nint main(void){ return choose_wide(true,4294967300ULL,7ULL)==4294967307ULL && choose_wide(false,4294967300ULL,7ULL)==4294967293ULL ? 0 : 1; }\n",
+        Some("uint64_t"));
+}
+#[test]
+fn computed_predecessor_u32_phi_keeps_control_flow_results() {
+    compile_and_execute(&diamond_with_computed_incomings(Type::U32),
+        "#include <stdint.h>\n#include <stdbool.h>\nuint32_t choose_wide(bool cond,uint32_t x,uint32_t y);\nint main(void){ return choose_wide(true,100u,7u)==107u && choose_wide(false,100u,7u)==93u ? 0 : 1; }\n",
+        Some("uint32_t"));
+}
