@@ -38,7 +38,7 @@ fn require_known(source: &str) {
 #[test]
 fn unregistered_flow_call_on_literal_is_rejected() {
     require_rejection(
-        "cell main() ->:\n    1 -> unknown_flow()\n",
+        "cell main() ->:\n    yield 1 -> unknown_flow()\n",
         "unknown_flow",
     );
 }
@@ -54,7 +54,7 @@ fn unregistered_flow_call_on_named_local_is_rejected() {
 #[test]
 fn unregistered_flow_call_on_imported_namespace_is_rejected() {
     require_rejection(
-        "import aura::io\n\ncell main() ->:\n    \"hello\" -> io::ghost_flow()\n",
+        "import aura::io\n\ncell main() ->:\n    yield \"hello\" -> io::ghost_flow()\n",
         "ghost_flow",
     );
 }
@@ -62,13 +62,13 @@ fn unregistered_flow_call_on_imported_namespace_is_rejected() {
 #[test]
 fn declared_cell_with_injected_flow_argument_remains_legal() {
     require_known(
-        "cell sink(n: u32) ->:\n    yield n\n\ncell main() ->:\n    1 -> sink()\n",
+        "cell sink(n: u32) ->:\n    yield n\n\ncell main() ->:\n    yield 1 -> sink()\n",
     );
 }
 
 #[test]
 fn registered_builtin_with_injected_flow_argument_remains_legal() {
     require_known(
-        "import aura::io\n\ncell main() ->:\n    \"hello\" -> io::println()\n",
+        "import aura::io\n\ncell main() ->:\n    yield \"hello\" -> io::println()\n",
     );
 }
