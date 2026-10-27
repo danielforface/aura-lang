@@ -1,0 +1,30 @@
+name: Q03 Real typed local Record Native C
+on:
+  push:
+    branches: ['qual/Q03-001-native-record-scalar']
+  pull_request:
+    branches: ['qual/Q03-007-unemitted-c-return-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-record-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real Aura Record C Clang O0/O2 compiled executable tests (test-first)
+        run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
+      - name: Preserve previous Record, Enum and unemitted Return fail-closed regressions
+        run: |
+          cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
+          cargo test --locked -p aura-backend-c --test enum_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test unemitted_return_truth -- --nocapture
+      - name: Preserve numeric and Phi actual Clang native behavior
+        run: |
+          cargo test --locked -p aura-backend-c --lib
+          cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+          cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
