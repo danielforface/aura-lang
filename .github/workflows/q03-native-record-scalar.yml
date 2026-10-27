@@ -32,3 +32,8 @@ jobs:
           cargo test --locked -p aura-backend-c --lib
           cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
           cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
+      - name: Ensure typed IR propagation keeps public no-Z3 CLI and core compatible
+        run: |
+          cargo check --locked -p aura --no-default-features
+          cargo test --locked -p aura-ir -- --nocapture
+          cargo test --locked -p aura-core -- --nocapture
