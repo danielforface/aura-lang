@@ -1423,6 +1423,10 @@ fn collect_assigned_names(block: &Block, out: &mut BTreeSet<String>) {
             Stmt::Assign(AssignStmt { target, .. }) => {
                 out.insert(target.node.clone());
             }
+            Stmt::FieldAssign(a) => {
+                // Field updates rebind the entire nominal Record SSA local.
+                out.insert(a.target.node.clone());
+            }
             Stmt::Layout(LayoutBlock { body, .. }) => {
                 collect_assigned_names(body, out);
             }

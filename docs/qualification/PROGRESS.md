@@ -636,3 +636,8 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Q03-001 first true Aura p.x = value source implementation candidate
 
 - [Actions 40579738404](https://github.com/danielforface/aura-lang/actions/runs/40579738404) test-only baseline 0/3 due Parser expected end of line; previous source Record Native 2/2 still PASS. EV-147. Implemented candidate in explicit AST FieldAssign, parser, Checker receiver mutable/live/nominal non-generic with known scalar field, lowerer fresh SSA SetField and local rebind; formatter/macro/LSP, AVM functional clone/rebind, SMT verifier explicitly Unsupported. **No production candidate CI observed yet, cannot claim GREEN or public Aura field write support**. Q03-001 remains IN_PROGRESS, immutable Master/ledger unchanged, Draft #57 and ancestors unmerged.
+
+
+## 2026-10-27 — Q03-001 FieldAssign cross-crate compilation correction, new source GREEN pending
+
+- Source candidate 1e49683 [Actions 40580953319](https://github.com/danielforface/aura-lang/actions/runs/40580953319) native job failed Rust E0004 at lower.rs collect_assigned_names new Stmt::FieldAssign variant, so **not a feature semantic RED** and source tests not run. EV-148. Fixed assigned-name collector to register updated Record receiver for SSA merge; post-fix native/CLI CI not yet observed. Draft #57 unmerged, Master/ledger unchanged, no source qualification claim.
