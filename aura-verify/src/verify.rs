@@ -381,6 +381,16 @@ where
         })
     }
 
+    fn unsupported_nested(&self, span: aura_ast::Span) -> Result<(), VerifyError> {
+        Err(VerifyError {
+            kind: crate::solver::VerifyFailureKind::Unsupported,
+            message: "nested statement has no qualified verifier semantics".to_string(),
+            span,
+            model: None,
+            meta: None,
+        })
+    }
+
     fn check_block(
         &mut self,
         block: &aura_ast::Block,
@@ -596,7 +606,16 @@ where
             Stmt::FlowBlock(fb) => self.check_block(&fb.body, st, nexus),
             Stmt::Layout(lb) => self.check_block(&lb.body, st, nexus),
             Stmt::Render(rb) => self.check_block(&rb.body, st, nexus),
-            _ => Ok(()),
+            // Never let a new or unmodeled Stmt variant silently become a
+            // successful proof. The exhaustive match below is a compile-time
+            // coverage guard when the AST grows.
+            Stmt::Prop(p) => self.unsupported_nested(p.span),
+            Stmt::MacroDef(m) => self.unsupported_nested(m.span),
+            Stmt::TraitDef(t) => self.unsupported_nested(t.span),
+            Stmt::RecordDef(r) => self.unsupported_nested(r.span),
+            Stmt::EnumDef(e) => self.unsupported_nested(e.span),
+            Stmt::CellDef(c) => self.unsupported_nested(c.span),
+            Stmt::MacroCall(m) => self.unsupported_nested(m.span),
         }
     }
 
