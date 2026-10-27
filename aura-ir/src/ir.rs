@@ -104,6 +104,9 @@ pub enum BinOp {
 pub struct ModuleIR {
     pub functions: BTreeMap<String, FunctionIR>,
     pub externs: BTreeMap<String, ExternFnSig>,
+    /// Ordered nominal field layouts that survive source-to-IR lowering.
+    /// Absence of a layout is NOT permission to infer one from values.
+    pub record_layouts: BTreeMap<String, Vec<(String, Type)>>,
 }
 
 impl ModuleIR {
@@ -111,6 +114,7 @@ impl ModuleIR {
         Self {
             functions: BTreeMap::new(),
             externs: BTreeMap::new(),
+            record_layouts: BTreeMap::new(),
         }
     }
 }

@@ -25,7 +25,7 @@ fn check_native(source: &str, driver: &str) {
     let ir = lower_program(&ast).expect("Aura source must lower to actual IR");
     validate_module(&ir).expect("source-generated IR must structurally validate");
     let artifacts = emit_module(&ir, None).expect("typed Record source must emit valid C");
-    assert!(artifacts.module_c.contains("struct") && artifacts.module_c.contains(".x"),
+    assert!(artifacts.module_c.contains("aura_record_") && artifacts.module_c.contains("aura_f_"),
         "real typed Record field access and named struct must be emitted: {}", artifacts.module_c);
     let temp = Scratch::new();
     fs::write(temp.path.join("aura_runtime.h"), artifacts.runtime_h).unwrap();

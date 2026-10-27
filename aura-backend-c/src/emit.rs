@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use aura_ir::{
     BinOp, BlockId, DebugSource, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp,
@@ -132,10 +132,81 @@ fn emit_runtime_h() -> String {
     out
 }
 
+// Encode user-facing names into collision-free, C-safe identifiers without
+// changing Record field ordering or accidentally using C reserved keywords.
+fn encoded_record_name(s: &str) -> String {
+    s.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+}
+fn record_type_symbol(s: &str) -> String {
+    format!("aura_record_{}", encoded_record_name(s))
+}
+fn record_field_symbol(s: &str) -> String {
+    format!("aura_f_{}", encoded_record_name(s))
+}
+fn record_field_ctype(ty: &Type) -> Option<CType> {
+    match ty {
+        Type::Bool => Some(CType::Bool),
+        Type::Char => Some(CType::Char),
+        Type::U8 => Some(CType::U8),
+        Type::U16 => Some(CType::U16),
+        Type::U32 => Some(CType::U32),
+        Type::U64 => Some(CType::U64),
+        Type::I8 => Some(CType::I8),
+        Type::I16 => Some(CType::I16),
+        Type::I32 => Some(CType::I32),
+        Type::I64 => Some(CType::I64),
+        Type::F32 => Some(CType::F32),
+        Type::F64 => Some(CType::F64),
+        _ => None,
+    }
+}
+fn qualified_record_fields(
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    record: &str,
+) -> Result<Vec<(String, CType)>, CBackendError> {
+    let fields = layouts.get(record).ok_or_else(|| CBackendError {
+        message: format!("unqualified C Record '{}' missing typed field layout", record),
+    })?;
+    if fields.is_empty() {
+        return Err(CBackendError {
+            message: format!("unqualified C Record '{}' empty layout not supported", record),
+        });
+    }
+    let mut result = Vec::with_capacity(fields.len());
+    for (name, ty) in fields {
+        if result.iter().any(|(existing, _): &(String, CType)| existing == name) {
+            return Err(CBackendError { message:
+                format!("unqualified C Record '{}' duplicate layout field '{}'", record, name) });
+        }
+        let scalar = record_field_ctype(ty).ok_or_else(|| CBackendError {
+            message: format!("unqualified C Record '{}' field '{}' type {:?} unsupported",
+                record, name, ty),
+        })?;
+        result.push((name.clone(), scalar));
+    }
+    Ok(result)
+}
+
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
+
+    // Emit real tagged nominal layouts only for the currently qualified
+    // scalar field subset. The source declaration order, not initializer
+    // order, controls the struct layout. Unsupported schemas remain refused
+    // at ConstructRecord, and unused unsupported declarations are inert.
+    for (name, _) in &module.record_layouts {
+        if let Ok(fields) = qualified_record_fields(&module.record_layouts, name) {
+            out.push_str("typedef struct {\n");
+            for (field, ty) in &fields {
+                out.push_str(&format!(
+                    "  {} {};\n", map_ctype_decl(*ty), record_field_symbol(field),
+                ));
+            }
+            out.push_str(&format!("}} {};\n\n", record_type_symbol(name)));
+        }
+    }
 
     // Determine function return types by terminator shape (prototype).
     let mut ret_map: HashMap<String, CType> = HashMap::new();
@@ -148,7 +219,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map)?;
+        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts)?;
         out.push('\n');
     }
 
@@ -156,7 +227,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map)?;
+        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -228,7 +299,26 @@ fn function_return_ctype(f: &FunctionIR) -> CType {
     CType::Void
 }
 
-fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, ret_map: &HashMap<String, CType>) -> Result<(), CBackendError> {
+fn emit_function(
+    out: &mut String,
+    debug: Option<&DebugSource>,
+    f: &FunctionIR,
+    ret_map: &HashMap<String, CType>,
+    record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
+) -> Result<(), CBackendError> {
+    // Record arguments/returns are deliberately outside this first local
+    // scalar Record implementation: never expose prototype Tensor ABI.
+    for ty in f.params.iter().map(|p| &p.ty).chain(std::iter::once(&f.ret)) {
+        match ty {
+            Type::Record { .. } => return Err(CBackendError {
+                message: format!("unqualified C Record function ABI in '{}': {:?}", f.name, ty),
+            }),
+            Type::Opaque(name) if record_layouts.contains_key(name) => return Err(CBackendError {
+                message: format!("unqualified C Record opaque function ABI in '{}': {}", f.name, name),
+            }),
+            _ => {}
+        }
+    }
     let ret = function_return_ctype(f);
     out.push_str(map_ctype_decl(ret));
     out.push(' ');
@@ -248,6 +338,9 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
     // Value table: ValueId -> (ctype, generated C name)
     let mut values: HashMap<ValueId, (CType, String)> = HashMap::new();
+    // Nominal Record SSA lives in a separate typed namespace. Never pass
+    // a Record as a Tensor/Scalar to unqualified operations or ABI paths.
+    let mut records: HashMap<ValueId, (String, String)> = HashMap::new();
 
     // Preserve source-level names for AVM-compatible `{ident}` interpolation.
     let mut named_values: HashMap<String, (CType, String)> = HashMap::new();
@@ -432,19 +525,87 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                     }
                 }
 
-                InstKind::ConstructRecord { .. }
-                | InstKind::GetField { .. }
-                | InstKind::SetField { .. } => {
-                    // There is no typed, ordered Record layout in ModuleIR yet.
-                    // Silently skipping these operations can return fabricated
-                    // values or a C artifact that cannot preserve Aura meaning.
-                    // Refuse until real typed struct/field codegen is qualified.
-                    return Err(CBackendError {
-                        message: format!(
-                            "unqualified C Record emission: unsupported instruction {:?} at source span {:?}; typed Record layout/field lowering required",
-                            &inst.kind, inst.span
-                        ),
-                    });
+                InstKind::ConstructRecord { record_name, fields } => {
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError { message:
+                            "unqualified C Record emission without SSA destination".into() });
+                    };
+                    let layout = qualified_record_fields(record_layouts, record_name)?;
+                    if fields.len() != layout.len() {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record '{}' field count mismatch: got {}, expected {}",
+                            record_name, fields.len(), layout.len()
+                        ) });
+                    }
+                    let mut initializers = Vec::new();
+                    for (field, expected) in &layout {
+                        let mut matching = fields.iter().filter(|(given, _)| given == field);
+                        let Some((_, value)) = matching.next() else {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' missing field '{}'", record_name, field
+                            ) });
+                        };
+                        if matching.next().is_some() {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' duplicate field '{}'", record_name, field
+                            ) });
+                        }
+                        let (actual, cname) = values.get(value).ok_or_else(|| CBackendError {
+                            message: format!("unqualified C Record '{}' field '{}' unemitted SSA v{}",
+                                record_name, field, value.0),
+                        })?;
+                        if actual != expected {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?}",
+                                record_name, field, actual, expected
+                            ) });
+                        }
+                        initializers.push(format!(".{} = {}", record_field_symbol(field), cname));
+                    }
+                    let cname = format!("v{}", dest.0);
+                    out.push_str(&format!(
+                        "  {} {} = {{ {} }};\n",
+                        record_type_symbol(record_name), cname, initializers.join(", ")
+                    ));
+                    records.insert(dest, (record_name.clone(), cname));
+                }
+                InstKind::GetField { base, field_name } => {
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError { message:
+                            "unqualified C Record GetField without SSA destination".into() });
+                    };
+                    let (record, cname) = records.get(base).ok_or_else(|| CBackendError {
+                        message: format!("unqualified C Record GetField from unavailable v{}", base.0),
+                    })?;
+                    let layout = qualified_record_fields(record_layouts, record)?;
+                    let (_, ty) = layout.iter().find(|(name, _)| name == field_name)
+                        .ok_or_else(|| CBackendError { message: format!(
+                            "unqualified C Record '{}' unknown field '{}'", record, field_name
+                        ) })?;
+                    let dest_name = format!("v{}", dest.0);
+                    out.push_str(&format!("  {} {} = {}.{};\n",
+                        map_ctype_decl(*ty), dest_name, cname, record_field_symbol(field_name)));
+                    values.insert(dest, (*ty, dest_name));
+                }
+                InstKind::SetField { base, field_name, value } => {
+                    let (record, cname) = records.get(base).ok_or_else(|| CBackendError {
+                        message: format!("unqualified C Record SetField from unavailable v{}", base.0),
+                    })?;
+                    let layout = qualified_record_fields(record_layouts, record)?;
+                    let (_, ty) = layout.iter().find(|(name, _)| name == field_name)
+                        .ok_or_else(|| CBackendError { message: format!(
+                            "unqualified C Record '{}' unknown field '{}'", record, field_name
+                        ) })?;
+                    let (actual, rhs) = values.get(value).ok_or_else(|| CBackendError {
+                        message: format!("unqualified C Record SetField unemitted SSA v{}", value.0),
+                    })?;
+                    if actual != ty {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record '{}' SetField '{}' type mismatch", record, field_name
+                        ) });
+                    }
+                    out.push_str(&format!("  {}.{} = {};\n",
+                        cname, record_field_symbol(field_name), rhs));
                 }
 
                 InstKind::ConstructEnumVariant { .. }
@@ -464,6 +625,17 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 InstKind::BindStrand { name, expr } => {
                     if let Some(dest) = inst.dest {
+                        // A Record local must preserve its nominal C struct
+                        // identity; do not cast/copy it through Tensor ABI.
+                        if let RValue::Local(source) = expr {
+                            if let Some((record, from)) = records.get(source).cloned() {
+                                let cname = format!("v{}", dest.0);
+                                out.push_str(&format!("  {} {} = {};\n",
+                                    record_type_symbol(&record), cname, from));
+                                records.insert(dest, (record, cname));
+                                continue;
+                            }
+                        }
                         // RValue::Local is an alias, so its C type must be the
                         // source value's type. The old prototype hard-coded
                         // Tensor here, which is incorrect for u32/bool/string.
@@ -565,6 +737,11 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 }
 
                 InstKind::Call { callee, args } => {
+                    if args.iter().any(|arg| records.contains_key(arg)) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record argument in call '{}'", callee
+                        ) });
+                    }
                     emit_call(
                         out,
                         inst.dest,
@@ -577,6 +754,11 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                     );
                 }
                 InstKind::ComputeKernel { callee, args } => {
+                    if args.iter().any(|arg| records.contains_key(arg)) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record argument in kernel '{}'", callee
+                        ) });
+                    }
                     emit_kernel(out, inst.dest, callee, args, &mut values);
                 }
             }
@@ -1074,6 +1256,7 @@ mod emit_tests {
         let mut module = ModuleIR {
             functions: BTreeMap::new(),
             externs: BTreeMap::new(),
+            record_layouts: BTreeMap::new(),
         };
 
         let dummy_span: Span = (0, 0).into();

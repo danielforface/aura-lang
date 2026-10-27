@@ -107,6 +107,14 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
 
     for stmt in &program.stmts {
         match stmt {
+            Stmt::RecordDef(def) if def.params.is_empty() => {
+                // Preserve declaration order and exact scalar field types for
+                // C layout; unsupported/generic fields remain unqualified.
+                module.record_layouts.insert(
+                    def.name.node.clone(),
+                    def.fields.iter().map(|f| (f.name.node.clone(), lower_type(&f.ty))).collect(),
+                );
+            }
             Stmt::CellDef(cell) => {
                 let f = lower.lower_cell(cell)?;
                 module.functions.insert(f.name.clone(), f);
