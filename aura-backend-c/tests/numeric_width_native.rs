@@ -115,3 +115,37 @@ fn existing_u32_addition_remains_correct_control() {
         "#include <stdint.h>\nuint32_t scalar_op(uint32_t x, uint32_t y);\nint main(void) { return scalar_op(9u, 5u) == 14u ? 0 : 1; }\n",
         "uint32_t v2 =");
 }
+
+
+#[test]
+fn unqualified_wide_division_in_main_must_fail_closed_not_drop_backend_error() {
+    let span: Span = (0, 0).into();
+    let mut module = ModuleIR::new();
+    module.functions.insert("main".to_string(), FunctionIR {
+        name: "main".into(),
+        span,
+        params: vec![
+            Param { name: "x".into(), ty: Type::U64, span, value: ValueId(0) },
+            Param { name: "y".into(), ty: Type::U64, span, value: ValueId(1) },
+        ],
+        ret: Type::U64,
+        entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0), span, hint: ExecutionHint::Sequential,
+            insts: vec![Inst {
+                span, dest: Some(ValueId(2)),
+                kind: InstKind::Binary {
+                    op: BinOp::Div, left: ValueId(0), right: ValueId(1),
+                },
+            }],
+            term: Terminator::Return(Some(ValueId(2))),
+        }],
+    });
+    match emit_module(&module, None) {
+        Ok(_) => panic!("unqualified U64 division in main must NOT produce a successful C artifact"),
+        Err(e) => assert!(
+            e.message.contains("unqualified C numeric division"),
+            "incorrect backend rejection kind: {e}"
+        ),
+    }
+}
