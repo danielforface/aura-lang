@@ -495,3 +495,9 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-27 — Issue #51 actual Aura Record source pipeline added after interim fail-closed candidate
 
 - Initial valid-SSA Record C emitter RED [Actions 40530230602](https://github.com/danielforface/aura-lang/actions/runs/40530230602) 1/3, two real false-success C artifacts. Candidate source guard `047ea776` now returns typed Record-specific C backend error; post-patch CI **not yet observed** at this increment. Added true Aura source→parse→Checker→lower→validate IR→C backend negative integration with record declaration/construct/field read and positive scalar Aura source, and CI to exercise it and existing Clang controls. **New source tests NOT RUN/OBSERVED**, possible valid/invalid fixture issues to distinguish. EV-122, IN_PROGRESS not Q03-001 VERIFIED. No roadmap/ledger edits or merge.
+
+
+## 2026-10-27 — Issue #51 new integration blocked on Cargo.lock; deterministic path-dep correction
+
+- [Actions 40531033678](https://github.com/danielforface/aura-lang/actions/runs/40531033678) at `d12b06d` failed before any Rust regression ran: newly added `aura-backend-c` path-only dev dependencies were missing from workspace `Cargo.lock`, and Cargo `--locked` rightly refused regeneration. No IR/C tests executed in this run; do not classify as semantic RED or GREEN. EV-123.
+- Corrected **only** `Cargo.lock`'s existing `[[package]] name="aura-backend-c"` dependency list with existing `aura-core`, `aura-parse` entries; no external package version/checksum or other package edit. The true record C false-success RED remains [40530230602](https://github.com/danielforface/aura-lang/actions/runs/40530230602); source guard and genuine Aura source tests are **not yet post-patch validated**. Next inspect exact CI code and native regression steps, Master frozen, Draft #52 unmerged.
