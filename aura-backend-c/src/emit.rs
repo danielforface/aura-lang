@@ -319,7 +319,7 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         }
     }
     for (dest, ty) in &phi_decls {
-        out.push_str(&format!("  {} v{};\\n", map_ctype_decl(*ty), dest.0));
+        out.push_str(&format!("  {} v{};\n", map_ctype_decl(*ty), dest.0));
     }
 
     // Emit an entry jump (we use gotos for CFG).
