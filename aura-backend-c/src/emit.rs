@@ -44,7 +44,7 @@ pub fn emit_module(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<CAr
     }
 
     let runtime_h = emit_runtime_h();
-    let module_c = emit_module_c(&module, debug);
+    let module_c = emit_module_c(&module, debug)?;
     Ok(CArtifacts { runtime_h, module_c })
 }
 
@@ -132,7 +132,7 @@ fn emit_runtime_h() -> String {
     out
 }
 
-fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> String {
+fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
@@ -148,7 +148,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> String {
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map);
+        emit_function(&mut out, debug, f, &ret_map)?;
         out.push('\n');
     }
 
@@ -156,11 +156,11 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> String {
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map);
+        emit_function(&mut out, debug, &f, &ret_map)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
-    out
+    Ok(out)
 }
 
 fn c_escape_string_literal(s: &str) -> String {
@@ -228,7 +228,7 @@ fn function_return_ctype(f: &FunctionIR) -> CType {
     CType::Void
 }
 
-fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, ret_map: &HashMap<String, CType>) {
+fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, ret_map: &HashMap<String, CType>) -> Result<(), CBackendError> {
     let ret = function_return_ctype(f);
     out.push_str(map_ctype_decl(ret));
     out.push(' ');
@@ -376,38 +376,53 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 InstKind::Unary { op, operand } => {
                     let Some(dest) = inst.dest else { continue };
-                    let operand_name = values
+                    let (operand_type, operand_name) = values
                         .get(operand)
-                        .map(|(_, n)| n.clone())
-                        .unwrap_or_else(|| format!("v{}", operand.0));
+                        .cloned()
+                        .ok_or_else(|| CBackendError {
+                            message: format!("untyped operand v{} in unary instruction", operand.0),
+                        })?;
                     let (ct, expr_s) = match op {
-                        UnaryOp::Neg => (CType::U32, format!("-(int32_t)({operand_name})")),
-                        UnaryOp::Not => (CType::Bool, format!("!({operand_name})")),
+                        UnaryOp::Neg if matches!(
+                            operand_type,
+                            CType::I32 | CType::I64 | CType::U32 | CType::U64
+                                | CType::F32 | CType::F64
+                        ) => (operand_type, format!("-({operand_name})")),
+                        UnaryOp::Not if operand_type == CType::Bool => {
+                            (CType::Bool, format!("!({operand_name})"))
+                        }
+                        _ => return Err(CBackendError {
+                            message: format!(
+                                "C emission does not qualify unary {op:?} on {operand_type:?}"
+                            ),
+                        }),
                     };
                     out.push_str("  ");
                     out.push_str(map_ctype_decl(ct));
                     out.push(' ');
-                    out.push_str(&format!("v{} = {};
-", dest.0, expr_s));
+                    out.push_str(&format!("v{} = {};\n", dest.0, expr_s));
                     values.insert(dest, (ct, format!("v{}", dest.0)));
                 }
 
                 InstKind::Binary { op, left, right } => {
                     let Some(dest) = inst.dest else { continue };
-                    let ln = values
+                    let (left_type, ln) = values
                         .get(left)
-                        .map(|(_, n)| n.clone())
-                        .unwrap_or_else(|| format!("v{}", left.0));
-                    let rn = values
+                        .cloned()
+                        .ok_or_else(|| CBackendError {
+                            message: format!("untyped left operand v{} in binary instruction", left.0),
+                        })?;
+                    let (right_type, rn) = values
                         .get(right)
-                        .map(|(_, n)| n.clone())
-                        .unwrap_or_else(|| format!("v{}", right.0));
-                    let (ct, expr_s) = emit_binop(*op, &ln, &rn);
+                        .cloned()
+                        .ok_or_else(|| CBackendError {
+                            message: format!("untyped right operand v{} in binary instruction", right.0),
+                        })?;
+                    let (ct, expr_s) = emit_binop(*op, left_type, right_type, &ln, &rn)?;
                     out.push_str("  ");
                     out.push_str(map_ctype_decl(ct));
                     out.push(' ');
-                    out.push_str(&format!("v{} = {};
-", dest.0, expr_s));
+                    out.push_str(&format!("v{} = {};\n", dest.0, expr_s));
                     values.insert(dest, (ct, format!("v{}", dest.0)));
                 }
 
@@ -506,6 +521,7 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
     }
 
     out.push_str("}\n");
+    Ok(())
 }
 
 fn emit_rvalue_decl(dest: ValueId, _name: &str, rv: &RValue) -> (CType, String) {
@@ -798,29 +814,57 @@ fn map_ctype_decl(ct: CType) -> &'static str {
     }
 }
 
-fn emit_binop(op: BinOp, l: &str, r: &str) -> (CType, String) {
-    match op {
-        BinOp::Add => (CType::U32, format!("({l}) + ({r})")),
-        BinOp::Sub => (CType::U32, format!("({l}) - ({r})")),
-        BinOp::Mul => (CType::U32, format!("({l}) * ({r})")),
-        // In C, unsigned division by 0 is UB. Enforce a runtime trap.
-        BinOp::Div => (
+fn emit_binop(
+    op: BinOp, lhs_type: CType, rhs_type: CType, l: &str, r: &str,
+) -> Result<(CType, String), CBackendError> {
+    use BinOp::*;
+    // The IR presently carries no explicit per-instruction result type.
+    // Do not use C's implicit mixed-type conversions or fabricate U32:
+    // the supported arithmetic subset requires matching numeric operands.
+    let arithmetic = matches!(op, Add | Sub | Mul);
+    if arithmetic {
+        if lhs_type != rhs_type || !matches!(
+            lhs_type,
+            CType::U32 | CType::U64 | CType::I32 | CType::I64
+                | CType::F32 | CType::F64
+        ) {
+            return Err(CBackendError {
+                message: format!(
+                    "unqualified C numeric arithmetic: {op:?} {lhs_type:?} vs {rhs_type:?}"
+                ),
+            });
+        }
+        let symbol = match op { Add => "+", Sub => "-", Mul => "*", _ => unreachable!() };
+        return Ok((lhs_type, format!("({l}) {symbol} ({r})")));
+    }
+
+    let pair = match op {
+        // Preserve the original bounded U32 division rule ONLY for U32.
+        // 64-bit, signed and floating division require their own zero and
+        // overflow policy before being accepted; the old u32 divisor cast
+        // silently corrupted these types.
+        Div if lhs_type == CType::U32 && rhs_type == CType::U32 => (
             CType::U32,
             format!(
                 "(AURA_RANGE_CHECK_U32((uint32_t)({r}), 1u, 0xFFFFFFFFu, \"divisor\"), ({l}) / ({r}))"
             ),
         ),
-
-        BinOp::Eq => (CType::Bool, format!("({l}) == ({r})")),
-        BinOp::Ne => (CType::Bool, format!("({l}) != ({r})")),
-        BinOp::Lt => (CType::Bool, format!("({l}) < ({r})")),
-        BinOp::Gt => (CType::Bool, format!("({l}) > ({r})")),
-        BinOp::Le => (CType::Bool, format!("({l}) <= ({r})")),
-        BinOp::Ge => (CType::Bool, format!("({l}) >= ({r})")),
-
-        BinOp::And => (CType::Bool, format!("({l}) && ({r})")),
-        BinOp::Or => (CType::Bool, format!("({l}) || ({r})")),
-    }
+        Div => return Err(CBackendError {
+            message: format!(
+                "unqualified C numeric division: {lhs_type:?} vs {rhs_type:?}"
+            ),
+        }),
+        Eq => (CType::Bool, format!("({l}) == ({r})")),
+        Ne => (CType::Bool, format!("({l}) != ({r})")),
+        Lt => (CType::Bool, format!("({l}) < ({r})")),
+        Gt => (CType::Bool, format!("({l}) > ({r})")),
+        Le => (CType::Bool, format!("({l}) <= ({r})")),
+        Ge => (CType::Bool, format!("({l}) >= ({r})")),
+        And => (CType::Bool, format!("({l}) && ({r})")),
+        Or => (CType::Bool, format!("({l}) || ({r})")),
+        _ => unreachable!("arithmetic handled above"),
+    };
+    Ok(pair)
 }
 
 fn emit_phi_assigns(
