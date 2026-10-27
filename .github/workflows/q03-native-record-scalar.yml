@@ -37,3 +37,5 @@ jobs:
           cargo check --locked -p aura --no-default-features
           cargo test --locked -p aura-ir -- --nocapture
           cargo test --locked -p aura-core -- --nocapture
+      - name: Actual no-Z3 Aura CLI Record check and C artifact build
+        run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
