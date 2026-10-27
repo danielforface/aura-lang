@@ -434,11 +434,23 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 InstKind::ConstructRecord { .. }
                 | InstKind::GetField { .. }
-                | InstKind::SetField { .. }
-                | InstKind::ConstructEnumVariant { .. }
+                | InstKind::SetField { .. } => {
+                    // There is no typed, ordered Record layout in ModuleIR yet.
+                    // Silently skipping these operations can return fabricated
+                    // values or a C artifact that cannot preserve Aura meaning.
+                    // Refuse until real typed struct/field codegen is qualified.
+                    return Err(CBackendError {
+                        message: format!(
+                            "unqualified C Record emission: unsupported instruction {:?} at source span {:?}; typed Record layout/field lowering required",
+                            &inst.kind, inst.span
+                        ),
+                    });
+                }
+
+                InstKind::ConstructEnumVariant { .. }
                 | InstKind::GetEnumTag { .. }
                 | InstKind::GetEnumPayload { .. } => {
-                    // Lowered as prototype values in C emission
+                    // Separate Q03-002 enum backend work, not qualified here.
                 }
 
                 InstKind::BindStrand { name, expr } => {
