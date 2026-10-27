@@ -1,0 +1,130 @@
+//! Issue #41 test-first: source-valid SSA Phi joins must produce typed C storage,
+//! compile with Clang, and preserve both branches of 64-bit native values.
+use aura_backend_c::emit_module;
+use aura_ast::Span;
+use aura_ir::{
+    BasicBlock, BlockId, ExecutionHint, FunctionIR, Inst, InstKind,
+    ModuleIR, Param, Terminator, Type, ValueId,
+};
+use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
+
+struct Scratch { root: PathBuf }
+impl Scratch {
+    fn new() -> Self {
+        let tick = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("aura-phi-native-{}-{tick}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        Self { root }
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+}
+
+fn compile_and_execute(module: &ModuleIR, driver: &str, expected_type: Option<&str>) {
+    // IR validation and optimization happen inside the public C emitter.
+    let emitted = emit_module(module, None).expect("well-formed typed SSA IR should emit");
+    let temp = Scratch::new();
+    let h = temp.root.join("aura_runtime.h");
+    let c = temp.root.join("module.c");
+    let d = temp.root.join("driver.c");
+    let exe = temp.root.join("phi-case");
+    fs::write(&h, emitted.runtime_h).unwrap();
+    fs::write(&c, &emitted.module_c).unwrap();
+    fs::write(&d, driver).unwrap();
+    let compile = Command::new("clang")
+        .args(["-std=gnu11", "-O0", "-I"]).arg(&temp.root)
+        .arg(&c).arg(&d).arg("-o").arg(&exe)
+        .output().expect("clang installed in CI");
+    assert!(compile.status.success(),
+        "generated C must compile: stderr={}\nC={}\ndriver={}",
+        String::from_utf8_lossy(&compile.stderr), emitted.module_c, driver);
+    let out = Command::new(&exe).output().expect("run native output");
+    assert!(out.status.success(),
+        "wrong Phi branch value: status={:?}; stderr={}\nC={}",
+        out.status, String::from_utf8_lossy(&out.stderr), emitted.module_c);
+    if let Some(ct) = expected_type {
+        assert!(emitted.module_c.contains(&format!("{ct} v3;")),
+            "Phi destination should be explicitly declared with correct width {ct}: {}",
+            emitted.module_c);
+    }
+}
+
+fn diamond(ty: Type) -> ModuleIR {
+    let span: Span = (0, 0).into();
+    let empty = || Vec::<Inst>::new();
+    let mk = |id, insts, term| BasicBlock {
+        id: BlockId(id), span, hint: ExecutionHint::Sequential,
+        insts, term,
+    };
+    let phi = Inst {
+        span, dest: Some(ValueId(3)),
+        kind: InstKind::Phi {
+            incomings: vec![(BlockId(1), ValueId(1)), (BlockId(2), ValueId(2))],
+        },
+    };
+    let mut module = ModuleIR::new();
+    module.functions.insert("choose_wide".into(), FunctionIR {
+        name: "choose_wide".into(), span,
+        params: vec![
+            Param { name: "cond".into(), ty: Type::Bool, span, value: ValueId(0) },
+            Param { name: "x".into(), ty: ty.clone(), span, value: ValueId(1) },
+            Param { name: "y".into(), ty: ty.clone(), span, value: ValueId(2) },
+        ],
+        ret: ty,
+        entry: BlockId(0),
+        blocks: vec![
+            mk(0, empty(), Terminator::CondBr {
+                cond: ValueId(0), then_bb: BlockId(1), else_bb: BlockId(2),
+            }),
+            mk(1, empty(), Terminator::Br(BlockId(3))),
+            mk(2, empty(), Terminator::Br(BlockId(3))),
+            mk(3, vec![phi], Terminator::Return(Some(ValueId(3)))),
+        ],
+    });
+    module
+}
+
+#[test]
+fn phi_i64_joins_both_branches_without_truncating() {
+    compile_and_execute(
+        &diamond(Type::I64),
+        "#include <stdint.h>\n#include <stdbool.h>\nint64_t choose_wide(bool cond,int64_t x,int64_t y);\nint main(void){ return choose_wide(true,-4294967307LL,4294967319LL)==-4294967307LL && choose_wide(false,-4294967307LL,4294967319LL)==4294967319LL ? 0 : 1; }\n",
+        Some("int64_t"),
+    );
+}
+#[test]
+fn phi_u64_joins_both_branches_and_keeps_high_bits() {
+    compile_and_execute(
+        &diamond(Type::U64),
+        "#include <stdint.h>\n#include <stdbool.h>\nuint64_t choose_wide(bool cond,uint64_t x,uint64_t y);\nint main(void){ return choose_wide(true,4294967307ULL,4294967319ULL)==4294967307ULL && choose_wide(false,4294967307ULL,4294967319ULL)==4294967319ULL ? 0 : 1; }\n",
+        Some("uint64_t"),
+    );
+}
+#[test]
+fn phi_u32_control_still_creates_real_storage() {
+    compile_and_execute(
+        &diamond(Type::U32),
+        "#include <stdint.h>\n#include <stdbool.h>\nuint32_t choose_wide(bool cond,uint32_t x,uint32_t y);\nint main(void){ return choose_wide(true,17u,29u)==17u && choose_wide(false,17u,29u)==29u ? 0 : 1; }\n",
+        Some("uint32_t"),
+    );
+}
+#[test]
+fn direct_parameter_return_without_phi_compiles_and_runs() {
+    let span: Span = (0,0).into();
+    let mut module=ModuleIR::new();
+    module.functions.insert("choose_wide".into(), FunctionIR {
+        name: "choose_wide".into(),span,
+        params: vec![Param{name:"x".into(),ty:Type::U32,span,value:ValueId(0)}],
+        ret:Type::U32,entry:BlockId(0),
+        blocks: vec![BasicBlock{
+            id:BlockId(0),span,hint:ExecutionHint::Sequential,
+            insts:vec![],term:Terminator::Return(Some(ValueId(0))),
+        }],
+    });
+    compile_and_execute(
+        &module,
+        "#include <stdint.h>\nuint32_t choose_wide(uint32_t x);\nint main(void){return choose_wide(23u)==23u?0:1;}\n",
+        None,
+    );
+}
