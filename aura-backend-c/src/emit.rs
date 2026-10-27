@@ -589,19 +589,55 @@ fn emit_function(
                         map_ctype_decl(*ty), dest_name, cname, record_field_symbol(field_name)));
                     values.insert(dest, (*ty, dest_name));
                 }
-                InstKind::SetField { .. } => {
-                    // Q03-001: the IR Oracle only installs a changed Record
-                    // value when this instruction has a destination. The
-                    // earlier C implementation mutated the original even
-                    // for dest=None, causing observable semantic divergence.
-                    // Do not claim support until the same functional update
-                    // contract is implemented and differentially tested.
-                    return Err(CBackendError {
+                InstKind::SetField { base, field_name, value } => {
+                    // This IR instruction is a functional update: the Oracle
+                    // creates a NEW Record value only when dest is Some.
+                    // Never overwrite the base SSA value (or aliases of it).
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError {
+                            message: format!(
+                                "unqualified C Record SetField without result SSA at source span {:?}; refusing divergent in-place mutation",
+                                inst.span,
+                            ),
+                        });
+                    };
+                    if records.contains_key(&dest) || values.contains_key(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record SetField duplicate destination v{}", dest.0,
+                        ) });
+                    }
+                    let (record, original_name) = records.get(base).cloned().ok_or_else(|| {
+                        CBackendError { message: format!(
+                            "unqualified C Record SetField from unavailable base SSA v{}", base.0,
+                        ) }
+                    })?;
+                    let layout = qualified_record_fields(record_layouts, &record)?;
+                    let (_, expected) = layout.iter().find(|(field, _)| field == field_name)
+                        .ok_or_else(|| CBackendError { message: format!(
+                            "unqualified C Record '{}' unknown SetField '{}'", record, field_name,
+                        ) })?;
+                    let (actual, rhs) = values.get(value).cloned().ok_or_else(|| CBackendError {
                         message: format!(
-                            "unqualified C Record SetField semantics at source span {:?}; refusing divergent in-place mutation",
-                            inst.span,
+                            "unqualified C Record '{}' SetField '{}' unavailable value SSA v{}",
+                            record, field_name, value.0,
                         ),
-                    });
+                    })?;
+                    if actual != *expected {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?}",
+                            record, field_name, actual, expected,
+                        ) });
+                    }
+                    let updated_name = format!("v{}", dest.0);
+                    out.push_str(&format!(
+                        "  {} {} = {};\n",
+                        record_type_symbol(&record), updated_name, original_name,
+                    ));
+                    out.push_str(&format!(
+                        "  {}.{} = {};\n",
+                        updated_name, record_field_symbol(field_name), rhs,
+                    ));
+                    records.insert(dest, (record, updated_name));
                 }
 
                 InstKind::ConstructEnumVariant { .. }
