@@ -1,0 +1,26 @@
+name: Q03 Native SSA Phi join fidelity
+on:
+  push:
+    branches: ['qual/Q03-001-typed-phi-native-boundary']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  c-native-phi-join:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native compiler prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang build-essential
+          clang --version
+      - name: Real optimized IR to generated C to executable SSA Phi cases
+        run: cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
+      - name: Existing native numeric width and fail-closed regressions
+        run: cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+      - name: Existing C backend library regressions
+        run: cargo test --locked -p aura-backend-c --lib -- --nocapture
