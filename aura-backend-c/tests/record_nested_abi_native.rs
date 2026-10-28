@@ -121,3 +121,28 @@ fn cyclic_by_value_record_layout_fails_closed() {
     assert!(err.message.contains("Record") && err.message.contains("cycle"),
         "expected specific cycle error, got: {err}");
 }
+
+
+#[test]
+fn structurally_identical_twin_cannot_be_embedded_in_point_typed_nested_record() {
+    let ast = aura_parse::parse_source(SOURCE).expect("source parse");
+    let mut ir = lower_program(&ast).expect("typed source lowers");
+    ir.record_layouts.insert("Twin".into(), vec![
+        ("x".into(), Type::U32), ("y".into(), Type::U32),
+    ]);
+    let maker = ir.functions.get_mut("make_outer").expect("maker");
+    let child = maker.blocks.iter_mut().flat_map(|b| b.insts.iter_mut())
+        .find(|inst| matches!(&inst.kind, aura_ir::InstKind::ConstructRecord { record_name, .. }
+            if record_name == "Point"))
+        .expect("inner Point constructor");
+    let aura_ir::InstKind::ConstructRecord { record_name, .. } = &mut child.kind else {
+        unreachable!("selected constructor")
+    };
+    *record_name = "Twin".into();
+    validate_module(&ir).expect("structural IR valid; ABI nominal guard must refuse");
+    let err = emit_module(&ir, None).err()
+        .expect("embedding nominal Twin as Point must not be emitted");
+    assert!(err.message.contains("Record") && err.message.contains("nominal mismatch")
+        && err.message.contains("Twin") && err.message.contains("Point"),
+        "specific nested nominal diagnostic required: {err}");
+}
