@@ -1999,10 +1999,30 @@ impl Avm {
         active: &mut Vec<String>,
     ) -> miette::Result<()> {
         match &expr.kind {
-            ExprKind::IntLit(_) if matches!(expected,
-                "Int" | "u8" | "u16" | "u32" | "u64" |
-                "i8" | "i16" | "i32" | "i64" |
-                "f32" | "f64" | "char") => Ok(()),
+            ExprKind::IntLit(n) => {
+                // AVM stores integer values in i64. Refuse values which
+                // cannot be represented faithfully, as well as width
+                // violations on a declared Record default that is never used.
+                let fits = match expected {
+                    "u8" => *n <= u8::MAX as u64,
+                    "u16" => *n <= u16::MAX as u64,
+                    "u32" | "Int" => *n <= u32::MAX as u64,
+                    "u64" | "i64" => *n <= i64::MAX as u64,
+                    "i8" => *n <= i8::MAX as u64,
+                    "i16" => *n <= i16::MAX as u64,
+                    "i32" => *n <= i32::MAX as u64,
+                    // Float/Char require dedicated source literal handling;
+                    // never reinterpret an AVM Int as another primitive.
+                    _ => false,
+                };
+                if !fits {
+                    return Err(miette::miette!(
+                        "AVM: Record default scalar type or range mismatch for '{}' (value {})",
+                        expected,n
+                    ));
+                }
+                Ok(())
+            },
             ExprKind::Ident(id) if expected == "bool"
                 && (id.node == "true" || id.node == "false") => Ok(()),
             ExprKind::RecordLit { name, fields } => {
