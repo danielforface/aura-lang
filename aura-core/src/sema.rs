@@ -1548,11 +1548,11 @@ impl Checker {
         active: &mut Vec<String>,
     ) -> Result<(), SemanticError> {
         match &value.kind {
-            ExprKind::IntLit(_) |
-            ExprKind::Ident(_) if matches!(&value.kind,
-                ExprKind::IntLit(_) |
-                ExprKind::Ident(Ident { node, .. }) if node == "true" || node == "false"
-            ) => {
+            _ if match &value.kind {
+                ExprKind::IntLit(_) => true,
+                ExprKind::Ident(id) => id.node == "true" || id.node == "false",
+                _ => false,
+            } => {
                 if !matches!(required,
                     Type::Bool | Type::U8 | Type::U16 | Type::U32 |
                     Type::U64 | Type::I8 | Type::I16 | Type::I32 |
