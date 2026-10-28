@@ -106,3 +106,31 @@ cell bad() ->:
     assert!(e.message.contains("default") && e.message.contains("unqualified"),
         "expected explicit fail-closed default diagnostic, got {e}");
 }
+
+
+#[test]
+fn malformed_record_defaults_are_rejected_at_declaration_even_when_unused_or_overridden() {
+    let samples = [
+        (
+            "type Unused = record { x: u32 = true, y: u32 }\ncell main() ->:\n    yield 7\n",
+            "type",
+        ),
+        (
+            "type Point = record { x: u32 = 1 + 2, y: u32 }\ncell main() ->:\n    val p: Point = Point { x: 7, y: 13 }\n    yield p.x\n",
+            "unqualified",
+        ),
+        (
+            "type Point = record { x: u32 = 7, x: u32 = 13 }\ncell main() ->:\n    yield 7\n",
+            "duplicate",
+        ),
+    ];
+    for (source, fragment) in samples {
+        let parsed = aura_parse::parse_source(source)
+            .expect("malformed declaration's source syntax must still parse");
+        let error = Checker::new().check_program(&parsed)
+            .expect_err("invalid Record declaration must not depend on use sites");
+        assert!(error.message.contains(fragment),
+            "expected {fragment:?} declaration diagnostic, got {error}");
+        assert!(error.span.len() > 0, "declaration errors must retain a source span");
+    }
+}
