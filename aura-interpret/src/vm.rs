@@ -1944,6 +1944,11 @@ impl Avm {
                 .get(&id.node)
                 .cloned()
                 .or_else(|| match id.node.as_str() {
+                    // Parser represents boolean keywords as Ident. Match the
+                    // Core lowering truth values instead of raising an unknown
+                    // identifier in source-level conditional AVM execution.
+                    "true" => Some(AvmValue::Bool(true)),
+                    "false" => Some(AvmValue::Bool(false)),
                     // Minimal: allow module-style calls like `io.println(...)` and `shop.count()`
                     // without requiring `val io = "io"` pre-bindings.
                     "io" => Some(AvmValue::Str("io".to_string())),
