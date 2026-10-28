@@ -1,25 +1,39 @@
-//! Deterministic UTF-8 **scalar** text editor, no graphics, keycodes or OS state.
-//! Cursor is a Unicode scalar index, never a byte offset. Grapheme clusters,
-//! bidi visual navigation, IME composition and shaped font caret positioning
-//! are separate qualification gaps; do not claim them from these tests.
+//! Deterministic renderer-independent UAX #29 *extended grapheme cluster*
+//! editor. Cursor is a grapheme index, not a byte or scalar index.
+//! This protects combining marks, variation selectors, flags and emoji ZWJ
+//! sequences. Visual bidi caret placement and IME preedit are NOT solved here.
+
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EditCommand {
-    Left,
-    Right,
-    Home,
-    End,
-    Backspace,
-    Delete,
-    Insert(String),
+    Left, Right, Home, End, Backspace, Delete, Insert(String),
 }
 
-fn byte_offset(text: &str, scalar_index: usize) -> usize {
-    text.char_indices().nth(scalar_index).map(|(idx, _)| idx).unwrap_or(text.len())
+pub(crate) fn grapheme_count(text: &str) -> usize {
+    text.graphemes(true).count()
+}
+
+fn byte_offset(text: &str, index: usize) -> usize {
+    text.grapheme_indices(true)
+        .nth(index)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+/// After insertion the inserted byte offset may fall *inside* a combined
+/// grapheme (e.g. new combining accent, ZWJ joining an existing emoji).
+/// In that case snap the caret to the first boundary at or after that byte.
+fn grapheme_index_at_or_after_byte(text: &str, byte: usize) -> usize {
+    if byte == 0 { return 0; }
+    for (i, (start, cluster)) in text.grapheme_indices(true).enumerate() {
+        if start + cluster.len() >= byte { return i + 1; }
+    }
+    grapheme_count(text)
 }
 
 pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditCommand) -> bool {
-    let len = buffer.chars().count();
+    let len = grapheme_count(buffer);
     *caret = (*caret).min(len);
     match cmd {
         EditCommand::Left => *caret = caret.saturating_sub(1),
@@ -40,14 +54,12 @@ pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditComman
             return true;
         }
         EditCommand::Insert(value) => {
-            // Character delivery (Raylib GetCharPressed) can include control
-            // inputs; only printable Unicode scalars are editable text.
             let filtered: String = value.chars().filter(|c| !c.is_control()).collect();
             if filtered.is_empty() { return false; }
             let pos = byte_offset(buffer, *caret);
-            let inserted = filtered.chars().count();
+            let boundary = pos + filtered.len();
             buffer.insert_str(pos, &filtered);
-            *caret += inserted;
+            *caret = grapheme_index_at_or_after_byte(buffer, boundary);
             return true;
         }
         EditCommand::Backspace | EditCommand::Delete => {}
@@ -126,6 +138,62 @@ mod tests {
         let r=edit("",0,vec![EditCommand::Delete,EditCommand::Backspace,
             EditCommand::Insert("abc".into()),EditCommand::Left,EditCommand::Insert("Z".into())]);
         assert_eq!(r,("abZc".into(),3,vec![false,false,true,false,true]));
+    }
+
+    #[test]
+    fn decomposed_accent_is_one_grapheme_for_backspace() {
+        assert_eq!(grapheme_count("e\u{301}"),1);
+        assert_eq!(edit("Ae\u{301}B",2,vec![EditCommand::Backspace]),
+            ("AB".into(),1,vec![true]));
+    }
+
+    #[test]
+    fn family_zwj_emoji_is_deleted_atomically() {
+        let family="👩‍👩‍👧‍👦";
+        assert_eq!(grapheme_count(family),1);
+        assert_eq!(edit(&format!("A{family}B"),2,vec![EditCommand::Backspace]),
+            ("AB".into(),1,vec![true]));
+    }
+
+    #[test]
+    fn regional_indicator_flag_behaves_as_one_visual_character() {
+        let flag="🇮🇱";
+        assert_eq!(grapheme_count(flag),1);
+        assert_eq!(edit(&format!("A{flag}B"),1,vec![EditCommand::Delete]),
+            ("AB".into(),1,vec![true]));
+    }
+
+    #[test]
+    fn emoji_variation_selector_and_skin_tone_stay_together() {
+        assert_eq!(grapheme_count("✌️"),1);
+        assert_eq!(grapheme_count("👍🏽"),1);
+        assert_eq!(edit("👍🏽x",1,vec![EditCommand::Backspace]),
+            ("x".into(),0,vec![true]));
+    }
+
+    #[test]
+    fn accent_insert_merges_previous_cluster_and_does_not_drift_caret() {
+        let r=edit("e",1,vec![EditCommand::Insert("\u{301}".into())]);
+        assert_eq!(r,("e\u{301}".into(),1,vec![true]));
+        let r=edit(&r.0,r.1,vec![EditCommand::Backspace]);
+        assert_eq!(r,("".into(),0,vec![true]));
+    }
+
+    #[test]
+    fn cluster_cursor_move_crosses_entire_family_in_single_step() {
+        let family="👩‍👩‍👧‍👦";
+        let x=format!("a{family}b");
+        assert_eq!(edit(&x,3,vec![EditCommand::Left,EditCommand::Left]),
+            (x,1,vec![false,false]));
+    }
+
+    #[test]
+    fn emoji_insert_between_two_graphemes_and_delete_atomic() {
+        let s="hi".to_string();
+        let r=edit(&s,1,vec![EditCommand::Insert("👩‍👩‍👧‍👦".into())]);
+        assert_eq!(r,("h👩‍👩‍👧‍👦i".into(),2,vec![true]));
+        assert_eq!(edit(&r.0,r.1,vec![EditCommand::Backspace]),
+            ("hi".into(),1,vec![true]));
     }
 
     #[test]

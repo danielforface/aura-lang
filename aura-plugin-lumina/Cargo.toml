@@ -12,3 +12,5 @@ lumina-diagnostics = ["raylib"]
 [dependencies]
 aura-nexus = { path = "../aura-nexus" }
 raylib = { version = "5.5.1", optional = true }
+# UAX #29 extended grapheme clusters for safe TextInput cursor/editing.
+unicode-segmentation = "=1.12.0"
