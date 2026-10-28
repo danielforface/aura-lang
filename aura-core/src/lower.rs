@@ -1121,10 +1121,7 @@ impl<'c> Lowerer<'c> {
                     }
                     _ => {
                         let name = expr_to_callee_name(callee);
-                        let mut v = Vec::with_capacity(args.len());
-                        for a in args {
-                            v.push(self.lower_expr(Self::call_arg_value(a))?);
-                        }
+                        let v = self.lower_call_args(&name, args, None, expr.span)?;
                         (name, v)
                     }
                 };
@@ -1201,11 +1198,7 @@ impl<'c> Lowerer<'c> {
                             }
                             _ => {
                                 let name = expr_to_callee_name(callee);
-                                let mut v = Vec::with_capacity(args.len() + 1);
-                                v.push(left_v);
-                                for a in args {
-                                    v.push(self.lower_expr(Self::call_arg_value(a))?);
-                                }
+                                let v = self.lower_call_args(&name, args, Some(left_v), expr.span)?;
                                 (name, v)
                             }
                         };
@@ -1273,6 +1266,94 @@ impl<'c> Lowerer<'c> {
                 Ok(dest)
             }
         }
+    }
+
+    fn lower_call_args(
+        &mut self,
+        callee: &str,
+        args: &[aura_ast::CallArg],
+        implicit_first: Option<ValueId>,
+        span: aura_ast::Span,
+    ) -> Result<Vec<ValueId>, SemanticError> {
+        // The Checker resolves named arguments against the *declaration*
+        // order, not the order written in the call. Preserve observable
+        // expression evaluation in source order, then permute only the
+        // resulting SSA IDs. Otherwise all-scalar named calls can silently
+        // swap values, including Record constructors returned across cells.
+        let formal_names = self.checker.function_param_names(callee);
+        let mut evaluated = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = self.lower_expr(Self::call_arg_value(arg))?;
+            evaluated.push((arg, value));
+        }
+        let Some(formals) = formal_names else {
+            if args.iter().any(|arg| matches!(arg, aura_ast::CallArg::Named { .. })) {
+                return Err(SemanticError {
+                    message: format!(
+                        "lowering: named argument call '{callee}' has no qualified function signature"
+                    ),
+                    span,
+                });
+            }
+            let mut ordered = Vec::with_capacity(evaluated.len() + usize::from(implicit_first.is_some()));
+            if let Some(value) = implicit_first { ordered.push(value); }
+            ordered.extend(evaluated.into_iter().map(|(_, value)| value));
+            return Ok(ordered);
+        };
+        let mut ordered: Vec<Option<ValueId>> = vec![None; formals.len()];
+        if let Some(first) = implicit_first {
+            if ordered.is_empty() {
+                return Err(SemanticError {
+                    message: format!("lowering: flow into zero-argument function '{callee}'"),
+                    span,
+                });
+            }
+            ordered[0] = Some(first);
+        }
+        let mut next_pos = 0usize;
+        for (arg, value) in evaluated {
+            let idx = match arg {
+                aura_ast::CallArg::Named { name, .. } =>
+                    formals.iter().position(|formal| formal == &name.node)
+                        .ok_or_else(|| SemanticError {
+                            message: format!(
+                                "lowering: unknown named argument '{}' in '{callee}'",
+                                name.node,
+                            ),
+                            span: name.span,
+                        })?,
+                aura_ast::CallArg::Positional(_) => {
+                    while next_pos < ordered.len() && ordered[next_pos].is_some() {
+                        next_pos += 1;
+                    }
+                    let index = next_pos;
+                    next_pos += 1;
+                    index
+                }
+            };
+            if idx >= ordered.len() {
+                return Err(SemanticError {
+                    message: format!("lowering: too many arguments in call '{callee}'"),
+                    span,
+                });
+            }
+            if ordered[idx].replace(value).is_some() {
+                return Err(SemanticError {
+                    message: format!(
+                        "lowering: duplicate argument '{}' in call '{callee}'",
+                        formals[idx],
+                    ),
+                    span,
+                });
+            }
+        }
+        if ordered.iter().any(Option::is_none) {
+            return Err(SemanticError {
+                message: format!("lowering: missing argument in call '{callee}'"),
+                span,
+            });
+        }
+        Ok(ordered.into_iter().map(|value| value.expect("all parameters assigned")).collect())
     }
 
 fn call_arg_value(arg: &aura_ast::CallArg) -> &Expr {
