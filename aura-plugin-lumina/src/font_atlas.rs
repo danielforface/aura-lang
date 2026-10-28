@@ -37,7 +37,7 @@ mod tests {
     assert_eq!(font_key("bad\0font.ttf",24),None);
     assert_eq!(font_key("x.ttf",0),None);
     assert_eq!(font_key("x.ttf",500),None);
-    assert_eq!(font_key(&format!("{}\.ttf","a".repeat(513)),24),None);
+    assert_eq!(font_key(&format!("{}.ttf","a".repeat(513)),24),None);
     assert_eq!(font_key("assets/locale.otf",24),Some("24|assets/locale.otf".into()));
  }
  #[test]fn preserves_real_hebrew_and_ascii_digits_in_unicode_atlas(){
