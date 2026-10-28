@@ -9,6 +9,9 @@ mod layout;
 #[cfg(any(feature = "raylib", test))]
 mod text_input;
 
+#[cfg(any(feature = "raylib", test))]
+mod text_revision;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
@@ -121,60 +124,105 @@ struct LuminaWindow {
 struct FocusedTextInput {
     on_change: u64,
     on_submit: Option<u64>,
-    source_value: String,
+    revision: text_revision::RevisionTracker,
     session: text_input::EditSession,
 }
 
 #[cfg(feature = "raylib")]
-fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String)>) {
-    if let (Some(active), Some((new_id, _, _))) = (&win.focused_input, &target) {
+fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
+    if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
         if active.on_change == *new_id { return; }
     }
     if let Some(previous) = win.focused_input.take() {
         win.input_sessions.insert(previous.on_change, previous);
     }
-    if let Some((on_change, on_submit, source_value)) = target {
+    if let Some((on_change, on_submit, source_value, revision)) = target {
         let mut entry = win.input_sessions.remove(&on_change).unwrap_or_else(|| FocusedTextInput {
-            on_change, on_submit, source_value: source_value.clone(),
+            on_change, on_submit,
+            revision: text_revision::RevisionTracker::new(&source_value, revision),
             session: text_input::EditSession::new(source_value.clone()),
         });
-        if entry.source_value != source_value {
+        if entry.revision.observe(&source_value,revision)
+            == text_revision::Decision::Rebase {
             if entry.session.buffer != source_value {
                 entry.session = text_input::EditSession::new(source_value.clone());
             }
-            entry.source_value = source_value;
         }
         entry.on_submit = on_submit;
         win.focused_input = Some(entry);
     }
 }
 
-/// Unchanged controlled prop is NOT authoritative over an unacknowledged
-/// local edit. A genuinely changed prop is authoritative and rebases history.
+/// Only valid revision props for *uniquely identified* visible inputs.
+/// A malformed token is never silently downgraded to legacy authority.
 #[cfg(feature = "raylib")]
-fn reconcile_input_sessions(win: &mut LuminaWindow, order: &[layout::HitTarget]) {
-    let present: HashMap<u64, (&str, Option<u64>)> = order.iter().filter_map(|item| match item {
-        layout::HitTarget::TextInput { on_change, on_submit, value } =>
-            Some((*on_change, (value.as_str(), *on_submit))),
-        _ => None,
+fn input_value_revisions(tree:&UiNode, order:&[layout::HitTarget])
+    -> (HashMap<u64,Option<u64>>,std::collections::HashSet<u64>)
+{
+    let valid_ids:std::collections::HashSet<u64>=order.iter().filter_map(|t|match t{
+        layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+        _=>None,
     }).collect();
-    win.input_sessions.retain(|id, _| present.contains_key(id));
-    let refresh = |entry: &mut FocusedTextInput, prop: &str, submit: Option<u64>| {
-        if entry.source_value != prop {
-            if entry.session.buffer != prop {
-                entry.session = text_input::EditSession::new(prop.to_owned());
+    fn collect(node:&UiNode, valid:&std::collections::HashSet<u64>,
+        map:&mut HashMap<u64,Option<u64>>,
+        invalid:&mut std::collections::HashSet<u64>)
+    {
+        if node.kind=="TextInput" {
+            let cb=node.props.iter().find(|(key,_)|key=="on_change")
+                .and_then(|(_,v)|parse_callback_id(Some(v.as_str())));
+            if let Some(id)=cb.filter(|id|valid.contains(id)) {
+                let raw=node.props.iter().find(|(key,_)|key=="value_revision")
+                    .map(|(_,v)|v.as_str());
+                match raw {
+                    None=>{map.insert(id,None);}
+                    Some(x)=>match x.parse::<u64>() {
+                        Ok(v)=>{map.insert(id,Some(v));}
+                        Err(_)=>{invalid.insert(id);}
+                    }
+                }
             }
-            entry.source_value = prop.to_owned();
         }
-        entry.on_submit = submit;
-    };
-    for (id, entry) in &mut win.input_sessions {
-        if let Some((prop, submit)) = present.get(id) { refresh(entry, prop, *submit); }
+        for child in &node.children {collect(child,valid,map,invalid);}
     }
-    if let Some(entry) = &mut win.focused_input {
-        if let Some((prop, submit)) = present.get(&entry.on_change) {
-            refresh(entry, prop, *submit);
-        } else { win.focused_input = None; }
+    let mut result=HashMap::new();
+    let mut invalid=std::collections::HashSet::new();
+    collect(tree,&valid_ids,&mut result,&mut invalid);
+    (result,invalid)
+}
+
+/// Keep local edits when same revision host values echo older locally
+/// emitted strings. Strictly increasing value_revision rebases authority.
+/// The legacy path (no value_revision) keeps prior changed-prop semantics.
+#[cfg(feature = "raylib")]
+fn reconcile_input_sessions(
+    win:&mut LuminaWindow,order:&[layout::HitTarget],
+    revisions:&HashMap<u64,Option<u64>>
+) {
+    let present:HashMap<u64,(&str,Option<u64>,Option<u64>)> =
+        order.iter().filter_map(|item|match item {
+            layout::HitTarget::TextInput{on_change,on_submit,value} =>
+                revisions.get(on_change).map(|version|
+                    (*on_change,(value.as_str(),*on_submit,*version))),
+            _=>None,
+        }).collect();
+    win.input_sessions.retain(|id,_|present.contains_key(id));
+    let refresh=|entry:&mut FocusedTextInput,prop:&str,submit:Option<u64>,
+        revision:Option<u64>| {
+        if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
+            && entry.session.buffer!=prop {
+            entry.session=text_input::EditSession::new(prop.to_owned());
+        }
+        entry.on_submit=submit;
+    };
+    for (id,entry) in &mut win.input_sessions {
+        if let Some((prop,submit,rev))=present.get(id) {
+            refresh(entry,prop,*submit,*rev);
+        }
+    }
+    if let Some(entry)=&mut win.focused_input {
+        if let Some((prop,submit,rev))=present.get(&entry.on_change) {
+            refresh(entry,prop,*submit,*rev);
+        } else {win.focused_input=None;}
     }
 }
 
@@ -434,8 +482,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
-            let focus_order = layout::focus_order(tree, &planned_layout);
-            reconcile_input_sessions(win, &focus_order);
+            let mut focus_order = layout::focus_order(tree, &planned_layout);
+            let (revisions,invalid)=input_value_revisions(tree,&focus_order);
+            focus_order.retain(|entry|match entry {
+                layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
+                _=>false,
+            });
+            reconcile_input_sessions(win,&focus_order,&revisions);
             let click_cb = if clicked {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
@@ -444,7 +497,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
                         if focus_order.iter().any(|candidate|matches!(candidate,
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
-                            switch_input(win,Some((on_change,on_submit,value)));
+                            switch_input(win,Some((on_change,on_submit,value,
+                                revisions.get(&on_change).copied().flatten())));
                         } else {
                             // Duplicate callback IDs are ambiguous: never
                             // grant mouse focus to a field that cannot own a
@@ -461,7 +515,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 let target=layout::next_focus(&focus_order,active,reverse_tab);
                 match target {
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) =>
-                        switch_input(win,Some((on_change,on_submit,value))),
+                        switch_input(win,Some((on_change,on_submit,value,
+                            revisions.get(&on_change).copied().flatten()))),
                     _=>switch_input(win,None),
                 }
             }
@@ -484,6 +539,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
                     }
                     if changed {
+                        fi.revision.record_local_edit(&fi.session.buffer);
                         fb.text_input_events.push(UiTextInputEvent {
                             callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
                         });
