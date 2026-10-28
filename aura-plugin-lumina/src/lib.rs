@@ -143,10 +143,11 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             session: text_input::EditSession::new(source_value.clone()),
         });
         if entry.revision.observe(&source_value,revision)
-            == text_revision::Decision::Rebase {
-            if entry.session.buffer != source_value {
-                entry.session = text_input::EditSession::new(source_value.clone());
-            }
+            == text_revision::Decision::Rebase
+            && (entry.session.buffer != source_value || revision.is_some()) {
+            // Even identical text at a *new* explicit revision starts new
+            // authority epoch: old undo history must not resurrect stale data.
+            entry.session = text_input::EditSession::new(source_value.clone());
         }
         entry.on_submit = on_submit;
         win.focused_input = Some(entry);
@@ -156,17 +157,19 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
 /// Only valid revision props for *uniquely identified* visible inputs.
 /// A malformed token is never silently downgraded to legacy authority.
 #[cfg(feature = "raylib")]
-fn input_value_revisions(tree:&UiNode, order:&[layout::HitTarget])
+fn input_value_revisions(tree:&UiNode,plan:&layout::LayoutNode,order:&[layout::HitTarget])
     -> (HashMap<u64,Option<u64>>,std::collections::HashSet<u64>)
 {
     let valid_ids:std::collections::HashSet<u64>=order.iter().filter_map(|t|match t{
         layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
         _=>None,
     }).collect();
-    fn collect(node:&UiNode, valid:&std::collections::HashSet<u64>,
+    fn collect(node:&UiNode,plan:&layout::LayoutNode,
+        valid:&std::collections::HashSet<u64>,
         map:&mut HashMap<u64,Option<u64>>,
         invalid:&mut std::collections::HashSet<u64>)
     {
+        if plan.bounds.intersect(plan.clip).is_empty() {return;}
         if node.kind=="TextInput" {
             let cb=node.props.iter().find(|(key,_)|key=="on_change")
                 .and_then(|(_,v)|parse_callback_id(Some(v.as_str())));
@@ -182,11 +185,13 @@ fn input_value_revisions(tree:&UiNode, order:&[layout::HitTarget])
                 }
             }
         }
-        for child in &node.children {collect(child,valid,map,invalid);}
+        for (child,prepared) in node.children.iter().zip(&plan.children) {
+            if let Some(prepared)=prepared {collect(child,prepared,valid,map,invalid);}
+        }
     }
     let mut result=HashMap::new();
     let mut invalid=std::collections::HashSet::new();
-    collect(tree,&valid_ids,&mut result,&mut invalid);
+    collect(tree,plan,&valid_ids,&mut result,&mut invalid);
     (result,invalid)
 }
 
@@ -209,7 +214,7 @@ fn reconcile_input_sessions(
     let refresh=|entry:&mut FocusedTextInput,prop:&str,submit:Option<u64>,
         revision:Option<u64>| {
         if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
-            && entry.session.buffer!=prop {
+            && (entry.session.buffer!=prop || revision.is_some()) {
             entry.session=text_input::EditSession::new(prop.to_owned());
         }
         entry.on_submit=submit;
@@ -483,7 +488,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 0.0, 0.0, viewport.width, viewport.height,
             ));
             let mut focus_order = layout::focus_order(tree, &planned_layout);
-            let (revisions,invalid)=input_value_revisions(tree,&focus_order);
+            let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
             focus_order.retain(|entry|match entry {
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
