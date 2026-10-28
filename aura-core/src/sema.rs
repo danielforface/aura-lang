@@ -1334,6 +1334,7 @@ impl Checker {
                     span: component.span,
                 });
             }
+            self.check_record_integer_literal_width(&expected, &a.expr)?;
             let actual = self.infer_expr(&a.expr)?;
             return self.check_assignable(&expected, &actual, &a.expr);
         }
@@ -1583,6 +1584,39 @@ impl Checker {
         Ok(())
     }
 
+    // A u32-constrained integer literal may be assignable by numeric-base
+    // compatibility yet unrepresentable in a narrower Record ABI field.
+    // Refuse that implicit truncation at every Record-specific write site.
+    // Do not broaden generic numeric conversion rules outside Q03.
+    fn check_record_integer_literal_width(
+        &self,
+        required: &Type,
+        value: &Expr,
+    ) -> Result<(), SemanticError> {
+        let ExprKind::IntLit(n) = &value.kind else { return Ok(()); };
+        let max = match required {
+            Type::U8 => u8::MAX as u64,
+            Type::U16 => u16::MAX as u64,
+            Type::U32 => u32::MAX as u64,
+            Type::U64 => u64::MAX,
+            Type::I8 => i8::MAX as u64,
+            Type::I16 => i16::MAX as u64,
+            Type::I32 => i32::MAX as u64,
+            Type::I64 => i64::MAX as u64,
+            _ => return Ok(()),
+        };
+        if *n > max {
+            return Err(SemanticError {
+                message: format!(
+                    "Record integer literal {} out of range for {}",
+                    n, required.display()
+                ),
+                span: value.span,
+            });
+        }
+        Ok(())
+    }
+
     // Q03 qualified *source* Record defaults: scalar constants and finite,
     // nongeneric nominal Record literals composed solely of qualified values.
     // This checks the entire tree at declaration time (even when unused),
@@ -1610,6 +1644,7 @@ impl Checker {
                         span: value.span,
                     });
                 }
+                self.check_record_integer_literal_width(required, value)?;
                 let actual = self.infer_expr(value)?;
                 self.check_assignable(required, &actual, value)
             }
@@ -1951,6 +1986,7 @@ impl Checker {
                     } else {
                         self.resolve_type_ref_with_type_params(fty_ref, &param_subst)?
                     };
+                    self.check_record_integer_literal_width(&expected_ty, v)?;
                     let actual_ty = self.infer_expr(v)?;
 
                     // If a record field is initialized from a resource identifier, move it.
