@@ -865,36 +865,9 @@ impl Checker {
                 // are not part of this concrete scalar Record ABI slice.
                 if !def.params.is_empty() { continue; }
                 let Some(value) = &field.default else { continue };
-                let qualified_literal = match &value.kind {
-                    ExprKind::IntLit(_) => true,
-                    ExprKind::Ident(id) =>
-                        id.node == "true" || id.node == "false",
-                    _ => false,
-                };
-                if !qualified_literal {
-                    return Err(SemanticError {
-                        message: format!(
-                            "unqualified nonliteral Record default '{}.{}'",
-                            def.name.node, field.name.node
-                        ),
-                        span: value.span,
-                    });
-                }
                 let required = self.resolve_type_ref(&field.ty)?;
-                if !matches!(required,
-                    Type::Bool | Type::U8 | Type::U16 | Type::U32 |
-                    Type::U64 | Type::I8 | Type::I16 | Type::I32 |
-                    Type::I64 | Type::F32 | Type::F64 | Type::Char) {
-                    return Err(SemanticError {
-                        message: format!(
-                            "unqualified non-scalar Record default '{}.{}'",
-                            def.name.node, field.name.node
-                        ),
-                        span: value.span,
-                    });
-                }
-                let actual = self.infer_expr(value)?;
-                self.check_assignable(&required, &actual, value)?;
+                self.check_qualified_record_default(&required, value,
+                    &mut vec![def.name.node.clone()])?;
             }
         }
 
@@ -1563,6 +1536,119 @@ impl Checker {
         Ok(())
     }
 
+    // Q03 qualified *source* Record defaults: scalar constants and finite,
+    // nongeneric nominal Record literals composed solely of qualified values.
+    // This checks the entire tree at declaration time (even when unused),
+    // and again on missing-field materialization. No dynamic expressions,
+    // implicit captured locals, structural Record coercions or cycles.
+    fn check_qualified_record_default(
+        &mut self,
+        required: &Type,
+        value: &Expr,
+        active: &mut Vec<String>,
+    ) -> Result<(), SemanticError> {
+        match &value.kind {
+            ExprKind::IntLit(_) |
+            ExprKind::Ident(_) if matches!(&value.kind,
+                ExprKind::IntLit(_) |
+                ExprKind::Ident(Ident { node, .. }) if node == "true" || node == "false"
+            ) => {
+                if !matches!(required,
+                    Type::Bool | Type::U8 | Type::U16 | Type::U32 |
+                    Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                    Type::I64 | Type::F32 | Type::F64 | Type::Char)
+                {
+                    return Err(SemanticError {
+                        message: "unqualified non-scalar Record default".to_string(),
+                        span: value.span,
+                    });
+                }
+                let actual = self.infer_expr(value)?;
+                self.check_assignable(required, &actual, value)
+            }
+            ExprKind::RecordLit { name, fields } => {
+                let Type::Named(expected) = required else {
+                    return Err(SemanticError {
+                        message: format!(
+                            "type mismatch: nominal Record default '{}' is not assignable to {}",
+                            name.node, required.display()
+                        ),
+                        span: value.span,
+                    });
+                };
+                if expected != &name.node {
+                    return Err(SemanticError {
+                        message: format!(
+                            "type mismatch: nominal Record default '{}' expected '{}'",
+                            name.node, expected
+                        ),
+                        span: name.span,
+                    });
+                }
+                let def = self.record_defs.get(&name.node).cloned().ok_or_else(|| SemanticError {
+                    message: format!("unknown default Record type '{}'", name.node),
+                    span: name.span,
+                })?;
+                if !def.params.is_empty() {
+                    return Err(SemanticError {
+                        message: format!("unqualified generic Record default '{}'", name.node),
+                        span: value.span,
+                    });
+                }
+                if active.iter().any(|current| current == &name.node) {
+                    return Err(SemanticError {
+                        message: format!("cyclic nominal Record default involving '{}'", name.node),
+                        span: value.span,
+                    });
+                }
+                active.push(name.node.clone());
+                let mut seen = HashSet::new();
+                for (field_name, field_value) in fields {
+                    if !seen.insert(field_name.node.as_str()) {
+                        return Err(SemanticError {
+                            message: format!(
+                                "duplicate initializer '{}' in Record default '{}'",
+                                field_name.node, name.node
+                            ),
+                            span: field_name.span,
+                        });
+                    }
+                    let Some(field) = def.fields.iter().find(|f| f.name.node == field_name.node) else {
+                        return Err(SemanticError {
+                            message: format!(
+                                "unknown field '{}' for Record default '{}'",
+                                field_name.node, name.node
+                            ),
+                            span: field_name.span,
+                        });
+                    };
+                    let ty = self.resolve_type_ref(&field.ty)?;
+                    self.check_qualified_record_default(&ty, field_value, active)?;
+                }
+                for field in &def.fields {
+                    if seen.contains(field.name.node.as_str()) { continue; }
+                    let Some(default) = &field.default else {
+                        return Err(SemanticError {
+                            message: format!(
+                                "missing required field '{}' for Record default '{}'",
+                                field.name.node, name.node
+                            ),
+                            span: value.span,
+                        });
+                    };
+                    let ty = self.resolve_type_ref(&field.ty)?;
+                    self.check_qualified_record_default(&ty, default, active)?;
+                }
+                active.pop();
+                Ok(())
+            }
+            _ => Err(SemanticError {
+                message: "unqualified nonliteral Record default".to_string(),
+                span: value.span,
+            }),
+        }
+    }
+
     fn check_assignable(&self, expected: &Type, actual: &Type, rhs: &Expr) -> Result<(), SemanticError> {
         match (expected, actual, &rhs.kind) {
             // Numeric and range compatibility.
@@ -1851,36 +1937,9 @@ impl Checker {
                             .find(|field| field.name.node == fname)
                             .and_then(|field| field.default.as_ref())
                             .expect("checked source default must exist");
-                        let literal = match &value.kind {
-                            ExprKind::IntLit(_) => true,
-                            ExprKind::Ident(id) =>
-                                id.node == "true" || id.node == "false",
-                            _ => false,
-                        };
-                        if !literal {
-                            return Err(SemanticError {
-                                message: format!(
-                                    "unqualified nonliteral Record default '{}.{}'",
-                                    name.node, fname
-                                ),
-                                span: value.span,
-                            });
-                        }
                         let required = self.resolve_type_ref(&ty_ref)?;
-                        if !matches!(required,
-                            Type::Bool | Type::U8 | Type::U16 | Type::U32 |
-                            Type::U64 | Type::I8 | Type::I16 | Type::I32 |
-                            Type::I64 | Type::F32 | Type::F64 | Type::Char) {
-                            return Err(SemanticError {
-                                message: format!(
-                                    "unqualified non-scalar Record default '{}.{}'",
-                                    name.node, fname
-                                ),
-                                span: value.span,
-                            });
-                        }
-                        let actual = self.infer_expr(value)?;
-                        self.check_assignable(&required, &actual, value)?;
+                        self.check_qualified_record_default(&required, value,
+                            &mut vec![name.node.clone()])?;
                     }
                 }
 
