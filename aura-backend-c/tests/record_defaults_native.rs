@@ -8,6 +8,10 @@ use std::{collections::HashMap, fs, path::PathBuf, process::Command,
 
 const SOURCE: &str = r#"
 type Point = record { x: u32 = 7, y: u32 = 13 }
+type Flag = record { enabled: bool = true, count: u32 = 17 }
+cell flag_enabled() ->:
+    val f: Flag = Flag { count: 19 }
+    yield f.enabled
 cell make_point() ->:
     yield Point {}
 cell override_x() ->:
@@ -40,6 +44,7 @@ fn omitted_scalar_defaults_are_qualified_in_oracle_and_native_c_abi() {
         ("make_point",point(7,13)),
         ("override_x",point(19,13)),
         ("project_default",OracleValue::U32(13)),
+        ("flag_enabled",OracleValue::Bool(true)),
     ] {
         let obs=run_oracle_entry(&ir,name,&[],OracleConfig::default())
             .expect("Oracle executes omitted defaults");
@@ -51,15 +56,16 @@ fn omitted_scalar_defaults_are_qualified_in_oracle_and_native_c_abi() {
     fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
     fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
     fs::write(tmp.0.join("driver.c"),concat!(
-        "#include <stdint.h>\n",
+        "#include <stdint.h>\n#include <stdbool.h>\n",
         "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
         "aura_record_506f696e74 make_point(void);\n",
         "aura_record_506f696e74 override_x(void);\n",
         "uint32_t project_default(void);\n",
+        "bool flag_enabled(void);\n",
         "int main(void){aura_record_506f696e74 a=make_point(),b=override_x();\n",
         "return (a.aura_f_78==7u&&a.aura_f_79==13u",
         "&&b.aura_f_78==19u&&b.aura_f_79==13u",
-        "&&project_default()==13u)?0:1;}\n"
+        "&&project_default()==13u&&flag_enabled())?0:1;}\n"
     )).unwrap();
     for opt in ["-O0","-O2"] {
         let exe=tmp.0.join(format!("record_default_{}",&opt[1..]));
