@@ -23,6 +23,10 @@ cell branch_from_call(flag: bool) ->:
     else:
         p.x = 23
     yield p.x
+cell maybe_update_param(flag: bool, p: Point) ->:
+    if flag:
+        p.x = 19
+    yield p.x
 cell round_trip(x: u32, y: u32) ->:
     val p: Point = make_point(x, y)
     yield project_x(p)
@@ -71,6 +75,16 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
             .expect("Oracle must join Record returned from a function call");
         assert_eq!(value.return_value, Some(OracleValue::U32(expected)));
     }
+    for (flag, expected) in [(true, 19), (false, 7)] {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("x".into(), OracleValue::U32(7));
+        fields.insert("y".into(), OracleValue::U32(13));
+        let point = OracleValue::Record { name: "Point".into(), fields };
+        let value = run_oracle_entry(&ir, "maybe_update_param",
+            &[OracleValue::Bool(flag), point], OracleConfig::default())
+            .expect("Oracle must join a named Record parameter from the unchanged edge");
+        assert_eq!(value.return_value, Some(OracleValue::U32(expected)));
+    }
     let output = emit_module(&ir, None).expect("nominal Record function ABI should emit native C");
     assert!(output.module_c.contains("aura_record_506f696e74"),
         "qualified nominal Point type required, not Tensor fallback");
@@ -87,6 +101,7 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         "uint32_t forward_point(aura_record_506f696e74);\n",
         "aura_record_506f696e74 identity_point(aura_record_506f696e74);\n",
         "uint32_t branch_from_call(bool);\n",
+        "uint32_t maybe_update_param(bool, aura_record_506f696e74);\n",
         "uint32_t round_trip(uint32_t, uint32_t);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
@@ -96,6 +111,8 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         " && identity_point(p).aura_f_78 == 31u",
         " && branch_from_call(true) == 19u",
         " && branch_from_call(false) == 23u",
+        " && maybe_update_param(true,p) == 19u",
+        " && maybe_update_param(false,p) == 31u",
         " && round_trip(7u, 13u) == 7u",
         " && round_trip(19u, 23u) == 19u) ? 0 : 1;\n",
         "}\n"
