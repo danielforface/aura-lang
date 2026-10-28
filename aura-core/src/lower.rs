@@ -121,10 +121,19 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
             Stmt::RecordDef(def) if def.params.is_empty() => {
                 // Preserve declaration order and exact scalar field types for
                 // C layout; unsupported/generic fields remain unqualified.
-                module.record_layouts.insert(
-                    def.name.node.clone(),
-                    def.fields.iter().map(|f| (f.name.node.clone(), lower_type(&f.ty))).collect(),
-                );
+                // Resolve concrete Record layout field types through the same
+                // qualified Checker registry used for declaration acceptance.
+                // Raw AST names can be monomorphic TypeAliases (including
+                // chains); lowering them directly as opaque nominal C fields
+                // makes checker/oracle/native disagree on the ABI.
+                // Unsupported types remain their exact non-scalar IR types,
+                // and the C emitter will continue to reject them fail-closed.
+                let fields = def.fields.iter().map(|field| {
+                    let ty = checker.resolve_type_ref(&field.ty)?;
+                    let ir = lower_sema_type_to_ir(&ty, field.ty.span)?;
+                    Ok((field.name.node.clone(), ir))
+                }).collect::<Result<Vec<_>, SemanticError>>()?;
+                module.record_layouts.insert(def.name.node.clone(), fields);
             }
             Stmt::CellDef(cell) => {
                 let f = lower.lower_cell(cell)?;

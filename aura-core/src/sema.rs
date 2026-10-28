@@ -2720,7 +2720,7 @@ impl Checker {
         id
     }
 
-    fn resolve_type_ref(&self, tr: &TypeRef) -> Result<Type, SemanticError> {
+    pub(crate) fn resolve_type_ref(&self, tr: &TypeRef) -> Result<Type, SemanticError> {
         let base = match tr.name.node.as_str() {
             "u8" => Type::U8,
             "u16" => Type::U16,
