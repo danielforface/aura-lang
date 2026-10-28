@@ -171,6 +171,16 @@ cell nested_after() ->:
     val mut o: Outer = make_outer()
     o.p = Point { x: 41, y: 43 }
     yield o.p.x
+cell child_phi_true() ->:
+    val mut p: Point = make_outer().p
+    if true:
+        p.x = 19
+    yield p.x
+cell child_phi_false() ->:
+    val mut p: Point = make_outer().p
+    if false:
+        p.x = 19
+    yield p.x
 "#;
 
 #[test]
@@ -181,7 +191,12 @@ fn real_source_nested_record_avm_matches_same_source_oracle_without_z3() {
         .expect("nested source must typecheck");
     let ir = aura_core::lower_program(&ast).expect("nested source must lower");
     aura_ir::validate_module(&ir).expect("nested source SSA valid");
-    for (entry, expected) in [("nested_before", 7u32), ("nested_after", 41u32)] {
+    for (entry, expected) in [
+        ("nested_before", 7u32),
+        ("nested_after", 41u32),
+        ("child_phi_true", 19u32),
+        ("child_phi_false", 7u32),
+    ] {
         let oracle = aura_ir::run_oracle_entry(&ir, entry, &[],
             aura_ir::OracleConfig::default())
             .expect("nested source IR Oracle");
