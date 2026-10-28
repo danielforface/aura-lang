@@ -1,11 +1,13 @@
 //! Q03-001: actual public Aura no-Z3 command path, not just emit_module().
 #![cfg(not(feature = "z3"))]
-use std::{fs, path::{Path, PathBuf}, process::{Command, Output}, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::{Path, PathBuf}, process::{Command, Output}, sync::atomic::{AtomicU64, Ordering}, time::{SystemTime, UNIX_EPOCH}};
+static NEXT_CLI_SCRATCH: AtomicU64 = AtomicU64::new(0);
 struct SourceFile { root: PathBuf, file: PathBuf }
 impl SourceFile {
     fn new(text: &str) -> Self {
         let tick = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("aura-record-cli-{}-{tick}", std::process::id()));
+        let sequence = NEXT_CLI_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("aura-record-cli-{}-{tick}-{sequence}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let file = root.join("main.aura");
         fs::write(&file, text).unwrap();
@@ -66,5 +68,30 @@ cell main() ->:
     let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
     assert!(build.status.success(),
         "public Aura C build must preserve Record Phi, stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_cli_accepts_cross_cell_nominal_record_return_and_argument() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell make_point(x: u32, y: u32) ->:
+    yield Point { y: y, x: x }
+cell project_x(p: Point) ->:
+    yield p.x
+cell main() ->:
+    val p: Point = make_point(7, 13)
+    yield project_x(p)
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public CLI check rejects Record parameter/return: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 public CLI must not claim formal proof of Record ABI");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public CLI C build rejects nominal Record function ABI: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
 }
