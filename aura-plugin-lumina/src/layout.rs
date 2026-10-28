@@ -45,9 +45,11 @@ impl Bounds {
     }
 
     pub(crate) fn contains(self, x: f32, y: f32) -> bool {
+        // Half-open bounds match pixel/scissor regions; right/bottom edges
+        // belong to the adjacent widget or outside the viewport.
         self.width > 0.0 && self.height > 0.0
-            && x >= self.x && x <= self.x + self.width
-            && y >= self.y && y <= self.y + self.height
+            && x >= self.x && x < self.x + self.width
+            && y >= self.y && y < self.y + self.height
     }
 }
 
@@ -536,6 +538,31 @@ mod tests {
         ],vec![])])]);
         let plan=arrange(&root,b(0.0,0.0,120.0,80.0));
         assert_eq!(hit_test(&root,&plan,0.2,0.2),None);
+    }
+
+    #[test]
+    fn half_open_edges_never_dispatch_to_right_or_bottom_viewport_border() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","0"),("y","0"),("width","100"),("height","50"),
+            ("on_click","cb:50")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,100.0,50.0));
+        assert_eq!(hit_test(&root,&plan,99.999,49.999),Some(HitTarget::Button(50)));
+        assert_eq!(hit_test(&root,&plan,100.0,25.0),None);
+        assert_eq!(hit_test(&root,&plan,25.0,50.0),None);
+        assert_eq!(hit_test(&root,&plan,f32::NAN,25.0),None);
+    }
+
+    #[test]
+    fn clip_true_alias_and_invalid_callback_are_safe() {
+        let root=n("App",&[],vec![n("Box",&[
+          ("clip","true"),("width","60"),("height","50")],vec![
+          n("Button",&[("x","55"),("y","5"),("width","30"),
+             ("height","30"),("on_click","cb:bad")],vec![])
+        ])]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(plan.child(0).child(0).clip,b(0.0,0.0,60.0,50.0));
+        assert_eq!(hit_test(&root,&plan,56.0,12.0),None);
+        assert_eq!(hit_test(&root,&plan,70.0,12.0),None);
     }
 
     #[test]
