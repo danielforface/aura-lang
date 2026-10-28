@@ -30,6 +30,10 @@ cell maybe_update_param(flag: bool, p: mut Point) ->:
 cell round_trip(x: u32, y: u32) ->:
     val p: Point = make_point(x, y)
     yield project_x(p)
+cell named_make_point() ->:
+    yield make_point(y: 13, x: 7)
+cell named_record_call() ->:
+    yield project_x(p: make_point(y: 13, x: 7))
 "#;
 
 struct Scratch(PathBuf);
@@ -85,6 +89,21 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
             .expect("Oracle must join a named Record parameter from the unchanged edge");
         assert_eq!(value.return_value, Some(OracleValue::U32(expected)));
     }
+    for cell in ["named_make_point", "named_record_call"] {
+        let result = run_oracle_entry(&ir, cell, &[], OracleConfig::default())
+            .expect("named call must execute via IR Oracle");
+        if cell == "named_make_point" {
+            let mut expected_fields = std::collections::HashMap::new();
+            expected_fields.insert("x".to_string(), OracleValue::U32(7));
+            expected_fields.insert("y".to_string(), OracleValue::U32(13));
+            assert_eq!(result.return_value, Some(OracleValue::Record {
+                name: "Point".into(), fields: expected_fields,
+            }), "named argument values must bind to their declared parameter names");
+        } else {
+            assert_eq!(result.return_value, Some(OracleValue::U32(7)),
+                "nested named Record call must bind to declared parameter names");
+        }
+    }
     let output = emit_module(&ir, None).expect("nominal Record function ABI should emit native C");
     assert!(output.module_c.contains("aura_record_506f696e74"),
         "qualified nominal Point type required, not Tensor fallback");
@@ -103,6 +122,8 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         "uint32_t branch_from_call(bool);\n",
         "uint32_t maybe_update_param(bool, aura_record_506f696e74);\n",
         "uint32_t round_trip(uint32_t, uint32_t);\n",
+        "aura_record_506f696e74 named_make_point(void);\n",
+        "uint32_t named_record_call(void);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
         "  return (p.aura_f_78 == 31u && p.aura_f_79 == 37u",
@@ -114,7 +135,10 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         " && maybe_update_param(true,p) == 19u",
         " && maybe_update_param(false,p) == 31u",
         " && round_trip(7u, 13u) == 7u",
-        " && round_trip(19u, 23u) == 19u) ? 0 : 1;\n",
+        " && round_trip(19u, 23u) == 19u",
+        " && named_make_point().aura_f_78 == 7u",
+        " && named_make_point().aura_f_79 == 13u",
+        " && named_record_call() == 7u) ? 0 : 1;\n",
         "}\n"
     )).unwrap();
     for opt in ["-O0", "-O2"] {
