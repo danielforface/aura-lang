@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use aura_ir::{
     BinOp, BlockId, DebugSource, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp,
@@ -160,33 +160,125 @@ fn record_field_ctype(ty: &Type) -> Option<CType> {
         _ => None,
     }
 }
+// Each qualified nominal field retains its own type identity; a nested
+// Record is NEVER reduced to a scalar width or the generic Tensor ABI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RecordFieldCType {
+    Scalar(CType),
+    Nominal(String),
+}
+impl RecordFieldCType {
+    fn declaration(&self) -> String {
+        match self {
+            Self::Scalar(ct) => map_ctype_decl(*ct).to_string(),
+            Self::Nominal(name) => record_type_symbol(name),
+        }
+    }
+}
 fn qualified_record_fields(
     layouts: &BTreeMap<String, Vec<(String, Type)>>,
     record: &str,
-) -> Result<Vec<(String, CType)>, CBackendError> {
-    let fields = layouts.get(record).ok_or_else(|| CBackendError {
-        message: format!("unqualified C Record '{}' missing typed field layout", record),
-    })?;
-    if fields.is_empty() {
-        return Err(CBackendError {
-            message: format!("unqualified C Record '{}' empty layout not supported", record),
-        });
-    }
-    let mut result = Vec::with_capacity(fields.len());
-    for (name, ty) in fields {
-        if result.iter().any(|(existing, _): &(String, CType)| existing == name) {
-            return Err(CBackendError { message:
-                format!("unqualified C Record '{}' duplicate layout field '{}'", record, name) });
+) -> Result<Vec<(String, RecordFieldCType)>, CBackendError> {
+    fn qualify(
+        layouts: &BTreeMap<String, Vec<(String, Type)>>,
+        record: &str,
+        stack: &mut Vec<String>,
+    ) -> Result<Vec<(String, RecordFieldCType)>, CBackendError> {
+        if stack.iter().any(|entry| entry == record) {
+            return Err(CBackendError {
+                message: format!("unqualified C Record by-value layout cycle: {} -> {record}",
+                    stack.join(" -> ")),
+            });
         }
-        let scalar = record_field_ctype(ty).ok_or_else(|| CBackendError {
-            message: format!("unqualified C Record '{}' field '{}' type {:?} unsupported",
-                record, name, ty),
+        let fields = layouts.get(record).ok_or_else(|| CBackendError {
+            message: format!("unqualified C Record '{}' missing typed field layout", record),
         })?;
-        result.push((name.clone(), scalar));
+        if fields.is_empty() {
+            return Err(CBackendError {
+                message: format!("unqualified C Record '{}' empty layout not supported", record),
+            });
+        }
+        stack.push(record.to_string());
+        let mut result: Vec<(String, RecordFieldCType)> = Vec::with_capacity(fields.len());
+        for (name, ty) in fields {
+            if result.iter().any(|(existing, _)| existing == name) {
+                return Err(CBackendError { message:
+                    format!("unqualified C Record '{}' duplicate layout field '{}'", record, name) });
+            }
+            let field_type = if let Some(ct) = record_field_ctype(ty) {
+                RecordFieldCType::Scalar(ct)
+            } else if let Type::Opaque(nested) = ty {
+                if !layouts.contains_key(nested) {
+                    return Err(CBackendError { message: format!(
+                        "unqualified C Record '{}' field '{}' type {:?} unsupported",
+                        record, name, ty,
+                    ) });
+                }
+                qualify(layouts, nested, stack)?;
+                RecordFieldCType::Nominal(nested.clone())
+            } else if let Type::Record { name: nested, fields: actual_fields } = ty {
+                if layouts.get(nested) != Some(actual_fields) {
+                    return Err(CBackendError { message: format!(
+                        "unqualified C Record '{}' field '{}' nested layout mismatch '{}'",
+                        record, name, nested,
+                    ) });
+                }
+                qualify(layouts, nested, stack)?;
+                RecordFieldCType::Nominal(nested.clone())
+            } else {
+                return Err(CBackendError { message: format!(
+                    "unqualified C Record '{}' field '{}' type {:?} unsupported",
+                    record, name, ty,
+                ) });
+            };
+            result.push((name.clone(), field_type));
+        }
+        stack.pop();
+        Ok(result)
     }
-    Ok(result)
+    qualify(layouts, record, &mut Vec::new())
 }
 
+// Semantic record returns can recursively carry expanded Type::Record
+// fields while declaration layouts contain Type::Opaque nominal references.
+fn matching_record_layout_type(
+    declared: &Type, actual: &Type,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+) -> bool {
+    if declared == actual { return true; }
+    match (declared, actual) {
+        (Type::Opaque(expected), Type::Record { name, fields }) if expected == name => {
+            layouts.get(name).is_some_and(|layout|
+                layout.len() == fields.len() &&
+                layout.iter().zip(fields).all(|((a, at), (b, bt))|
+                    a == b && matching_record_layout_type(at, bt, layouts)))
+        }
+        _ => false,
+    }
+}
+fn emit_qualified_record_layout(
+    out: &mut String,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    name: &str,
+    emitted: &mut BTreeSet<String>,
+) -> Result<(), CBackendError> {
+    if emitted.contains(name) { return Ok(()); }
+    let fields = qualified_record_fields(layouts, name)?;
+    // A by-value nested C struct must be complete before the parent typedef.
+    for (_, ty) in &fields {
+        if let RecordFieldCType::Nominal(child) = ty {
+            emit_qualified_record_layout(out, layouts, child, emitted)?;
+        }
+    }
+    out.push_str("typedef struct {\n");
+    for (field, ty) in &fields {
+        out.push_str(&format!("  {} {};\n",
+            ty.declaration(), record_field_symbol(field)));
+    }
+    out.push_str(&format!("}} {};\n\n", record_type_symbol(name)));
+    emitted.insert(name.to_string());
+    Ok(())
+}
 
 fn qualified_record_abi_type(
     ty: &Type,
@@ -197,12 +289,14 @@ fn qualified_record_abi_type(
             let layout = layouts.get(name).ok_or_else(|| CBackendError {
                 message: format!("unqualified Record function ABI missing layout for '{name}'"),
             })?;
-            if layout != fields {
+            qualified_record_fields(layouts, name)?;
+            if layout.len() != fields.len() ||
+               !layout.iter().zip(fields).all(|((a, at), (b, bt))|
+                   a == b && matching_record_layout_type(at, bt, layouts)) {
                 return Err(CBackendError {
                     message: format!("unqualified Record function ABI layout mismatch for '{name}'"),
                 });
             }
-            qualified_record_fields(layouts, name)?;
             Ok(Some(name.clone()))
         }
         Type::Opaque(name) if layouts.contains_key(name) => {
@@ -255,19 +349,13 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
 
-    // Emit real tagged nominal layouts only for the currently qualified
-    // scalar field subset. The source declaration order, not initializer
-    // order, controls the struct layout. Unsupported schemas remain refused
-    // at ConstructRecord, and unused unsupported declarations are inert.
-    for (name, _) in &module.record_layouts {
-        if let Ok(fields) = qualified_record_fields(&module.record_layouts, name) {
-            out.push_str("typedef struct {\n");
-            for (field, ty) in &fields {
-                out.push_str(&format!(
-                    "  {} {};\n", map_ctype_decl(*ty), record_field_symbol(field),
-                ));
-            }
-            out.push_str(&format!("}} {};\n\n", record_type_symbol(name)));
+    // Emit only qualified nominal layouts, in dependency order. Unused
+    // unsupported declarations remain inert until they are actually used.
+    let mut emitted_records = BTreeSet::new();
+    for name in module.record_layouts.keys() {
+        if qualified_record_fields(&module.record_layouts, name).is_ok() {
+            emit_qualified_record_layout(&mut out, &module.record_layouts,
+                name, &mut emitted_records)?;
         }
     }
 
