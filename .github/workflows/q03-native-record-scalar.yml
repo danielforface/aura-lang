@@ -75,3 +75,20 @@ jobs:
         run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
       - name: AVM source Record functional field assignment without claiming proof
         run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
+
+
+  record-avm-no-z3:
+    # Run source interpreter conformance independently of the heavyweight
+    # LSP vendored-Z3 preflight. This is execution only, never formal proof.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: AVM no-Z3 host audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Record source AVM user-defined function ABI and negative guards
+        run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
