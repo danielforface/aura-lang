@@ -94,3 +94,20 @@ jobs:
           sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
       - name: Record source AVM user-defined function ABI and negative guards
         run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
+
+
+  record-public-cli-no-z3:
+    # Independent fast production-facing CLI check/build conformance.
+    # Do NOT remove the separate full LSP/pinned Z3 compatibility job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Public CLI host dependencies without LSP Z3 preflight
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real Aura no-Z3 check and C build flat and nested Record
+        run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
