@@ -545,3 +545,21 @@ fn avm_rejects_malformed_unused_record_schema_before_executing_entry_cell() {
             "expected {expected:?} for unused schema: {err}");
     }
 }
+
+
+#[test]
+fn avm_rejects_out_of_range_unused_scalar_record_default_even_without_use() {
+    for (declarations, expected) in [
+        ("type Tiny = record { n: u8 = 300 }\n", "range"),
+        ("type Tiny = record { n: i8 = 200 }\n", "range"),
+    ] {
+        let source=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let err=vm.exec_entry_cell(&source,"main")
+            .expect_err("AVM must validate width of unused Record default before entry execution");
+        assert!(err.to_string().contains(expected),
+            "expected {expected:?} width diagnostic, got {err}");
+    }
+}
