@@ -450,6 +450,107 @@ mod tests {
     }
 
     #[test]
+    fn clip_intersection_and_scissor_rounding() {
+        assert_eq!(b(0.0,0.0,100.0,80.0).intersect(b(-20.0,10.0,35.0,20.0)),
+            b(0.0,10.0,15.0,20.0));
+        assert!(b(0.0,0.0,50.0,40.0).intersect(b(60.0,0.0,5.0,4.0)).is_empty());
+        assert_eq!(b(0.25,1.25,4.5,3.25).scissor(), Some((0,1,5,4)));
+        assert_eq!(b(0.0,0.0,0.0,4.0).scissor(), None);
+    }
+
+    #[test]
+    fn viewport_cutoff_of_absolute_controls_without_explicit_overflow() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","90"),("y","10"),("width","40"),("height","30"),
+            ("on_click","cb:7")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,100.0,100.0));
+        assert_eq!(plan.child(0).clip,b(0.0,0.0,100.0,100.0));
+        assert_eq!(hit_test(&root,&plan,95.0,20.0),Some(HitTarget::Button(7)));
+        assert_eq!(hit_test(&root,&plan,105.0,20.0),None);
+    }
+
+    #[test]
+    fn overflow_hidden_clips_deep_descendants_while_visible_does_not() {
+        let root=|overflow|n("App",&[],vec![
+            n("Box",&[("width","100"),("height","50"),("overflow",overflow)],vec![
+                n("VStack",&[],vec![n("Button",&[
+                    ("x","120"),("y","5"),("width","30"),("height","30"),
+                    ("on_click","cb:12")],vec![])])
+            ])
+        ]);
+        let hidden=root("hidden");
+        let h=arrange(&hidden,b(0.0,0.0,200.0,120.0));
+        assert_eq!(h.child(0).child(0).child(0).clip,b(0.0,0.0,100.0,50.0));
+        assert_eq!(hit_test(&hidden,&h,125.0,10.0),None);
+        let visible=root("visible");
+        let v=arrange(&visible,b(0.0,0.0,200.0,120.0));
+        assert_eq!(hit_test(&visible,&v,125.0,10.0),Some(HitTarget::Button(12)));
+    }
+
+    #[test]
+    fn topmost_actionable_control_wins_overlapping_siblings() {
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","80"),
+                ("height","50"),("on_click","cb:1")],vec![]),
+            n("Button",&[("x","20"),("y","20"),("width","80"),
+                ("height","50"),("on_click","cb:2")],vec![])
+        ]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(hit_test(&root,&plan,40.0,40.0),Some(HitTarget::Button(2)));
+        assert_eq!(hit_test(&root,&plan,150.0,40.0),None);
+    }
+
+    #[test]
+    fn text_input_hit_retains_source_value_and_both_callbacks() {
+        let root=n("App",&[],vec![n("TextInput",&[
+            ("value","hello"),("on_change","cb:34"),("on_submit","cb:35"),
+            ("width","90"),("height","40")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(hit_test(&root,&plan,30.0,20.0),Some(HitTarget::TextInput{
+            on_change:34,on_submit:Some(35),value:"hello".to_owned()
+        }));
+    }
+
+    #[test]
+    fn grid_skipped_and_box_extra_children_cannot_be_hit() {
+        let root=n("App",&[],vec![
+            n("Box",&[("width","120"),("height","100")],vec![
+                n("Rect",&[],vec![]),
+                n("Button",&[("on_click","cb:7")],vec![])
+            ]),
+            n("Grid",&[("x","140"),("cols","1"),("rows","1")],vec![
+                n("Button",&[("col","99"),("on_click","cb:8")],vec![])
+            ])
+        ]);
+        let plan=arrange(&root,b(0.0,0.0,600.0,300.0));
+        assert_eq!(hit_test(&root,&plan,5.0,5.0),None);
+        assert_eq!(hit_test(&root,&plan,150.0,20.0),None);
+    }
+
+    #[test]
+    fn zero_declared_clip_area_cannot_leave_hittable_one_pixel_box() {
+        let root=n("App",&[],vec![n("Box",&[
+            ("width","0"),("height","0"),("overflow","hidden")
+        ],vec![n("Button",&[
+            ("width","60"),("height","30"),("on_click","cb:17")
+        ],vec![])])]);
+        let plan=arrange(&root,b(0.0,0.0,120.0,80.0));
+        assert_eq!(hit_test(&root,&plan,0.2,0.2),None);
+    }
+
+    #[test]
+    fn deterministic_hits_across_viewport_resizes_and_negative_offsets() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","-15"),("y","5"),("width","45"),("height","25"),
+            ("on_click","cb:9")],vec![])]);
+        for w in [15.0,100.0,300.0] {
+            let plan=arrange(&root,b(0.0,0.0,w,50.0));
+            assert_eq!(hit_test(&root,&plan,5.0,10.0),Some(HitTarget::Button(9)));
+            assert_eq!(hit_test(&root,&plan,w+1.0,10.0),None);
+        }
+    }
+
+    #[test]
     fn same_tree_same_viewport_produces_identical_plan_without_global_state() {
         let root=n("VStack",&[],vec![n("Box",&[],vec![n("Button",&[],vec![])])]);
         assert_eq!(arrange(&root,b(0.0,0.0,800.0,600.0)),
