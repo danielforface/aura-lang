@@ -643,3 +643,17 @@ fn raw_avm_must_validate_typed_integer_locals_even_if_never_used() {
             "{label}: expected narrow-local range diagnostic: {message}");
     }
 }
+
+#[test]
+fn raw_avm_preserves_valid_typed_local_bounds_without_proof() {
+    for (label,src,expected) in [
+        ("typed u8","type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = 255\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n",255),
+        ("typed i8","type Signed = record { n: i8 }\ncell main() ->:\n    val n: i8 = 127\n    val t: Signed = Signed { n: n }\n    yield t.n\n",127),
+    ] {
+        let mut avm=Avm::new(AvmConfig { enable_z3_gate:false, ..Default::default() });
+        let result=avm.exec_entry_cell(src,"main")
+            .unwrap_or_else(|e| panic!("{label}: typed boundary must execute: {e}"));
+        assert_eq!(result.value,AvmValue::Int(expected), "{label}");
+        assert!(!result.verified, "raw AVM cannot claim proof");
+    }
+}

@@ -351,3 +351,26 @@ fn public_aura_check_refuses_typed_integer_local_range_laundering() {
             "{label}: expected numeric range failure: {diagnostic}");
     }
 }
+
+#[test]
+fn public_cli_accepts_valid_typed_integer_local_record_check_and_c_build() {
+    let source=concat!(
+        "type Tiny = record { n: u8 }\n",
+        "cell main() ->:\n",
+        "    val raw = 255\n",
+        "    val n: u8 = raw\n",
+        "    val t: Tiny = Tiny { n: n }\n",
+        "    yield t.n\n"
+    );
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..]
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public CLI {:?} must preserve valid typed Record scalar value: {output}",args);
+    }
+}

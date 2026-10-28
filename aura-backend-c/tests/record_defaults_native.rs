@@ -408,3 +408,69 @@ fn typed_local_valid_numeric_limits_remain_checker_legal() {
             .unwrap_or_else(|e| panic!("{label}: representable typed local must remain valid: {e}"));
     }
 }
+
+#[test]
+fn typed_integer_locals_keep_exact_record_values_in_oracle_and_native() {
+    let source=r#"
+type Tiny = record { n: u8 }
+type Signed = record { n: i8 }
+cell typed_tiny() ->:
+    val raw = 255
+    val n: u8 = raw
+    yield Tiny { n: n }
+cell typed_signed() ->:
+    val n: i8 = 127
+    yield Signed { n: n }
+cell typed_update() ->:
+    val mut n: u8 = 7
+    n = 255
+    val mut t: Tiny = Tiny { n: 7 }
+    t.n = n
+    yield t
+"#;
+    let ast=aura_parse::parse_source(source).expect("typed-local valid source parses");
+    Checker::new().check_program(&ast).expect("typed-local valid bounds check");
+    let ir=lower_program(&ast).expect("typed local source lowers");
+    validate_module(&ir).expect("typed local SSA is valid");
+    for (cell,name,n) in [
+        ("typed_tiny","Tiny",255_u32),
+        ("typed_signed","Signed",127_u32),
+        ("typed_update","Tiny",255_u32),
+    ] {
+        let v=run_oracle_entry(&ir,cell,&[],OracleConfig::default())
+            .expect("Oracle must execute typed local Record");
+        assert!(v.ok && v.stderr.is_empty(), "{cell}: {v:?}");
+        assert_eq!(v.return_value,Some(OracleValue::Record{
+            name:name.into(),fields:HashMap::from([("n".into(),OracleValue::U32(n))])
+        }), "{cell}: exact Record value must survive SSA");
+    }
+    let artifacts=emit_module(&ir,None).expect("typed local Record native C must emit");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"), artifacts.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"), &artifacts.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"), concat!(
+        "#include <stdint.h>\n",
+        "typedef struct { uint8_t aura_f_6e; } aura_record_54696e79;\n",
+        "typedef struct { int8_t aura_f_6e; } aura_record_5369676e6564;\n",
+        "aura_record_54696e79 typed_tiny(void);\n",
+        "aura_record_5369676e6564 typed_signed(void);\n",
+        "aura_record_54696e79 typed_update(void);\n",
+        "int main(void) {\n",
+        "  return (typed_tiny().aura_f_6e == 255 &&",
+        " typed_signed().aura_f_6e == 127 &&",
+        " typed_update().aura_f_6e == 255) ? 0 : 1;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("typed_local_{}",&opt[1..]));
+        let built=Command::new("clang")
+            .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("clang availability");
+        assert!(built.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        let executed=Command::new(&exe).output().expect("native run");
+        assert!(executed.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&executed.stderr),artifacts.module_c);
+    }
+}
