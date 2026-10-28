@@ -343,24 +343,59 @@ impl<'c> Lowerer<'c> {
     }
 
     fn lower_field_assign(&mut self, a: &aura_ast::FieldAssignStmt) -> Result<(), SemanticError> {
-        let Some(base) = self.locals.get(&a.target.node).copied() else {
+        let Some(root) = self.locals.get(&a.target.node).copied() else {
             return Err(SemanticError {
                 message: format!("lowering: unknown Record local '{}'", a.target.node),
                 span: a.target.span,
             });
         };
+        let path = std::iter::once(&a.field)
+            .chain(a.nested.iter())
+            .collect::<Vec<_>>();
+        let mut parent_chain: Vec<(ValueId, String)> = Vec::new();
+        let mut cursor = root;
+        // Lower each intermediate child with an explicit typed GetField.
+        // No in-place C/IR mutation and no aliasing of a prior Record copy.
+        for component in path.iter().take(path.len() - 1) {
+            let child = self.id.fresh_value();
+            self.push_inst(Inst {
+                span: component.span,
+                dest: Some(child),
+                kind: InstKind::GetField {
+                    base: cursor,
+                    field_name: component.node.clone(),
+                },
+            });
+            parent_chain.push((cursor, component.node.clone()));
+            cursor = child;
+        }
+        // RHS is lowered once. Rebuild the immutable child and every
+        // parent in reverse, then rebind the original mutable root.
         let value = self.lower_expr(&a.expr)?;
-        let updated = self.id.fresh_value();
+        let leaf = path.last().expect("field assignment has field");
+        let mut updated = self.id.fresh_value();
         self.push_inst(Inst {
             span: a.span,
             dest: Some(updated),
             kind: InstKind::SetField {
-                base,
-                field_name: a.field.node.clone(),
+                base: cursor,
+                field_name: leaf.node.clone(),
                 value,
             },
         });
-        // Rebind the mutable source variable to its new immutable SSA Record.
+        for (parent, field_name) in parent_chain.into_iter().rev() {
+            let rebuilt = self.id.fresh_value();
+            self.push_inst(Inst {
+                span: a.span,
+                dest: Some(rebuilt),
+                kind: InstKind::SetField {
+                    base: parent,
+                    field_name,
+                    value: updated,
+                },
+            });
+            updated = rebuilt;
+        }
         self.locals.insert(a.target.node.clone(), updated);
         Ok(())
     }
