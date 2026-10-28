@@ -517,3 +517,31 @@ fn avm_nested_record_constructor_refuses_structural_nominal_bitcasts_and_raw_ove
             "expected {needle:?} from Record constructor: {err}");
     }
 }
+
+
+#[test]
+fn avm_rejects_malformed_unused_record_schema_before_executing_entry_cell() {
+    for (declarations,expected) in [
+        ("type Bad = record { x: u32 = true }\n","default"),
+        ("type Bad = record { x: u32 = 1 + 2 }\n","unqualified"),
+        ("type Bad = record { x: u32 = 7, x: u32 = 13 }\n","duplicate"),
+        ("type Node = record { next: Node = Node {} }\n","cyclic"),
+        (
+            concat!(
+                "type Point = record { x: u32 = 7 }\n",
+                "type Twin = record { x: u32 = 13 }\n",
+                "type Outer = record { p: Point = Twin {} }\n"
+            ),
+            "nominal",
+        ),
+    ] {
+        let source=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let err=vm.exec_entry_cell(&source,"main")
+            .expect_err("no-Z3 AVM cannot execute a source with malformed unused Record declaration");
+        assert!(err.to_string().contains(expected),
+            "expected {expected:?} for unused schema: {err}");
+    }
+}
