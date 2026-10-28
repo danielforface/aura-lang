@@ -2005,6 +2005,51 @@ impl Avm {
                 _ => {}
             }
         }
+
+        // A raw AVM source cannot execute through an unused invalid plain
+        // monomorphic TypeAlias. Check all such declaration chains before
+        // registering an entry cell or evaluating a Record/default value.
+        // Generic/refined/imported alias resolution is not yet certified.
+        let mono_aliases: HashMap<&str, &aura_ast::TypeAlias> = program.stmts.iter()
+            .filter_map(|s| match s {
+                Stmt::TypeAlias(a) if a.params.is_empty() &&
+                    a.target.args.is_empty() && a.target.range.is_none()
+                    => Some((a.name.node.as_str(), a)),
+                _ => None,
+            }).collect();
+        let has_imports = program.stmts.iter().any(|s| matches!(s, Stmt::Import(_)));
+        for alias in mono_aliases.values() {
+            let mut seen = HashSet::new();
+            let mut current = alias.name.node.as_str();
+            loop {
+                if !seen.insert(current) {
+                    return Err(miette::miette!(
+                        "AVM: cyclic monomorphic TypeAlias '{}' via '{}'",
+                        alias.name.node, current
+                    ));
+                }
+                let def = mono_aliases[current];
+                let target = def.target.name.node.as_str();
+                if mono_aliases.contains_key(target) {
+                    current = target;
+                    continue;
+                }
+                if source_type_names.contains_key(target) || has_imports ||
+                    matches!(target,
+                        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
+                        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+                        "Int" | "f32" | "f64" | "bool" | "char" | "str" |
+                        "String" | "Tensor" | "Style" | "Unit" | "Model")
+                {
+                    break;
+                }
+                return Err(miette::miette!(
+                    "AVM: unknown monomorphic TypeAlias '{}' target '{}'",
+                    def.name.node, target
+                ));
+            }
+        }
+
         // Like Core's declaration pass, raw AVM source qualification must not
         // depend on constructing an instance. Reject unused malformed schemas
         // before executing any top-level statement or entry cell.
