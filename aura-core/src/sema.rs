@@ -1222,8 +1222,9 @@ impl Checker {
                 span: a.target.span,
             });
         }
-        // Only single-level, concrete nominal Records with scalar fields
-        // have a qualified local C layout/SSA update contract.
+        // Only concrete non-generic nominal Records have a qualified local
+        // functional SSA update contract. A field may contain another concrete
+        // nominal Record by value; its exact name is checked below.
         let Type::Named(rec_name) = base_type(&target_ty) else {
             return Err(SemanticError {
                 message: format!("field assignment target '{}' must be a concrete Record", a.target.node),
@@ -1249,9 +1250,12 @@ impl Checker {
             });
         };
         let expected = self.resolve_type_ref(&field.ty)?;
-        if !matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
+        let scalar = matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
             Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
-            Type::I64 | Type::F32 | Type::F64) {
+            Type::I64 | Type::F32 | Type::F64);
+        let nominal_nested = matches!(&expected, Type::Named(name)
+            if self.record_defs.get(name).is_some_and(|inner| inner.params.is_empty()));
+        if !scalar && !nominal_nested {
             return Err(SemanticError {
                 message: format!("unqualified non-scalar Record field assignment '{}.{}'",
                     a.target.node, a.field.node),
