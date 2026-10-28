@@ -157,3 +157,45 @@ fn avm_user_cells_do_not_leak_into_next_source_or_recurse_forever() {
     assert!(rec.to_string().contains("call depth exceeds"),
         "AVM recursion should fail closed instead of stack overflow: {rec}");
 }
+
+
+const NESTED_RECORD_SOURCE: &str = r#"
+type Point = record { x: u32, y: u32 }
+type Outer = record { p: Point, tag: u32 }
+cell make_outer() ->:
+    yield Outer { tag: 99, p: Point { x: 7, y: 13 } }
+cell nested_before() ->:
+    val o: Outer = make_outer()
+    yield o.p.x
+cell nested_after() ->:
+    val mut o: Outer = make_outer()
+    o.p = Point { x: 41, y: 43 }
+    yield o.p.x
+"#;
+
+#[test]
+fn real_source_nested_record_avm_matches_same_source_oracle_without_z3() {
+    let ast = aura_parse::parse_source(NESTED_RECORD_SOURCE)
+        .expect("nested source must parse");
+    aura_core::Checker::new().check_program(&ast)
+        .expect("nested source must typecheck");
+    let ir = aura_core::lower_program(&ast).expect("nested source must lower");
+    aura_ir::validate_module(&ir).expect("nested source SSA valid");
+    for (entry, expected) in [("nested_before", 7u32), ("nested_after", 41u32)] {
+        let oracle = aura_ir::run_oracle_entry(&ir, entry, &[],
+            aura_ir::OracleConfig::default())
+            .expect("nested source IR Oracle");
+        assert!(oracle.ok && oracle.stderr.is_empty());
+        assert_eq!(oracle.return_value, Some(aura_ir::OracleValue::U32(expected)));
+        let mut avm = Avm::new(AvmConfig {
+            enable_z3_gate: false,
+            ..Default::default()
+        });
+        let result = avm.exec_entry_cell(NESTED_RECORD_SOURCE, entry)
+            .expect("AVM must execute nested nominal Record with functional field update");
+        assert_eq!(result.value, AvmValue::Int(i64::from(expected)),
+            "nested Record Oracle/AVM mismatch in {entry}");
+        assert!(!result.verified);
+        assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
+    }
+}
