@@ -698,3 +698,42 @@ cell main() ->:
     assert_eq!(result.value,AvmValue::Int(127));
     assert!(!result.verified, "raw AVM is not proof");
 }
+
+#[test]
+fn raw_avm_numeric_parameters_and_nested_call_frames_obey_declared_widths() {
+    for (label,src) in [
+        ("u8 parameter overflow", "type Tiny = record { n: u8 }\ncell identity(n: u8) ->:\n    yield n\ncell main() ->:\n    yield identity(300)\n"),
+        ("i8 parameter overflow", "type Signed = record { n: i8 }\ncell identity(n: i8) ->:\n    yield n\ncell main() ->:\n    yield identity(128)\n"),
+        ("nested bad typed write", "type Tiny = record { n: u8 }\ncell bad() ->:\n    val mut n: u8 = 7\n    n = 300\n    yield n\ncell main() ->:\n    yield bad()\n"),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(src,"main")
+            .expect_err("numeric contracts must be enforced across user call frames");
+        let msg=err.to_string();
+        assert!(msg.contains("typed") && msg.contains("range"),
+            "{label}: expected typed integer width diagnostic, got {msg}");
+    }
+    for (label,src,expected) in [
+        ("u8 boundary parameter", "type Tiny = record { n: u8 }\ncell identity(n: u8) ->:\n    yield n\ncell main() ->:\n    yield identity(255)\n",255),
+        ("i8 boundary parameter", "type Signed = record { n: i8 }\ncell identity(n: i8) ->:\n    yield n\ncell main() ->:\n    yield identity(127)\n",127),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let result=vm.exec_entry_cell(src,"main")
+            .unwrap_or_else(|err| panic!("{label}: valid parameter must execute: {err}"));
+        assert_eq!(result.value,AvmValue::Int(expected), "{label}");
+        assert!(!result.verified);
+    }
+}
+#[test]
+fn raw_avm_integer_contract_registry_clears_between_source_runs() {
+    let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    for (src, expected) in [
+        ("cell main() ->:\n    val mut n: u8 = 7\n    n = 255\n    yield n\n",255),
+        ("cell main() ->:\n    val mut n: i8 = 7\n    n = 127\n    yield n\n",127),
+    ] {
+        let result=vm.exec_entry_cell(src,"main")
+            .expect("each source must have a distinct typed-local registry");
+        assert_eq!(result.value,AvmValue::Int(expected));
+        assert!(!result.verified);
+    }
+}
