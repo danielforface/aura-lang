@@ -138,8 +138,8 @@ mod tests{
         assert!(s.visual_runs.len()>=3);
         let all=stops(&s).expect("fixture must be complete or remain explicitly unqualified");
         assert!(all.windows(2).all(|w|w[0].x<=w[1].x));
-        let at=hit_test(&s,s.width*.51).unwrap();
-        assert!((at.x-s.width*.51).abs()<s.width*.5);
+        let at=hit_test(&s,s.width*0.51).unwrap();
+        assert!((at.x-s.width*0.51).abs()<s.width*0.5);
         let end=s.bidi.grapheme_boundaries.len()-1;
         let parts=selection_fragments(&s,0,end).unwrap();
         assert!(parts.len()>=3,"UAX9 split selection by visual runs");
