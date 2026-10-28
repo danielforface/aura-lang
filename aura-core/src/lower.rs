@@ -100,6 +100,17 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
     let mut lower = Lowerer {
         id: IdGen::default(),
         checker: &checker,
+        record_defaults: program.stmts.iter().filter_map(|stmt| {
+            if let Stmt::RecordDef(def) = stmt {
+                if def.params.is_empty() {
+                    return Some((def.name.node.clone(), def.fields.iter().filter_map(|field|
+                        field.default.as_ref().map(|expr|
+                            (field.name.node.clone(), expr.clone()))
+                    ).collect::<Vec<_>>()));
+                }
+            }
+            None
+        }).collect(),
         locals: HashMap::new(),
         blocks: Vec::new(),
         current: None,
@@ -176,6 +187,9 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
 struct Lowerer<'c> {
     id: IdGen,
     checker: &'c Checker,
+    // Only concrete source Record declarations may synthesize omitted
+    // defaults. Generic / unsupported defaults never become fake SSA values.
+    record_defaults: HashMap<String, Vec<(String, Expr)>>,
     locals: HashMap<String, ValueId>,
 
     blocks: Vec<BasicBlock>,
@@ -1249,10 +1263,22 @@ impl<'c> Lowerer<'c> {
             }
 
             ExprKind::RecordLit { name, fields } => {
-                let mut lowered_fields = Vec::with_capacity(fields.len());
+                let defaults = self.record_defaults.get(&name.node).cloned()
+                    .unwrap_or_default();
+                // Explicit initializers execute once, in source order.
+                // Omitted qualified defaults follow in declaration order.
+                // SSA construction contains all fields; the Oracle and C
+                // backend must observe exactly the same runtime values.
+                let mut lowered_fields = Vec::with_capacity(fields.len() + defaults.len());
                 for (fname, fexpr) in fields {
                     let fval = self.lower_expr(fexpr)?;
                     lowered_fields.push((fname.node.clone(), fval));
+                }
+                for (field_name, default_expr) in defaults {
+                    if !fields.iter().any(|(name, _)| name.node == field_name) {
+                        let value = self.lower_expr(&default_expr)?;
+                        lowered_fields.push((field_name, value));
+                    }
                 }
                 let dest = self.id.fresh_value();
                 self.push_inst(Inst {
