@@ -1374,6 +1374,7 @@ impl Checker {
             }
             self.check_record_integer_literal_width(&expected, &a.expr)?;
             let actual = self.infer_expr(&a.expr)?;
+            self.check_record_integer_inferred_range(&expected, &actual, &a.expr)?;
             return self.check_assignable(&expected, &actual, &a.expr);
         }
         unreachable!("FieldAssign always has at least one field");
@@ -1631,6 +1632,18 @@ impl Checker {
         required: &Type,
         value: &Expr,
     ) -> Result<(), SemanticError> {
+        // Unary negation currently lowers through the unsigned U32 IR path.
+        // For Record values it cannot be treated as a signed literal without
+        // proving Oracle, AVM and native C agreement. Refuse it locally
+        // rather than accepting a wrapped unsigned value.
+        if required.is_integer()
+            && matches!(&value.kind, ExprKind::Unary { op: UnaryOp::Neg, .. })
+        {
+            return Err(SemanticError {
+                message: "unqualified negative Record integer expression".to_string(),
+                span: value.span,
+            });
+        }
         let ExprKind::IntLit(n) = &value.kind else { return Ok(()); };
         let max = match required {
             Type::U8 => u8::MAX as u64,
@@ -1651,6 +1664,42 @@ impl Checker {
                 ),
                 span: value.span,
             });
+        }
+        Ok(())
+    }
+
+    // A Record initializer can refer to an inferred local whose type is a
+    // constrained U32 interval. The existing generic numeric compatibility
+    // deliberately permits cross-width numeric values, but this Record ABI
+    // must not truncate a range that exceeds its declared field width.
+    // Keep this guard scoped to Record field construction/updates.
+    fn check_record_integer_inferred_range(
+        &self,
+        required: &Type,
+        actual: &Type,
+        value: &Expr,
+    ) -> Result<(), SemanticError> {
+        let upper = match required {
+            Type::U8 => u8::MAX as u64,
+            Type::U16 => u16::MAX as u64,
+            Type::U32 => u32::MAX as u64,
+            Type::U64 => u64::MAX,
+            Type::I8 => i8::MAX as u64,
+            Type::I16 => i16::MAX as u64,
+            Type::I32 => i32::MAX as u64,
+            Type::I64 => i64::MAX as u64,
+            _ => return Ok(()),
+        };
+        if let Type::ConstrainedRange { lo, hi, .. } = actual {
+            if *lo > upper || *hi > upper {
+                return Err(SemanticError {
+                    message: format!(
+                        "Record integer inferred range [{lo}..{hi}] out of range for {}",
+                        required.display()
+                    ),
+                    span: value.span,
+                });
+            }
         }
         Ok(())
     }
@@ -2026,6 +2075,7 @@ impl Checker {
                     };
                     self.check_record_integer_literal_width(&expected_ty, v)?;
                     let actual_ty = self.infer_expr(v)?;
+                    self.check_record_integer_inferred_range(&expected_ty, &actual_ty, v)?;
 
                     // If a record field is initialized from a resource identifier, move it.
                     // This prevents creating implicit aliases to mutable resources.
