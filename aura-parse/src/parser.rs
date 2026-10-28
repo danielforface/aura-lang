@@ -262,6 +262,7 @@ fn rewrite_stmt(stmt: &Stmt, subst: &HashMap<String, Expr>, rename: &HashMap<Str
             span: a.span,
             target: rewrite_ident(&a.target, subst, rename),
             field: a.field.clone(),
+            nested: a.nested.clone(),
             expr: rewrite_expr(&a.expr, subst, rename),
         }),
         Stmt::Prop(p) => {
