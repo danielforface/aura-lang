@@ -2137,7 +2137,7 @@ impl Avm {
         for (param, value) in cell.params.iter().zip(slots.into_iter()) {
             let value = value.expect("all call argument slots are present");
             let nominal = &param.ty.name.node;
-            if self.source_record_names.contains(nominal) {
+            if self.source_record_schemas.contains_key(nominal) {
                 if !matches!(&value, AvmValue::Record { name, .. } if name == nominal) {
                     return Err(miette::miette!(
                         "AVM: user cell '{}' parameter '{}' expects nominal Record '{}'",
