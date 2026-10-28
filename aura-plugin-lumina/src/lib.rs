@@ -944,10 +944,11 @@ fn render_children(
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts);
         }
     }
 }
@@ -964,6 +965,7 @@ fn render_node(
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
 ) {
     // Independent scissor scopes. TextInput draws its frame under inherited
     // clipping, then its text under its inner bounds, never nesting scissors.
@@ -971,7 +973,7 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, textures, input_sessions, text_views, false);
+            focused_input, textures, input_sessions, text_views, fonts, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -979,10 +981,10 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,textures,input_sessions,text_views,true);
+                focused_input,textures,input_sessions,text_views,fonts,true);
         }
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts);
 }
 
 #[cfg(feature = "raylib")]
@@ -997,6 +999,7 @@ fn paint_node<D: RaylibDraw>(
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
     text_only: bool,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
@@ -1039,7 +1042,11 @@ fn paint_node<D: RaylibDraw>(
             let text = prop_string(node, "text")
                 .or_else(|| prop_string(node, "content"))
                 .unwrap_or("");
-            d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
+            if let Some(font)=selected_unicode_font(fonts,node,size,text) {
+                d.draw_text_ex(font,text,Vector2::new(bounds.x,bounds.y),size as f32,0.0,color);
+            } else {
+                d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
+            }
         }
         "Image" => {
             let rect = bounds;
@@ -1178,7 +1185,11 @@ fn paint_node<D: RaylibDraw>(
                         x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
                 }
             }
-            d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
+            if let Some(font)=selected_unicode_font(fonts,node,ts,display) {
+                d.draw_text_ex(font,display,Vector2::new(text_x,rect.y+pad_y),ts as f32,0.0,display_color);
+            } else {
+                d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
+            }
 
             // Exact default-font pixel measurements, not an average cell;
             // separate BiDi/IME/font fallback certification is still needed.
