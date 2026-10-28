@@ -134,3 +134,40 @@ fn malformed_record_defaults_are_rejected_at_declaration_even_when_unused_or_ove
         assert!(error.span.len() > 0, "declaration errors must retain a source span");
     }
 }
+
+
+#[test]
+fn record_integer_width_overflows_fail_in_checker_before_ir_or_c() {
+    // The no-Z3 AVM already rejects these. Checker must reject them too,
+    // independent of use, direct initialization, nested defaults or update.
+    for (source, label) in [
+        ("type Tiny = record { n: u8 = 300 }\ncell main() ->:\n    yield 7\n", "unused u8 default"),
+        ("type Tiny = record { n: i8 = 200 }\ncell main() ->:\n    yield 7\n", "unused i8 default"),
+        ("type Tiny = record { n: u8 }\ncell main() ->:\n    val t: Tiny = Tiny { n: 256 }\n    yield 7\n", "explicit u8 initializer"),
+        ("type Tiny = record { n: i8 }\ncell main() ->:\n    val t: Tiny = Tiny { n: 128 }\n    yield 7\n", "explicit i8 initializer"),
+        ("type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = 300\n    yield t.n\n", "mutable field update"),
+        ("type Tiny = record { n: u8 }\ntype Wrap = record { t: Tiny = Tiny { n: 300 } }\ncell main() ->:\n    yield 7\n", "unused nested default"),
+    ] {
+        let ast=aura_parse::parse_source(source).expect("numeric source must parse");
+        let failure=Checker::new().check_program(&ast)
+            .expect_err("out-of-range Record integer must never be accepted");
+        assert!(failure.message.contains("out of range"),
+            "{label}: expected width diagnostic, got {failure}");
+        assert!(failure.span.len()>0,
+            "{label}: numeric range error must retain source span");
+    }
+}
+
+#[test]
+fn record_integer_width_boundary_literals_remain_valid_in_checker() {
+    for source in [
+        "type Tiny = record { n: u8 = 255 }\ncell main() ->:\n    val t: Tiny = Tiny {}\n    yield 7\n",
+        "type Tiny = record { n: i8 = 127 }\ncell main() ->:\n    val t: Tiny = Tiny {}\n    yield 7\n",
+        "type Tiny = record { n: u8 }\ncell main() ->:\n    val t: Tiny = Tiny { n: 255 }\n    yield 7\n",
+        "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = 255\n    yield t.n\n",
+    ] {
+        let ast=aura_parse::parse_source(source).expect("boundary source parses");
+        Checker::new().check_program(&ast)
+            .expect("representable Record integer literal must typecheck");
+    }
+}
