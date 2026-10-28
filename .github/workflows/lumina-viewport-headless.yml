@@ -1,0 +1,26 @@
+name: Lumina headless viewport regression
+
+on:
+  push:
+    branches:
+      - 'qual/ui-viewport-*'
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+      - 'docs/qualification/**'
+  pull_request:
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  viewport-headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust test (no GUI, no Z3, no persistent cache)
+        run: cargo test --locked -p aura-plugin-lumina --no-default-features
