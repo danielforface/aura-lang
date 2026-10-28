@@ -114,6 +114,7 @@ struct LuminaWindow {
 
     focused_input: Option<FocusedTextInput>,
     input_sessions: HashMap<u64, FocusedTextInput>,
+    last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
@@ -356,7 +357,34 @@ pub struct DiagnosticPixel {
 }
 
 #[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub struct DiagnosticTextVisual {
+    pub scroll_x: f32,
+    pub measured_caret: f32,
+    pub caret_screen_x: f32,
+    pub selection_screen: Option<(f32,f32)>,
+    pub content_left: f32,
+    pub content_right: f32,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
 impl AuraLuminaPlugin {
+    /// Read exact latest frame's default-font logical text geometry.
+    pub fn diagnostic_text_visual(&self,on_change:u64,content_left:f32,content_width:f32)
+        ->Option<DiagnosticTextVisual> {
+        let w=self.window.borrow();
+        let v=*w.as_ref()?.last_text_views.get(&on_change)?;
+        if !content_left.is_finite() || !content_width.is_finite()
+            || content_width<=0.0 { return None; }
+        let c=layout::Bounds::new(content_left,0.0,content_width,1.0);
+        Some(DiagnosticTextVisual {
+            scroll_x:v.scroll,measured_caret:v.caret,
+            caret_screen_x:v.caret_screen(c),
+            selection_screen:v.selection_screen(c),
+            content_left:c.x,content_right:c.x+c.width,
+        })
+    }
+
     /// Real native window resize. Runs only in opt-in Xvfb/device tests.
     pub fn diagnostic_resize_window(&self, width: i32, height: i32) -> bool {
         if width <= 0 || height <= 0 { return false; }
@@ -473,6 +501,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     click_anim: None,
                     focused_input: None,
                     input_sessions: HashMap::new(),
+                    last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                 });
             }
@@ -625,6 +654,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let text_views=measure_input_visuals(
                 &win.rl,tree,&planned_layout,&focus_order,
                 &mut win.focused_input,&mut win.input_sessions);
+            win.last_text_views=text_views.clone();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
