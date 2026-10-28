@@ -95,3 +95,28 @@ cell main() ->:
         "public CLI C build rejects nominal Record function ABI: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_named_record_function_abi_check_and_build() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell make_point(x: u32, y: u32) ->:
+    yield Point { x: x, y: y }
+cell sum_point(p: Point, increment: u32) ->:
+    yield p.x + increment
+cell main() ->:
+    val p: Point = make_point(y: 13, x: 7)
+    yield sum_point(increment: 5, p: p)
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura check rejects named Record ABI: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "a successful no-Z3 check must not claim formal verification");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public Aura named Record C build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
