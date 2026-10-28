@@ -284,3 +284,28 @@ fn public_aura_check_rejects_duplicate_nominal_record_type_definitions() {
     assert!(output.contains("duplicate") && output.contains("Point"),
         "public diagnostic must explain nominal type collision: {output}");
 }
+
+#[test]
+fn public_aura_check_rejects_type_namespace_collisions_even_if_unused() {
+    for (label, declarations) in [
+        ("record_then_enum", "type Collision = record { x: u32 = 7 }\ntype Collision = enum { First }\n"),
+        ("enum_then_record", "type Collision = enum { First }\ntype Collision = record { x: u32 = 7 }\n"),
+        ("record_then_alias", "type Collision = record { x: u32 = 7 }\ntype Collision = u32\n"),
+        ("alias_then_record", "type Collision = u32\ntype Collision = record { x: u32 = 7 }\n"),
+        ("enum_then_alias", "type Collision = enum { First }\ntype Collision = u32\n"),
+        ("alias_then_enum", "type Collision = u32\ntype Collision = enum { First }\n"),
+        ("enum_then_enum", "type Collision = enum { First }\ntype Collision = enum { Second }\n"),
+        ("alias_then_alias", "type Collision = u32\ntype Collision = bool\n"),
+    ] {
+        let source = format!("{declarations}cell main() ->:\n    yield 7\n");
+        let fixture = SourceFile::new(&source);
+        let result = fixture.run(&["check"]);
+        let diagnostic = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: public Aura check accepted ambiguous type namespace: {diagnostic}");
+        assert!(diagnostic.contains("duplicate") && diagnostic.contains("Collision"),
+            "{label}: expected duplicate type diagnosis, got {diagnostic}");
+    }
+}

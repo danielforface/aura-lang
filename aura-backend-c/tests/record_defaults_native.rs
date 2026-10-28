@@ -189,3 +189,31 @@ fn duplicate_nominal_record_type_declarations_are_rejected_even_when_unused() {
         assert!(error.span.len()>0, "duplicate Record diagnostic must retain source span");
     }
 }
+
+#[test]
+fn type_namespace_collisions_are_rejected_at_declaration_even_when_unused() {
+    for (label, declarations) in [
+        ("record_then_enum", "type Collision = record { x: u32 = 7 }\ntype Collision = enum { First }\n"),
+        ("enum_then_record", "type Collision = enum { First }\ntype Collision = record { x: u32 = 7 }\n"),
+        ("record_then_alias", "type Collision = record { x: u32 = 7 }\ntype Collision = u32\n"),
+        ("alias_then_record", "type Collision = u32\ntype Collision = record { x: u32 = 7 }\n"),
+        ("enum_then_alias", "type Collision = enum { First }\ntype Collision = u32\n"),
+        ("alias_then_enum", "type Collision = u32\ntype Collision = enum { First }\n"),
+        ("enum_then_enum", "type Collision = enum { First }\ntype Collision = enum { Second }\n"),
+        ("alias_then_alias", "type Collision = u32\ntype Collision = bool\n"),
+    ] {
+        let source = format!("{declarations}cell main() ->:\n    yield 7\n");
+        let ast = aura_parse::parse_source(&source)
+            .unwrap_or_else(|err| panic!("{label}: fixture must parse: {err}"));
+        let failure = Checker::new().check_program(&ast)
+            .expect_err("type names must be unique across Record, Enum and aliases");
+        assert!(failure.message.contains("duplicate") && failure.message.contains("Collision"),
+            "{label}: expected explicit duplicate type diagnostic: {failure}");
+        assert!(failure.span.len() > 0,
+            "{label}: duplicate type diagnostic must point to the second declaration");
+    }
+    let distinct = "type A = record { x: u32 = 7 }\ntype B = enum { First }\ntype C = u32\ncell main() ->:\n    yield 7\n";
+    let ast = aura_parse::parse_source(distinct).expect("distinct types parse");
+    Checker::new().check_program(&ast)
+        .expect("different type names in one type namespace remain legal");
+}

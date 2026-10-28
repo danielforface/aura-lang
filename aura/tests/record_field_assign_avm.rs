@@ -582,3 +582,25 @@ fn avm_rejects_duplicate_nominal_record_declarations_before_any_execution() {
             "expected duplicate nominal Record diagnostic, got {msg}");
     }
 }
+
+#[test]
+fn raw_avm_rejects_cross_kind_type_namespace_collisions_before_entry() {
+    for (label, declarations) in [
+        ("record_then_enum", "type Collision = record { x: u32 = 7 }\ntype Collision = enum { First }\n"),
+        ("enum_then_record", "type Collision = enum { First }\ntype Collision = record { x: u32 = 7 }\n"),
+        ("record_then_alias", "type Collision = record { x: u32 = 7 }\ntype Collision = u32\n"),
+        ("alias_then_record", "type Collision = u32\ntype Collision = record { x: u32 = 7 }\n"),
+        ("enum_then_alias", "type Collision = enum { First }\ntype Collision = u32\n"),
+        ("alias_then_enum", "type Collision = u32\ntype Collision = enum { First }\n"),
+        ("enum_then_enum", "type Collision = enum { First }\ntype Collision = enum { Second }\n"),
+        ("alias_then_alias", "type Collision = u32\ntype Collision = bool\n"),
+    ] {
+        let source = format!("{declarations}cell main() ->:\n    yield 7\n");
+        let mut vm = Avm::new(AvmConfig { enable_z3_gate: false, ..Default::default() });
+        let failure = vm.exec_entry_cell(&source, "main")
+            .expect_err("raw no-Z3 AVM must not execute source with duplicate type names");
+        let message = failure.to_string();
+        assert!(message.contains("duplicate") && message.contains("Collision"),
+            "{label}: expected exact type collision diagnosis, got {message}");
+    }
+}
