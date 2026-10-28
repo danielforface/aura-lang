@@ -12,6 +12,9 @@ mod text_input;
 #[cfg(any(feature = "raylib", test))]
 mod text_revision;
 
+#[cfg(any(feature = "raylib", test))]
+mod text_viewport;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
@@ -111,6 +114,7 @@ struct LuminaWindow {
 
     focused_input: Option<FocusedTextInput>,
     input_sessions: HashMap<u64, FocusedTextInput>,
+    last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
@@ -126,6 +130,7 @@ struct FocusedTextInput {
     on_submit: Option<u64>,
     revision: text_revision::RevisionTracker,
     session: text_input::EditSession,
+    scroll_x: f32,
 }
 
 #[cfg(feature = "raylib")]
@@ -141,6 +146,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             on_change, on_submit,
             revision: text_revision::RevisionTracker::new(&source_value, revision),
             session: text_input::EditSession::new(source_value.clone()),
+            scroll_x: 0.0,
         });
         if entry.revision.observe(&source_value,revision)
             == text_revision::Decision::Rebase
@@ -231,6 +237,65 @@ fn reconcile_input_sessions(
     }
 }
 
+/// Measure text with the *same* Raylib default-font width used by
+/// draw_text, before BeginDrawing. Only a few UAX29 grapheme prefixes per
+/// visible input, not an O(n²) full prefix map per frame.
+#[cfg(feature = "raylib")]
+fn measure_input_visuals(
+    rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
+    focus_order: &[layout::HitTarget],
+    focused: &mut Option<FocusedTextInput>,
+    sessions: &mut HashMap<u64,FocusedTextInput>,
+) -> HashMap<u64,text_viewport::Visual> {
+    let allowed: std::collections::HashSet<u64> = focus_order.iter().filter_map(|x|match x {
+        layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+        _=>None,
+    }).collect();
+    fn collect(
+        rl:&RaylibHandle,node:&UiNode,plan:&layout::LayoutNode,
+        allowed:&std::collections::HashSet<u64>,
+        focused:&mut Option<FocusedTextInput>,
+        sessions:&mut HashMap<u64,FocusedTextInput>,
+        result:&mut HashMap<u64,text_viewport::Visual>,
+    ) {
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="TextInput" {
+            if let Some(cb)=parse_callback_id(prop_string(node,"on_change")).filter(|id|allowed.contains(id)) {
+                let active=focused.as_ref().is_some_and(|fi|fi.on_change==cb);
+                let entry=if active {focused.as_mut()}else{sessions.get_mut(&cb)};
+                let value=entry.as_ref().map(|fi|fi.session.buffer.as_str())
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                    .unwrap_or("");
+                let size=prop_i32(node,"size").unwrap_or(18).max(10);
+                let width=rl.measure_text(value,size).max(0) as f32;
+                let caret=if active {
+                    entry.as_ref().map(|fi|rl.measure_text(
+                        text_viewport::grapheme_prefix(value,fi.session.caret),size).max(0) as f32)
+                }else{None}.unwrap_or(0.0);
+                let selection=if active {
+                    entry.as_ref().and_then(|fi|fi.session.selection())
+                        .map(|(a,b)|(
+                            rl.measure_text(text_viewport::grapheme_prefix(value,a),size).max(0) as f32,
+                            rl.measure_text(text_viewport::grapheme_prefix(value,b),size).max(0) as f32))
+                }else{None};
+                let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
+                let content=text_viewport::content_bounds(plan.bounds);
+                let v=text_viewport::plan(content.width,width,caret,selection,previous,active);
+                if let Some(entry)=entry {entry.scroll_x=v.scroll;}
+                result.insert(cb,v);
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children){
+            if let Some(child_plan)=slot {
+                collect(rl,child,child_plan,allowed,focused,sessions,result);
+            }
+        }
+    }
+    let mut result=HashMap::new();
+    collect(rl,tree,plan,&allowed,focused,sessions,&mut result);
+    result
+}
+
 #[cfg(feature = "raylib")]
 struct RoundedRectShader {
     shader: Shader,
@@ -292,7 +357,34 @@ pub struct DiagnosticPixel {
 }
 
 #[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub struct DiagnosticTextVisual {
+    pub scroll_x: f32,
+    pub measured_caret: f32,
+    pub caret_screen_x: f32,
+    pub selection_screen: Option<(f32,f32)>,
+    pub content_left: f32,
+    pub content_right: f32,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
 impl AuraLuminaPlugin {
+    /// Read exact latest frame's default-font logical text geometry.
+    pub fn diagnostic_text_visual(&self,on_change:u64,content_left:f32,content_width:f32)
+        ->Option<DiagnosticTextVisual> {
+        let w=self.window.borrow();
+        let v=*w.as_ref()?.last_text_views.get(&on_change)?;
+        if !content_left.is_finite() || !content_width.is_finite()
+            || content_width<=0.0 { return None; }
+        let c=layout::Bounds::new(content_left,0.0,content_width,1.0);
+        Some(DiagnosticTextVisual {
+            scroll_x:v.scroll,measured_caret:v.caret,
+            caret_screen_x:v.caret_screen(c),
+            selection_screen:v.selection_screen(c),
+            content_left:c.x,content_right:c.x+c.width,
+        })
+    }
+
     /// Real native window resize. Runs only in opt-in Xvfb/device tests.
     pub fn diagnostic_resize_window(&self, width: i32, height: i32) -> bool {
         if width <= 0 || height <= 0 { return false; }
@@ -409,6 +501,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     click_anim: None,
                     focused_input: None,
                     input_sessions: HashMap::new(),
+                    last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                 });
             }
@@ -558,6 +651,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            let text_views=measure_input_visuals(
+                &win.rl,tree,&planned_layout,&focus_order,
+                &mut win.focused_input,&mut win.input_sessions);
+            win.last_text_views=text_views.clone();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -568,6 +665,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
+                    &text_views,
                 );
             }
             fb.clicked_callback_id = click_cb;
@@ -749,10 +847,11 @@ fn render_children(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
         }
     }
 }
@@ -768,15 +867,26 @@ fn render_node(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
 ) {
-    // Each node gets an independent scissor; it is dropped before children
-    // draw. Avoid nested raylib scissors (EndScissorMode is not a push/pop).
+    // Independent scissor scopes. TextInput draws its frame under inherited
+    // clipping, then its text under its inner bounds, never nesting scissors.
     let Some((x, y, width, height)) = layout.clip.scissor() else { return };
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
-        paint_node(&mut clipped, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
+        paint_node(&mut clipped, node, layout, now, sdf, click_anim,
+            focused_input, textures, input_sessions, text_views, false);
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
+    if node.kind=="TextInput" {
+        // TextInput content clip: glyphs/selection/caret stay inside padding.
+        let inside=layout.clip.intersect(text_viewport::content_bounds(layout.bounds));
+        if let Some((x,y,w,h))=inside.scissor() {
+            let mut clipped=d.begin_scissor_mode(x,y,w,h);
+            paint_node(&mut clipped,node,layout,now,sdf,click_anim,
+                focused_input,textures,input_sessions,text_views,true);
+        }
+    }
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
 }
 
 #[cfg(feature = "raylib")]
@@ -790,6 +900,8 @@ fn paint_node<D: RaylibDraw>(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
+    text_only: bool,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
     // No geometry measurement or placement occurs during draw recursion.
@@ -916,7 +1028,8 @@ fn paint_node<D: RaylibDraw>(
                 _ => false,
             };
 
-            // Background.
+            // Frame/background separate from text clipping.
+            if !text_only {
             if radius > 0.0 {
                 let min_dim = rect.width.min(rect.height).max(1.0);
                 let rect_u = [rect.x, rect.y, rect.width, rect.height];
@@ -938,6 +1051,8 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
             }
 
+            return;
+            }
             // Display retained drafts for nonfocused inputs until the host
             // changes their authoritative value. Avoid the old visual reset
             // to stale controlled props on Tab/blur.
@@ -954,43 +1069,31 @@ fn paint_node<D: RaylibDraw>(
             let display = if value.is_empty() { placeholder } else { value };
             let display_color = if value.is_empty() { placeholder_c } else { fg };
 
-            let ts = prop_i32(node, "size").unwrap_or(18);
-            let pad_x = 12.0_f32;
+            let ts = prop_i32(node, "size").unwrap_or(18).max(10);
             let pad_y = (rect.height - ts as f32) / 2.0;
-            // Approximate (not font-shaped) selection highlight for grapheme
-            // ranges. The text is drawn on top; X11 pixel sampling covers
-            // solid overlays separately from layout semantics.
+            let content=text_viewport::content_bounds(b);
+            let visual=on_change.and_then(|cb|text_views.get(&cb));
+            let text_x=visual.map(|v|v.origin(content)).unwrap_or(content.x);
+            // Native MeasureText widths shared by selection and caret;
+            // scissor prevents long text from escaping the input widget.
             if is_focused {
-                if let Some(fi)=focused_input.as_ref() {
-                    if let Some((a,b))=fi.session.selection() {
-                        let cell=(ts as f32*0.6).max(1.0);
-                        let x0=rect.x+pad_x+(a as f32)*cell;
-                        let x1=(rect.x+pad_x+(b as f32)*cell)
-                            .min(rect.x+rect.width-2.0);
-                        if x1>x0 {
-                            d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
-                                x1-x0,(rect.height-8.0).max(0.0)),
-                                Color::new(59,130,246,100));
-                        }
-                    }
+                if let Some((x0,x1))=visual.and_then(|v|v.selection_screen(content)) {
+                    d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
+                        x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
                 }
             }
+            d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
 
-            d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
-
-            // This MVP caret tracks the edited UAX29 grapheme index and
-            // uses the same rough font-width estimate as button text. Exact
-            // glyph metrics, graphemes and bidi shaping remain unqualified.
+            // Exact default-font pixel measurements, not an average cell;
+            // separate BiDi/IME/font fallback certification is still needed.
             if is_focused {
-                if let Some(fi) = focused_input.as_ref() {
-                    let before = fi.session.caret.min(text_input::grapheme_count(&fi.session.buffer));
-                    let est_w = (before as f32) * (ts as f32 * 0.6);
-                    let cx = (rect.x + pad_x + est_w + 1.0)
-                        .min(rect.x + rect.width - 2.0);
-                    let cy0 = rect.y + 10.0;
-                    let cy1 = rect.y + rect.height - 10.0;
-                    if cy1 > cy0 {
-                        d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+                if let Some(v)=visual {
+                    let cx=v.caret_screen(content);
+                    let cy0=rect.y+10.0;
+                    let cy1=rect.y+rect.height-10.0;
+                    if cy1>cy0 {
+                        d.draw_line(cx.floor() as i32,cy0 as i32,
+                            cx.floor() as i32,cy1 as i32,Color::RAYWHITE);
                     }
                 }
             }
