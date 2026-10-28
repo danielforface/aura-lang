@@ -183,6 +183,8 @@ pub struct Avm {
     // Replaced on each source load; never treat earlier sources as callable.
     user_cells: HashMap<String, aura_ast::CellDef>,
     source_record_names: HashSet<String>,
+    // Declaration-ordered qualified defaults, scoped to the current source.
+    source_record_defaults: HashMap<String, Vec<(String, Expr)>>,
     user_cell_depth: usize,
 
     // Frame-local callback registry used by UI runtimes.
@@ -720,6 +722,7 @@ impl Avm {
             env: HashMap::new(),
             user_cells: HashMap::new(),
             source_record_names: HashSet::new(),
+            source_record_defaults: HashMap::new(),
             user_cell_depth: 0,
             next_callback_id: 1,
             callbacks: HashMap::new(),
@@ -1929,6 +1932,7 @@ impl Avm {
     fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
         self.user_cells.clear();
         self.source_record_names.clear();
+        self.source_record_defaults.clear();
         self.user_cell_depth = 0;
         for stmt in &program.stmts {
             match stmt {
@@ -1941,6 +1945,15 @@ impl Avm {
                 }
                 Stmt::RecordDef(record) => {
                     self.source_record_names.insert(record.name.node.clone());
+                    if record.params.is_empty() {
+                        self.source_record_defaults.insert(
+                            record.name.node.clone(),
+                            record.fields.iter().filter_map(|field|
+                                field.default.as_ref().map(|value|
+                                    (field.name.node.clone(), value.clone()))
+                            ).collect(),
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2046,6 +2059,17 @@ impl Avm {
                 for (k, v) in fields {
                     let vv = self.eval_expr(v)?;
                     map.insert(k.node.clone(), vv);
+                }
+                // Keep the same source-order explicit evaluation and
+                // declaration-order omitted defaults as Core lowering.
+                // Do not evaluate an unused default or overwrite explicit.
+                let defaults = self.source_record_defaults.get(&name.node).cloned()
+                    .unwrap_or_default();
+                for (field_name, default_expr) in defaults {
+                    if !map.contains_key(&field_name) {
+                        let value = self.eval_expr(&default_expr)?;
+                        map.insert(field_name, value);
+                    }
                 }
                 Ok(AvmValue::Record {
                     name: name.node.clone(),
