@@ -6,6 +6,9 @@ mod viewport;
 #[cfg(any(feature = "raylib", test))]
 mod layout;
 
+#[cfg(any(feature = "raylib", test))]
+mod text_input;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
@@ -331,6 +334,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
             let left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
             let right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
+            let end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
             let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
                 || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
             let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
@@ -384,6 +389,50 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     None => { win.focused_input = None; None }
                 }
             } else { None };
+            // Apply keyboard transitions BEFORE painting: the caret and
+            // rendered text correspond to the same frame that publishes
+            // UiTextInputEvent, including after a focus click.
+            if let Some(fi) = &mut win.focused_input {
+                if escape {
+                    win.focused_input = None;
+                } else {
+                    use text_input::EditCommand;
+                    // Navigation changes only the caret and never publishes a
+                    // false on_change callback.
+                    if home { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Home); }
+                    if end { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::End); }
+                    if left { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Left); }
+                    if right { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Right); }
+
+                    let mut changed = false;
+                    if backspace {
+                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Backspace);
+                    }
+                    if delete {
+                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Delete);
+                    }
+                    if !typed.is_empty() {
+                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Insert(typed));
+                    }
+                    if changed {
+                        fb.text_input_events.push(UiTextInputEvent {
+                            callback_id: fi.on_change,
+                            text: fi.buffer.clone(),
+                            submitted: false,
+                        });
+                    }
+                    if enter {
+                        if let Some(cb) = fi.on_submit {
+                            fb.text_input_events.push(UiTextInputEvent {
+                                callback_id: cb,
+                                text: fi.buffer.clone(),
+                                submitted: true,
+                            });
+                        }
+                    }
+                }
+            }
+
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
@@ -396,75 +445,6 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 );
             }
             fb.clicked_callback_id = click_cb;
-
-            // Apply keyboard edits for the currently focused input and emit events.
-            if let Some(fi) = &mut win.focused_input {
-                let mut changed = false;
-
-                if escape {
-                    win.focused_input = None;
-                } else {
-                    if left {
-                        fi.caret = fi.caret.saturating_sub(1);
-                    }
-                    if right {
-                        fi.caret = (fi.caret + 1).min(fi.buffer.chars().count());
-                    }
-
-                    if backspace {
-                        if fi.caret > 0 {
-                            let mut chars: Vec<char> = fi.buffer.chars().collect();
-                            let idx = fi.caret - 1;
-                            if idx < chars.len() {
-                                chars.remove(idx);
-                                fi.buffer = chars.into_iter().collect();
-                                fi.caret = fi.caret.saturating_sub(1);
-                                changed = true;
-                            }
-                        }
-                    }
-
-                    if delete {
-                        let mut chars: Vec<char> = fi.buffer.chars().collect();
-                        if fi.caret < chars.len() {
-                            chars.remove(fi.caret);
-                            fi.buffer = chars.into_iter().collect();
-                            changed = true;
-                        }
-                    }
-
-                    if !typed.is_empty() {
-                        let mut chars: Vec<char> = fi.buffer.chars().collect();
-                        let insert: Vec<char> = typed.chars().collect();
-                        let mut idx = fi.caret.min(chars.len());
-                        for ch in insert {
-                            chars.insert(idx, ch);
-                            idx += 1;
-                        }
-                        fi.buffer = chars.into_iter().collect();
-                        fi.caret = idx;
-                        changed = true;
-                    }
-
-                    if changed {
-                        fb.text_input_events.push(UiTextInputEvent {
-                            callback_id: fi.on_change,
-                            text: fi.buffer.clone(),
-                            submitted: false,
-                        });
-                    }
-
-                    if enter {
-                        if let Some(cb) = fi.on_submit {
-                            fb.text_input_events.push(UiTextInputEvent {
-                                callback_id: cb,
-                                text: fi.buffer.clone(),
-                                submitted: true,
-                            });
-                        }
-                    }
-                }
-            }
 
             if let Some(id) = click_cb {
                 win.click_anim = Some((id, now));
@@ -850,13 +830,21 @@ fn paint_node<D: RaylibDraw>(
             let pad_y = (rect.height - ts as f32) / 2.0;
             d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
 
-            // Caret (end-of-text only, MVP).
+            // This MVP caret tracks the edited Unicode scalar index and
+            // uses the same rough font-width estimate as button text. Exact
+            // glyph metrics, graphemes and bidi shaping remain unqualified.
             if is_focused {
-                let est_w = (value.chars().count() as f32) * (ts as f32 * 0.6);
-                let cx = rect.x + pad_x + est_w + 1.0;
-                let cy0 = rect.y + 10.0;
-                let cy1 = rect.y + rect.height - 10.0;
-                d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+                if let Some(fi) = focused_input.as_ref() {
+                    let before = fi.buffer.chars().take(fi.caret).count();
+                    let est_w = (before as f32) * (ts as f32 * 0.6);
+                    let cx = (rect.x + pad_x + est_w + 1.0)
+                        .min(rect.x + rect.width - 2.0);
+                    let cy0 = rect.y + 10.0;
+                    let cy1 = rect.y + rect.height - 10.0;
+                    if cy1 > cy0 {
+                        d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+                    }
+                }
             }
         }
         "Rect" => {
