@@ -588,6 +588,21 @@ fn emit_function(
                         qualified_record_fields(record_layouts, record_name)?;
                         Some(record_name.clone())
                     }
+                    InstKind::GetField { base, field_name } => {
+                        // A child Record projected from a parent is a new
+                        // nominal SSA producer too. The Phi type prepass runs
+                        // BEFORE emitting individual GetField instructions,
+                        // so it cannot rely on the runtime 'records' table.
+                        if let Some(parent) = known_record_types.get(base) {
+                            let fields = qualified_record_fields(record_layouts, parent)?;
+                            match fields.iter().find(|(name, _)| name == field_name) {
+                                Some((_, RecordFieldCType::Nominal(child))) => Some(child.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     InstKind::BindStrand { expr: RValue::Local(source), .. } =>
                         known_record_types.get(source).cloned(),
                     InstKind::SetField { base, .. } =>
