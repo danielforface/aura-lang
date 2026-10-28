@@ -556,6 +556,8 @@ pub struct DiagnosticTextVisual {
     pub selection_screens: Vec<(f32,f32)>,
     pub caret_visible: bool,
     pub caret_affinity: Option<usize>,
+    pub caret_grapheme: Option<usize>,
+    pub logical_selection: Option<(usize,usize)>,
     pub content_left: f32,
     pub content_right: f32,
 }
@@ -637,6 +639,10 @@ impl AuraLuminaPlugin {
             caret_affinity:w.as_ref()?.focused_input.as_ref()
                 .filter(|fi|fi.on_change==on_change)
                 .and_then(|fi|fi.visual_affinity),
+            caret_grapheme:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).map(|fi|fi.session.caret),
+            logical_selection:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).and_then(|fi|fi.session.selection()),
             content_left:c.x,content_right:c.x+c.width,
         })
     }
