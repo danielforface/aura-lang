@@ -273,3 +273,72 @@ fn in_range_inferred_local_record_values_remain_valid() {
             .unwrap_or_else(|e| panic!("{label}: representable local should remain valid: {e}"));
     }
 }
+
+#[test]
+fn inferred_local_integer_bounds_execute_in_oracle_and_strict_native_c_o0_o2() {
+    // These are values retained from inferred U32 singleton ranges into
+    // narrower by-value Record fields. Both validation and *execution* matter.
+    let source = r#"
+type Tiny = record { n: u8 }
+type Signed = record { n: i8 }
+cell make_tiny() ->:
+    val n = 255
+    yield Tiny { n: n }
+cell update_tiny() ->:
+    val n = 255
+    val mut t: Tiny = Tiny { n: 7 }
+    t.n = n
+    yield t
+cell make_signed() ->:
+    val n = 127
+    yield Signed { n: n }
+"#;
+    let ast = aura_parse::parse_source(source).expect("inferred local source parses");
+    Checker::new().check_program(&ast).expect("valid inferred local range must check");
+    let ir = lower_program(&ast).expect("source lowers into SSA");
+    validate_module(&ir).expect("inferred local Record SSA validates");
+    for (name, ty, value) in [
+        ("make_tiny", "Tiny", 255_u32),
+        ("update_tiny", "Tiny", 255_u32),
+        ("make_signed", "Signed", 127_u32),
+    ] {
+        let result=run_oracle_entry(&ir, name, &[], OracleConfig::default())
+            .expect("IR oracle executes local-bound Record");
+        assert!(result.ok && result.stderr.is_empty(), "{name}: {result:?}");
+        assert_eq!(result.return_value, Some(OracleValue::Record {
+            name: ty.into(),
+            fields: HashMap::from([("n".into(), OracleValue::U32(value))]),
+        }), "{name}: Oracle must preserve scalar field value");
+    }
+    let artifacts=emit_module(&ir,None).expect("qualified inferred locals must emit C");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"), artifacts.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"), &artifacts.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"), concat!(
+        "#include <stdint.h>\n",
+        "typedef struct { uint8_t aura_f_6e; } aura_record_54696e79;\n",
+        "typedef struct { int8_t aura_f_6e; } aura_record_5369676e6564;\n",
+        "aura_record_54696e79 make_tiny(void);\n",
+        "aura_record_54696e79 update_tiny(void);\n",
+        "aura_record_5369676e6564 make_signed(void);\n",
+        "int main(void) {\n",
+        "  aura_record_54696e79 a=make_tiny(), b=update_tiny();\n",
+        "  aura_record_5369676e6564 c=make_signed();\n",
+        "  return a.aura_f_6e==255 && b.aura_f_6e==255 && c.aura_f_6e==127 ? 0 : 1;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("local_width_{}", &opt[1..]));
+        let out=Command::new("clang")
+            .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0)
+            .arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("run clang");
+        assert!(out.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&out.stderr), artifacts.module_c);
+        let run=Command::new(&exe).output().expect("execute native");
+        assert!(run.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&run.stderr), artifacts.module_c);
+    }
+}
