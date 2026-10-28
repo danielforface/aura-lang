@@ -50,10 +50,14 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
     let tmp = Scratch::new();
     fs::write(tmp.0.join("aura_runtime.h"), output.runtime_h).unwrap();
     fs::write(tmp.0.join("module.c"), &output.module_c).unwrap();
-    // Source all generated definitions in one translation unit to test both
-    // the struct-return ABI and the parameter ABI without redefining a type.
+    // Independent C translation unit: exercise the real platform linker ABI
+    // for by-value struct parameters and returns, not merely one-TU inlining.
     fs::write(tmp.0.join("driver.c"), concat!(
-        "#include <stdint.h>\n#include \"module.c\"\n",
+        "#include <stdint.h>\n",
+        "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+        "aura_record_506f696e74 make_point(uint32_t, uint32_t);\n",
+        "uint32_t project_x(aura_record_506f696e74);\n",
+        "uint32_t round_trip(uint32_t, uint32_t);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
         "  return (p.aura_f_78 == 31u && p.aura_f_79 == 37u",
@@ -66,7 +70,7 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         let exe = tmp.0.join(format!("record_abi_{}", &opt[1..]));
         let build = Command::new("clang")
             .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
-            .arg(&tmp.0).arg(tmp.0.join("driver.c"))
+            .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
             .arg("-o").arg(&exe).output().expect("clang");
         assert!(build.status.success(), "{opt}: {}\n{}", String::from_utf8_lossy(&build.stderr), output.module_c);
         let run = Command::new(exe).output().expect("run native Record ABI");
