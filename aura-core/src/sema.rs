@@ -844,6 +844,60 @@ impl Checker {
             }
         }
 
+        // Declaration qualification is independent of whether a Record is
+        // constructed or whether a particular default is overridden. The old
+        // use-site-only check silently accepted malformed unused schemas and
+        // allowed duplicate field names to be overwritten in layout maps.
+        for stmt in &program.stmts {
+            let Stmt::RecordDef(def) = stmt else { continue };
+            let mut seen = HashSet::new();
+            for field in &def.fields {
+                if !seen.insert(field.name.node.as_str()) {
+                    return Err(SemanticError {
+                        message: format!(
+                            "duplicate field '{}' in Record declaration '{}'",
+                            field.name.node, def.name.node
+                        ),
+                        span: field.name.span,
+                    });
+                }
+                // Generic defaults require instantiated substitutions and
+                // are not part of this concrete scalar Record ABI slice.
+                if !def.params.is_empty() { continue; }
+                let Some(value) = &field.default else { continue };
+                let qualified_literal = match &value.kind {
+                    ExprKind::IntLit(_) => true,
+                    ExprKind::Ident(id) =>
+                        id.node == "true" || id.node == "false",
+                    _ => false,
+                };
+                if !qualified_literal {
+                    return Err(SemanticError {
+                        message: format!(
+                            "unqualified nonliteral Record default '{}.{}'",
+                            def.name.node, field.name.node
+                        ),
+                        span: value.span,
+                    });
+                }
+                let required = self.resolve_type_ref(&field.ty)?;
+                if !matches!(required,
+                    Type::Bool | Type::U8 | Type::U16 | Type::U32 |
+                    Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                    Type::I64 | Type::F32 | Type::F64 | Type::Char) {
+                    return Err(SemanticError {
+                        message: format!(
+                            "unqualified non-scalar Record default '{}.{}'",
+                            def.name.node, field.name.node
+                        ),
+                        span: value.span,
+                    });
+                }
+                let actual = self.infer_expr(value)?;
+                self.check_assignable(&required, &actual, value)?;
+            }
+        }
+
         // Second pass: check bodies / top-level flow blocks.
         for stmt in &program.stmts {
             match stmt {
