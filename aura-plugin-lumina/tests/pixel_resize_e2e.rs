@@ -63,7 +63,11 @@ fn actual_xvfb_resize_clipping_and_gpu_pixels_match_logical_layout() {
         // and logical pixel conversion, away from antialiased edges.
         let rounded=sample(&plugin,180.0,40.0);
         assert_eq!(rounded,pixel(0,200,120));
-        assert_eq!(sample(&plugin,5.0,5.0),pixel(16,32,48));
+        // Legacy Box has an opaque default white fill; (5,5) sits inside it.
+        // Sample an unobstructed App pixel separately rather than assuming a
+        // different Box theming contract in this framebuffer-specific gate.
+        assert_eq!(sample(&plugin,5.0,5.0),pixel(255,255,255));
+        assert_eq!(sample(&plugin,10.0,100.0),pixel(16,32,48));
         assert_eq!(sample(&plugin,(width-5) as f32,(height-5) as f32),pixel(16,32,48));
         assert_eq!(plugin.diagnostic_capture_pixel(width as f32,0.0),None);
     }
