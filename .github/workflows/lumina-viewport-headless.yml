@@ -3,7 +3,7 @@ name: Lumina headless viewport regression
 on:
   push:
     branches:
-      - 'qual/ui-viewport-*'
+      - 'qual/ui-*'
     paths:
       - 'aura-plugin-lumina/**'
       - '.github/workflows/lumina-viewport-headless.yml'
