@@ -345,10 +345,10 @@ fn selected_unicode_font<'a>(
 #[cfg(feature="raylib")]
 fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
     focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>)
-    ->Vec<(String,String,i32,String,String)>{
+    ->Vec<(String,String,Option<String>,i32,String,String)>{
     fn walk(node:&UiNode,plan:&layout::LayoutNode,focus:&Option<FocusedTextInput>,
         sessions:&HashMap<u64,FocusedTextInput>,
-        out:&mut Vec<(String,String,i32,String,String)>){
+        out:&mut Vec<(String,String,Option<String>,i32,String,String)>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
@@ -365,7 +365,8 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
             if let (Some(key),Some(path))=(
                 shaped_gpu::entry_key(node,display,size),prop_string(node,"font_path")){
                 if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
-                    out.push((key,path.to_owned(),size,
+                    out.push((key,path.to_owned(),
+                        prop_string(node,"fallback_font_path").map(str::to_owned),size,
                         prop_string(node,"direction").unwrap_or("auto").to_owned(),display.to_owned()));
                 }
             }
