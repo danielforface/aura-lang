@@ -35,11 +35,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
       - name: Compile Raylib feature (compile-only; no GUI claims)
-        run: |
-          cargo check -p aura-plugin-lumina --features raylib || true
-          echo 'LUMINA_ATLAS_LOCK_BEGIN'
-          git diff -- Cargo.lock
-          echo 'LUMINA_ATLAS_LOCK_END'
+        run: cargo check --locked -p aura-plugin-lumina --features raylib
 
   raylib-xvfb-window-smoke:
     runs-on: ubuntu-latest
