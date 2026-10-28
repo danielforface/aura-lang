@@ -3,7 +3,7 @@
  //! This test was introduced while the C backend explicitly rejected Record ABI.
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
-use aura_ir::{run_oracle_entry, validate_module, OracleConfig, OracleValue};
+use aura_ir::{run_oracle_entry, validate_module, InstKind, OracleConfig, OracleValue, Type};
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 
 const SOURCE: &str = r#"
@@ -72,4 +72,52 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         let run = Command::new(exe).output().expect("run native Record ABI");
         assert!(run.status.success(), "{opt}: {}\n{}", String::from_utf8_lossy(&run.stderr), output.module_c);
     }
+}
+
+
+fn twin_layout(ir: &mut aura_ir::ModuleIR) {
+    ir.record_layouts.insert("Twin".into(), vec![
+        ("x".into(), Type::U32), ("y".into(), Type::U32),
+    ]);
+}
+
+#[test]
+fn record_abi_refuses_nominally_distinct_but_structurally_identical_argument() {
+    let ast = aura_parse::parse_source(SOURCE).unwrap();
+    let mut ir = lower_program(&ast).unwrap();
+    twin_layout(&mut ir);
+    ir.functions.get_mut("project_x").unwrap().params[0].ty = Type::Opaque("Twin".into());
+    validate_module(&ir).expect("structural IR valid; typing is C ABI responsibility");
+    let err = emit_module(&ir, None).err().expect("nominal mismatch must reject C emission");
+    assert!(err.message.contains("Record ABI call 'project_x'") &&
+        err.message.contains("expects nominal 'Twin'"), "{err}");
+}
+
+#[test]
+fn record_abi_refuses_scalar_argument_for_record_parameter() {
+    let ast = aura_parse::parse_source(SOURCE).unwrap();
+    let mut ir = lower_program(&ast).unwrap();
+    let round = ir.functions.get_mut("round_trip").unwrap();
+    let x_param = round.params[0].value;
+    let call = round.blocks.iter_mut().flat_map(|b| b.insts.iter_mut())
+        .find(|i| matches!(&i.kind, InstKind::Call { callee, .. } if callee == "project_x"))
+        .expect("source cell contains call");
+    let InstKind::Call { args, .. } = &mut call.kind else { unreachable!() };
+    *args = vec![x_param];
+    validate_module(&ir).expect("structural SSA valid before type rejection");
+    let err = emit_module(&ir, None).err().expect("passing scalar as nominal Record must reject");
+    assert!(err.message.contains("Record ABI call 'project_x'") &&
+        err.message.contains("expects nominal 'Point'"), "{err}");
+}
+
+#[test]
+fn record_abi_refuses_returning_the_wrong_nominal_record() {
+    let ast = aura_parse::parse_source(SOURCE).unwrap();
+    let mut ir = lower_program(&ast).unwrap();
+    twin_layout(&mut ir);
+    ir.functions.get_mut("make_point").unwrap().ret = Type::Opaque("Twin".into());
+    validate_module(&ir).expect("structural SSA valid before type rejection");
+    let err = emit_module(&ir, None).err().expect("returning Point as Twin must reject");
+    assert!(err.message.contains("Record ABI return") &&
+        err.message.contains("expects nominal 'Twin'"), "{err}");
 }
