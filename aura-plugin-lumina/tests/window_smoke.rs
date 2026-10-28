@@ -39,4 +39,7 @@ fn native_raylib_renders_scissored_nested_controls_and_publishes_feedback() {
         assert_eq!(feedback.clicked_callback_id, None);
         assert!(feedback.text_input_events.is_empty());
     }
+    eprintln!("LUMINA_XVFB: 3 frames complete; explicitly dropping GPU window");
+    drop(plugin);
+    eprintln!("LUMINA_XVFB: native window and GPU resources dropped cleanly");
 }

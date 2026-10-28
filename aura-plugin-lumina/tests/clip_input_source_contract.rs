@@ -20,3 +20,18 @@ fn paint_must_apply_precomputed_clip_to_real_render_path() {
     assert!(source.contains("layout.clip"),
         "rendering must consume exactly the clipping bounds used by hit testing");
 }
+
+#[test]
+fn native_gpu_resources_must_drop_before_window_context() {
+    // Static regression for an actual Xvfb teardown SIGSEGV observed at
+    // Actions 40682173339: RaylibHandle was declared before Texture2D/Shader.
+    let src = include_str!("../src/lib.rs");
+    let begin = src.find("struct LuminaWindow {").expect("native window declaration");
+    let end = src[begin..].find("}\n").expect("window struct end") + begin;
+    let fields = &src[begin..end];
+    let textures = fields.find("textures: HashMap").expect("texture owner");
+    let shader = fields.find("sdf: RoundedRectShader").expect("shader owner");
+    let context = fields.find("rl: RaylibHandle").expect("native context owner");
+    assert!(textures < context && shader < context,
+        "GPU resources must be dropped before RaylibHandle closes GL");
+}
