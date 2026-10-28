@@ -31,18 +31,28 @@ cell update() ->:
 }
 
 #[test]
-fn deeper_chained_field_assignment_is_not_silently_accepted_as_scalar_binding() {
+fn deeper_chained_field_assignment_retains_explicit_nested_ast_path() {
     let source = r#"
 type Point = record { x: u32, y: u32 }
-cell reject() ->:
+cell main() ->:
     val mut p: Point = Point { x: 7, y: 13 }
     p.x.y = 19
     yield p.x
 "#;
-    assert!(aura_parse::parse_source(source).is_err(),
-        "only single-level Record field assign is qualified; chained fields need explicit AST/typing");
+    let ast=aura_parse::parse_source(source)
+        .expect("parser represents nested lvalues; Checker must reject scalar traversal");
+    let cell=ast.stmts.iter().find_map(|stmt| {
+        if let Stmt::CellDef(cell)=stmt {Some(cell)} else {None}
+    }).expect("cell");
+    let a=cell.body.stmts.iter().find_map(|stmt| {
+        if let Stmt::FieldAssign(a)=stmt {Some(a)} else {None}
+    }).expect("field assignment");
+    assert_eq!(a.field.node,"x");
+    assert_eq!(a.nested.iter().map(|n|n.node.as_str()).collect::<Vec<_>>(),
+        vec!["y"]);
+    let formatted=aura_parse::format_program(&ast);
+    assert!(formatted.contains("p.x.y = 19"));
 }
-
 
 #[test]
 fn nested_nominal_field_assignment_parses_and_survives_formatter_roundtrip() {
@@ -61,5 +71,18 @@ cell update() ->:
         "formatter must preserve nested field path: {formatted}");
     let reparsed=aura_parse::parse_source(&formatted)
         .expect("nested field path must survive parse/format/parse");
-    assert_eq!(ast, reparsed, "nested FieldAssign AST must roundtrip exactly");
+    let path = |p: &aura_ast::Program| p.stmts.iter().find_map(|stmt| {
+        if let Stmt::CellDef(cell)=stmt {
+            return cell.body.stmts.iter().find_map(|stmt| {
+                if let Stmt::FieldAssign(a)=stmt {
+                    return Some((a.target.node.clone(),a.field.node.clone(),
+                        a.nested.iter().map(|i| i.node.clone()).collect::<Vec<_>>()));
+                }
+                None
+            });
+        }
+        None
+    });
+    assert_eq!(path(&ast),path(&reparsed));
+    assert_eq!(path(&reparsed),Some(("o".into(),"p".into(),vec!["x".into()])));
 }
