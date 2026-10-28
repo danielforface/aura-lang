@@ -504,6 +504,16 @@ fn emit_function(
                         known_record_types.get(source).cloned(),
                     InstKind::SetField { base, .. } =>
                         known_record_types.get(base).cloned(),
+                    // A Record returned by another function is a nominal SSA
+                    // producer too. Without this edge, a later if/else Phi
+                    // cannot resolve the type of values sourced from calls.
+                    InstKind::Call { callee, .. } => {
+                        if let Some(called) = functions.get(callee) {
+                            qualified_record_abi_type(&called.ret, record_layouts)?
+                        } else {
+                            None
+                        }
+                    }
                     InstKind::Phi { incomings } if !incomings.is_empty() => {
                         let incoming_names = incomings.iter()
                             .map(|(_, incoming)| known_record_types.get(incoming).cloned())
