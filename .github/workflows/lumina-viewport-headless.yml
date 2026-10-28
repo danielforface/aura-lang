@@ -49,13 +49,13 @@ jobs:
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --test window_smoke -- --test-threads=1
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --test window_smoke -- --nocapture --test-threads=1
       - name: Native resized framebuffer pixel sampling (three sizes, clip + shader)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test pixel_resize_e2e -- --test-threads=1
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test pixel_resize_e2e -- --nocapture --test-threads=1
       - name: Real XTest pointer event dispatch and overflow clipping under Xvfb
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --test-threads=1
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
 
