@@ -1,5 +1,7 @@
 # Aura Public Roadmap
 
+> **2026-10-28 full-platform roadmap extension (proposed, under review):** [Master V2](docs/qualification/MASTER_ROADMAP_V2.md) preserves Q00–Q11 and adds Q12–Q18 for modern Aura-authored Desktop, Web, Android and iOS applications, plus future R9–R15 trains. Current development remains Q03-001 / [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57); Master V1 is unchanged. This is a target, not an implemented/qualified UI release.
+
 > **Long-horizon execution overlay (2026-10-23):** The existing Gates A–G and historical roadmap remain intact. The frozen multi-release acceptance plan, live stage tracker, evidence ledger, and fresh-chat continuity notes are maintained under [docs/qualification/](docs/qualification/README.md). Work follows reviewable incremental releases, not an immediate all-feature 1.0 upgrade.
 
 This is the concise public roadmap. It does not replace the repository's detailed historical `ROADMAP.md`; it provides a stable, readable view of what matters before Aura can honestly call the whole language platform “stable 1.0.”
@@ -83,6 +85,20 @@ Aura should become a daily-driver systems language where:
 - [ ] input/media smoke tests
 - [ ] release APK signing story
 - [ ] clearly separate runtime cross-compile from complete app support
+
+## Future Gate H — Full modern Aura application/UI platform (proposed Master V2)
+
+Aura's **eventual product mandate** is full, modern, accessible and easy-to-author apps in Aura across Windows/macOS/Linux Desktop, Web/browser and Android/iOS, without reducing core verification, memory/type safety, FFI or native semantics. This expansion is independent of the initial core-only stable subset and not implemented simply by editing a roadmap.
+
+- [ ] Q12 typed UI framework: reusable components, state, events, reconciliation, navigation, async and form contracts.
+- [ ] Q13 production adaptive layouts, accessible widgets, text/Unicode/RTL/IME, themes, design systems, media and localization.
+- [ ] Q14 real installable Windows/macOS/Linux Lumina apps, OS integration and resource lifecycle.
+- [ ] Q15 accessible semantic browser/Web frontend, typed JS/WASM interop, routing, SSR/SEO strategy and deploy tooling.
+- [ ] Q16 genuine Android and iOS app rendering, native APIs, real-device testing and signed distribution.
+- [ ] Q17 easiest practical developer flow: create → live preview/hot reload → debug/test/verify → package/deploy, plus IDE and component packages.
+- [ ] Q18 independent per-target security, a11y, differential and performance evidence with competitive peer-app benchmarks and GO/NO-GO.
+
+The original Gates A–G and R0–R8 remain valid and active. New UI trains R9–R15 will be scheduled separately; see [Master V2](docs/qualification/MASTER_ROADMAP_V2.md) for all 102 added requirements.
 
 ## Stable 1.0 definition
 
