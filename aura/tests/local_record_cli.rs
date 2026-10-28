@@ -222,3 +222,25 @@ cell main() ->:
         "public Aura nested default Record build failed: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_nested_field_assignment_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell main() ->:
+    val mut o: Outer = Outer {}
+    o.p.x = 19
+    yield o.p.x
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public nested assignment check failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"));
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public nested assignment native build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}

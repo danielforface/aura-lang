@@ -42,3 +42,24 @@ cell reject() ->:
     assert!(aura_parse::parse_source(source).is_err(),
         "only single-level Record field assign is qualified; chained fields need explicit AST/typing");
 }
+
+
+#[test]
+fn nested_nominal_field_assignment_parses_and_survives_formatter_roundtrip() {
+    let source=r#"
+type Point = record { x: u32, y: u32 }
+type Outer = record { p: Point, tag: u32 }
+cell update() ->:
+    val mut o: Outer = Outer { p: Point { x: 7, y: 13 }, tag: 99 }
+    o.p.x = 19
+    yield o.p.x
+"#;
+    let ast=aura_parse::parse_source(source)
+        .expect("nested nominal assignment must be a real field-assign AST");
+    let formatted=aura_parse::format_program(&ast);
+    assert!(formatted.contains("o.p.x = 19"),
+        "formatter must preserve nested field path: {formatted}");
+    let reparsed=aura_parse::parse_source(&formatted)
+        .expect("nested field path must survive parse/format/parse");
+    assert_eq!(ast, reparsed, "nested FieldAssign AST must roundtrip exactly");
+}

@@ -374,3 +374,56 @@ fn avm_qualified_nested_defaults_fail_closed_for_dynamic_and_recursive_sources()
             "AVM guard expected {needle:?}; got {error}");
     }
 }
+
+
+const NESTED_ASSIGN_PATH_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell true_path() ->:
+    val mut o: Outer = Outer {}
+    if true:
+        o.p.x = 19
+    else:
+        o.p.x = 23
+    yield o.p.x
+cell false_path() ->:
+    val mut o: Outer = Outer {}
+    if false:
+        o.p.x = 19
+    else:
+        o.p.x = 23
+    yield o.p.x
+cell sibling() ->:
+    val mut o: Outer = Outer {}
+    o.p.x = 41
+    yield o.p.y
+cell copy_before() ->:
+    val mut o: Outer = Outer {}
+    val old: Outer = o
+    o.p.x = 41
+    yield old.p.x
+"#;
+
+#[test]
+fn avm_nested_direct_assignment_matches_functional_ir_oracle() {
+    let ast=aura_parse::parse_source(NESTED_ASSIGN_PATH_SOURCE)
+        .expect("nested lvalue path source parse");
+    aura_core::Checker::new().check_program(&ast)
+        .expect("nested source Checker");
+    let ir=aura_core::lower_program(&ast).expect("nested source SSA");
+    aura_ir::validate_module(&ir).expect("SSA valid");
+    for (entry,value) in [
+        ("true_path",19u32),("false_path",23u32),
+        ("sibling",13u32),("copy_before",7u32),
+    ] {
+        let oracle=aura_ir::run_oracle_entry(&ir,entry,&[],
+            aura_ir::OracleConfig::default()).expect("nested path Oracle");
+        assert_eq!(oracle.return_value,Some(aura_ir::OracleValue::U32(value)));
+        let mut vm=Avm::new(AvmConfig {enable_z3_gate:false,..Default::default()});
+        let actual=vm.exec_entry_cell(NESTED_ASSIGN_PATH_SOURCE,entry)
+            .expect("AVM nested path lvalue");
+        assert_eq!(actual.value,AvmValue::Int(i64::from(value)));
+        assert!(!actual.verified);
+        assert!(actual.gate_error.as_deref().unwrap_or("").contains("not run"));
+    }
+}

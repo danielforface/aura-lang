@@ -267,3 +267,92 @@ fn nominal_nested_default_rejects_mismatch_dynamic_cycle_and_missing_required_ch
         assert!(error.span.len()>0,"negative diagnostic needs source span");
     }
 }
+
+
+const NESTED_PATH_ASSIGN_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell update_path(flag: bool) ->:
+    val mut o: Outer = Outer {}
+    if flag:
+        o.p.x = 19
+    else:
+        o.p.x = 23
+    yield o.p.x
+cell preserve_sibling() ->:
+    val mut o: Outer = Outer {}
+    o.p.x = 41
+    yield o.p.y
+cell preserve_copy() ->:
+    val mut o: Outer = Outer {}
+    val old: Outer = o
+    o.p.x = 41
+    yield old.p.x
+"#;
+
+#[test]
+fn nested_field_assignment_follows_functional_ssa_phi_and_native_c_abi() {
+    let ast=aura_parse::parse_source(NESTED_PATH_ASSIGN_SOURCE)
+        .expect("nested lvalue path syntax must parse");
+    Checker::new().check_program(&ast)
+        .expect("mutable nested Record lvalue and scalar value must typecheck");
+    let ir=lower_program(&ast).expect("nested SetField lvalue path lowers");
+    validate_module(&ir).expect("nested functional SSA path is valid");
+    for (entry,args,expected) in [
+        ("update_path",vec![OracleValue::Bool(true)],19u32),
+        ("update_path",vec![OracleValue::Bool(false)],23u32),
+        ("preserve_sibling",vec![],13u32),
+        ("preserve_copy",vec![],7u32),
+    ] {
+        let r=run_oracle_entry(&ir,entry,&args,OracleConfig::default())
+            .expect("nested path Oracle executes");
+        assert!(r.ok && r.stderr.is_empty(),"{entry}");
+        assert_eq!(r.return_value,Some(OracleValue::U32(expected)),"{entry}");
+    }
+    let c=emit_module(&ir,None).expect("nested functional SetField C emission");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),&c.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&c.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n",
+        "uint32_t update_path(bool);\n",
+        "uint32_t preserve_sibling(void);\n",
+        "uint32_t preserve_copy(void);\n",
+        "int main(void) { return (update_path(true)==19u",
+        " && update_path(false)==23u && preserve_sibling()==13u",
+        " && preserve_copy()==7u)?0:1; }\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("nested_field_path_{}",&opt[1..]));
+        let cc=Command::new("clang")
+            .args(["-std=c11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c"))
+            .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().unwrap();
+        assert!(cc.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&cc.stderr),c.module_c);
+        let run=Command::new(exe).output().unwrap();
+        assert!(run.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&run.stderr),c.module_c);
+    }
+}
+
+#[test]
+fn nested_field_assignment_negative_mutability_and_type_guards() {
+    for (body,diagnostic) in [
+        ("val o: Outer = Outer {}\n    o.p.x = 19\n    yield o.p.x","immutable"),
+        ("val mut o: Outer = Outer {}\n    o.p.x = true\n    yield o.p.x","type mismatch"),
+        ("val mut o: Outer = Outer {}\n    o.tag.x = 19\n    yield o.tag","concrete Record"),
+        ("val mut o: Outer = Outer {}\n    o.p.nope = 19\n    yield o.p.x","unknown field"),
+    ] {
+        let source=format!(
+            "type Point = record {{ x: u32 = 7, y: u32 = 13 }}\n             type Outer = record {{ p: Point = Point {{}}, tag: u32 = 99 }}\n             cell main() ->:\n    {body}\n"
+        );
+        let ast=aura_parse::parse_source(&source)
+            .expect("path syntax must parse even when invalid semantically");
+        let err=Checker::new().check_program(&ast)
+            .expect_err("unqualified nested assignment must fail closed");
+        assert!(err.message.contains(diagnostic),
+            "expected {diagnostic:?}, got {err}");
+    }
+}
