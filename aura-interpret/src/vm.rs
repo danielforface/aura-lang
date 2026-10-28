@@ -1634,6 +1634,22 @@ impl Avm {
 
             Stmt::StrandDef(sd) => {
                 let v = self.eval_expr(&sd.expr)?;
+                // Raw AVM runs without Checker or Z3. A numeric annotation
+                // must reject an invalid value even if its local is never
+                // used to construct a Record. This guard is intentionally
+                // limited to concrete primitive integer widths; generic and
+                // alias typing is not certified by this runtime slice.
+                if let Some(ty) = &sd.ty {
+                    if matches!(ty.name.node.as_str(),
+                        "u8" | "u16" | "u32" | "u64" |
+                        "i8" | "i16" | "i32" | "i64")
+                    {
+                        self.check_record_field_value(ty, &v).map_err(|err| miette::miette!(
+                            "AVM: typed integer local '{}' out of range or type mismatch for '{}': {err}",
+                            sd.name.node, ty.name.node
+                        ))?;
+                    }
+                }
                 self.env.insert(sd.name.node.clone(), v.clone());
                 Ok(AvmValue::Unit)
             }

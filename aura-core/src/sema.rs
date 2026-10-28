@@ -1240,6 +1240,14 @@ impl Checker {
 
         let final_ty = if let Some(annot) = &sd.ty {
             let expected = self.resolve_type_ref(annot)?;
+            // An explicit integer type annotation is a representation
+            // contract, not permission to erase a proven out-of-range U32
+            // value. Preserve the same width guarantee as Record field
+            // construction before a narrow local can launder its provenance.
+            // The current U32 lowering does not qualify negative signed
+            // values; reject them at this boundary until signed IR parity.
+            self.check_record_integer_literal_width(&expected, &sd.expr)?;
+            self.check_record_integer_inferred_range(&expected, &expr_ty, &sd.expr)?;
 
             // If there is a `where` clause, we treat it as a refinement for type tracking,
             // but we don't require proving it here (the verifier is the hard gate).
@@ -1400,6 +1408,11 @@ impl Checker {
         }
 
         let rhs_ty = self.infer_expr(&assign.expr)?;
+        // Maintain narrow typed-local invariants on reassignment too. Without
+        // this, a safe declaration can later acquire an unrepresentable value
+        // before being passed to a typed Record or another consumer.
+        self.check_record_integer_literal_width(&target_ty, &assign.expr)?;
+        self.check_record_integer_inferred_range(&target_ty, &rhs_ty, &assign.expr)?;
         // Mutation aliasing rule (MVP): assigning from a resource identifier moves it.
         if let ExprKind::Ident(src) = &assign.expr.kind {
             if src.node != assign.target.node && self.is_non_copy_type(&rhs_ty) {
