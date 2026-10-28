@@ -214,3 +214,45 @@ fn real_source_nested_record_avm_matches_same_source_oracle_without_z3() {
         assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
     }
 }
+
+
+const RECORD_DEFAULTS_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+cell default_x() ->:
+    val p: Point = Point {}
+    yield p.x
+cell default_y() ->:
+    val p: Point = Point { x: 19 }
+    yield p.y
+cell explicit_x() ->:
+    val p: Point = Point { x: 19 }
+    yield p.x
+"#;
+
+#[test]
+fn avm_omitted_scalar_record_defaults_match_same_source_ir_oracle() {
+    let ast=aura_parse::parse_source(RECORD_DEFAULTS_SOURCE)
+        .expect("default Record source must parse");
+    aura_core::Checker::new().check_program(&ast)
+        .expect("default Record source must typecheck");
+    let ir=aura_core::lower_program(&ast).expect("defaults must materialize in IR");
+    aura_ir::validate_module(&ir).expect("default SSA valid");
+    for (entry, expected) in [
+        ("default_x",7u32), ("default_y",13u32), ("explicit_x",19u32)
+    ] {
+        let oracle=aura_ir::run_oracle_entry(&ir,entry,&[],aura_ir::OracleConfig::default())
+            .expect("default Record source Oracle");
+        assert!(oracle.ok && oracle.stderr.is_empty());
+        assert_eq!(oracle.return_value,Some(aura_ir::OracleValue::U32(expected)),
+            "{entry}: IR Oracle default parity");
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false, ..Default::default()
+        });
+        let result=vm.exec_entry_cell(RECORD_DEFAULTS_SOURCE,entry)
+            .expect("AVM must materialize defaults");
+        assert_eq!(result.value,AvmValue::Int(i64::from(expected)),
+            "{entry}: AVM/Oracle default parity");
+        assert!(!result.verified);
+        assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
+    }
+}
