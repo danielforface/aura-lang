@@ -170,3 +170,31 @@ cell main() ->:
         "public Aura default-valued Record C build: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_check_rejects_invalid_unused_or_overridden_record_declarations() {
+    for (source, expected) in [
+        (
+            "type Unused = record { x: u32 = true, y: u32 }\ncell main() ->:\n    yield 7\n",
+            "type",
+        ),
+        (
+            "type Point = record { x: u32 = 1 + 2, y: u32 }\ncell main() ->:\n    val p: Point = Point { x: 7, y: 13 }\n    yield p.x\n",
+            "unqualified",
+        ),
+        (
+            "type Point = record { x: u32 = 7, x: u32 = 13 }\ncell main() ->:\n    yield 7\n",
+            "duplicate",
+        ),
+    ] {
+        let fixture = SourceFile::new(source);
+        let check = fixture.run(&["check"]);
+        let output = format!("{}\n{}", String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr));
+        assert!(!check.status.success(),
+            "public Aura check must reject invalid Record declaration: {output}");
+        assert!(output.contains(expected),
+            "public Aura check must preserve semantic diagnostic {expected:?}: {output}");
+    }
+}
