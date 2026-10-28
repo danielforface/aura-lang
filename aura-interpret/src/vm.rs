@@ -179,6 +179,9 @@ pub struct Avm {
     cfg: AvmConfig,
     // State
     env: HashMap<String, AvmValue>,
+    // Concrete primitive integer type contracts for the current AVM frame.
+    // This follows env across user-cell calls and resets on source reload.
+    typed_integer_locals: HashMap<String, aura_ast::TypeRef>,
     // Source-local cell definitions for bounded, by-value user-call execution.
     // Replaced on each source load; never treat earlier sources as callable.
     user_cells: HashMap<String, aura_ast::CellDef>,
@@ -719,6 +722,7 @@ impl Avm {
         Self {
             cfg,
             env: HashMap::new(),
+            typed_integer_locals: HashMap::new(),
             user_cells: HashMap::new(),
             source_record_schemas: HashMap::new(),
             user_cell_depth: 0,
@@ -1640,15 +1644,17 @@ impl Avm {
                 // limited to concrete primitive integer widths; generic and
                 // alias typing is not certified by this runtime slice.
                 if let Some(ty) = &sd.ty {
-                    if matches!(ty.name.node.as_str(),
-                        "u8" | "u16" | "u32" | "u64" |
-                        "i8" | "i16" | "i32" | "i64")
-                    {
+                    if qualified_raw_integer_annotation(ty) {
                         self.check_record_field_value(ty, &v).map_err(|err| miette::miette!(
                             "AVM: typed integer local '{}' out of range or type mismatch for '{}': {err}",
                             sd.name.node, ty.name.node
                         ))?;
+                        self.typed_integer_locals.insert(sd.name.node.clone(), ty.clone());
+                    } else {
+                        self.typed_integer_locals.remove(&sd.name.node);
                     }
+                } else {
+                    self.typed_integer_locals.remove(&sd.name.node);
                 }
                 self.env.insert(sd.name.node.clone(), v.clone());
                 Ok(AvmValue::Unit)
@@ -1808,6 +1814,12 @@ impl Avm {
             }
             Stmt::Assign(a) => {
                 let v = self.eval_expr(&a.expr)?;
+                if let Some(ty) = self.typed_integer_locals.get(&a.target.node) {
+                    self.check_record_field_value(ty, &v).map_err(|err| miette::miette!(
+                        "AVM: typed integer local '{}' assignment out of range or type mismatch for '{}': {err}",
+                        a.target.node, ty.name.node
+                    ))?;
+                }
                 self.env.insert(a.target.node.clone(), v);
                 Ok(AvmValue::Unit)
             }
@@ -1946,6 +1958,7 @@ impl Avm {
     fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
         self.user_cells.clear();
         self.source_record_schemas.clear();
+        self.typed_integer_locals.clear();
         self.user_cell_depth = 0;
         // Only one type namespace exists for source TypeAlias/Record/Enum.
         // Refuse collisions before registering calls, schemas or executing entry.
@@ -2150,6 +2163,7 @@ impl Avm {
         }
 
         let mut frame = HashMap::new();
+        let mut frame_integer_types = HashMap::new();
         for (param, value) in cell.params.iter().zip(slots.into_iter()) {
             let value = value.expect("all call argument slots are present");
             let nominal = &param.ty.name.node;
@@ -2166,13 +2180,24 @@ impl Avm {
                     cell.name.node, param.name.node, nominal, name
                 ));
             }
+            if qualified_raw_integer_annotation(&param.ty) {
+                self.check_record_field_value(&param.ty, &value).map_err(|err| miette::miette!(
+                    "AVM: typed integer parameter '{}.{}' out of range or type mismatch: {err}",
+                    cell.name.node, param.name.node
+                ))?;
+                frame_integer_types.insert(param.name.node.clone(), param.ty.clone());
+            }
             frame.insert(param.name.node.clone(), value);
         }
 
         let caller_env = std::mem::replace(&mut self.env, frame);
+        let caller_integer_types = std::mem::replace(
+            &mut self.typed_integer_locals, frame_integer_types
+        );
         self.user_cell_depth += 1;
         let outcome = self.exec_block(&cell.body, &(), &mut NexusContext::default());
         self.user_cell_depth -= 1;
+        self.typed_integer_locals = caller_integer_types;
         self.env = caller_env;
         outcome
     }
@@ -2727,6 +2752,13 @@ fn detect_requested_plugins(program: &Program) -> Vec<String> {
     }
     out.sort();
     out
+}
+
+// The raw AVM has not qualified generic or refined integer annotations.
+ // Keep source-local runtime tracking limited to exact primitive widths.
+fn qualified_raw_integer_annotation(ty: &aura_ast::TypeRef) -> bool {
+    ty.args.is_empty() && ty.range.is_none() && matches!(ty.name.node.as_str(),
+        "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64")
 }
 
 fn stable_hash(s: &str) -> u64 {
