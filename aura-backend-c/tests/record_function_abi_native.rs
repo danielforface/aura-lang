@@ -12,6 +12,10 @@ cell make_point(x: u32, y: u32) ->:
     yield Point { y: y, x: x }
 cell project_x(p: Point) ->:
     yield p.x
+cell forward_point(p: Point) ->:
+    yield project_x(p)
+cell identity_point(p: Point) ->:
+    yield p
 cell round_trip(x: u32, y: u32) ->:
     val p: Point = make_point(x, y)
     yield project_x(p)
@@ -42,6 +46,16 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
             OracleConfig::default()).expect("Oracle executes Record by-value call");
         assert!(result.ok && result.stderr.is_empty());
         assert_eq!(result.return_value, Some(OracleValue::U32(x)));
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("x".into(), OracleValue::U32(x));
+        fields.insert("y".into(), OracleValue::U32(y));
+        let point = OracleValue::Record { name: "Point".into(), fields };
+        let forward = run_oracle_entry(&ir, "forward_point", &[point.clone()], OracleConfig::default())
+            .expect("Oracle forwards nominal Record parameter by value");
+        assert_eq!(forward.return_value, Some(OracleValue::U32(x)));
+        let identity = run_oracle_entry(&ir, "identity_point", &[point.clone()], OracleConfig::default())
+            .expect("Oracle returns nominal Record parameter by value");
+        assert_eq!(identity.return_value, Some(point));
     }
 
     let output = emit_module(&ir, None).expect("nominal Record function ABI should emit native C");
@@ -57,11 +71,15 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
         "aura_record_506f696e74 make_point(uint32_t, uint32_t);\n",
         "uint32_t project_x(aura_record_506f696e74);\n",
+        "uint32_t forward_point(aura_record_506f696e74);\n",
+        "aura_record_506f696e74 identity_point(aura_record_506f696e74);\n",
         "uint32_t round_trip(uint32_t, uint32_t);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
         "  return (p.aura_f_78 == 31u && p.aura_f_79 == 37u",
         " && project_x(p) == 31u",
+        " && forward_point(p) == 31u",
+        " && identity_point(p).aura_f_78 == 31u",
         " && round_trip(7u, 13u) == 7u",
         " && round_trip(19u, 23u) == 19u) ? 0 : 1;\n",
         "}\n"
