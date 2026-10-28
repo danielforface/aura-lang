@@ -816,6 +816,53 @@ impl Checker {
             }
         }
 
+
+        // Q03: qualify simple monomorphic alias graphs even when unused.
+        // Reject cycles and targets with no locally known declaration before
+        // first-pass alias resolution could preserve an invalid Named type.
+        // Generic/refined/imported alias proof is a separate qualification.
+        let mono_aliases: HashMap<&str, &aura_ast::TypeAlias> = program.stmts.iter()
+            .filter_map(|s| match s {
+                Stmt::TypeAlias(a) if a.params.is_empty() &&
+                    a.target.args.is_empty() && a.target.range.is_none()
+                    => Some((a.name.node.as_str(), a)),
+                _ => None,
+            }).collect();
+        let has_imports = program.stmts.iter().any(|s| matches!(s, Stmt::Import(_)));
+        for alias in mono_aliases.values() {
+            let mut seen = HashSet::new();
+            let mut current = alias.name.node.as_str();
+            loop {
+                if !seen.insert(current) {
+                    return Err(SemanticError {
+                        message: format!("cyclic monomorphic TypeAlias '{}' via '{}'",
+                            alias.name.node, current),
+                        span: alias.name.span,
+                    });
+                }
+                let def = mono_aliases[current];
+                let target = def.target.name.node.as_str();
+                if mono_aliases.contains_key(target) {
+                    current = target;
+                    continue;
+                }
+                if source_type_names.contains_key(target) || has_imports ||
+                    matches!(target,
+                        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
+                        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+                        "Int" | "f32" | "f64" | "bool" | "char" | "str" |
+                        "String" | "Tensor" | "Style" | "Unit" | "Model")
+                {
+                    break;
+                }
+                return Err(SemanticError {
+                    message: format!("unknown monomorphic TypeAlias '{}' target '{}'",
+                        def.name.node, target),
+                    span: def.target.span,
+                });
+            }
+        }
+
         // First pass: register type aliases and cell headers.
         for stmt in &program.stmts {
             match stmt {
