@@ -393,3 +393,18 @@ fn public_cli_refuses_unused_unknown_and_cyclic_monomorphic_aliases() {
             "{label}: public diagnostic must describe alias error: {diagnostic}");
     }
 }
+
+#[test]
+fn public_cli_accepts_forward_declared_integer_alias_record_source() {
+    let source="type Top = Middle\ntype Middle = u8\n\
+        type Tiny = record { n: Top = 255 }\n\
+        cell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n";
+    let fixture=SourceFile::new(source);
+    for args in [&["check"][..],&["build","--mode","hybrid","--backend","c","--profile","dev"][..]] {
+        let res=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+        assert!(res.status.success(),
+            "public Aura {:?} must resolve a valid forward mono alias: {output}",args);
+    }
+}

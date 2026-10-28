@@ -811,3 +811,15 @@ fn raw_avm_rejects_unused_cyclic_or_unknown_monomorphic_aliases() {
             "{label}: expected alias cycle/unknown diagnostic: {diagnostic}");
     }
 }
+
+#[test]
+fn raw_avm_legal_forward_monomorphic_integer_alias_record_executes_unverified() {
+    let source="type Top = Middle\ntype Middle = u8\n\
+        type Tiny = record { n: Top = 255 }\n\
+        cell main() ->:\n    val n: Top = 255\n\
+        val t: Tiny = Tiny { n: n }\n    yield t.n\n";
+    let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    let out=vm.exec_entry_cell(source,"main").expect("forward alias must resolve in raw AVM");
+    assert_eq!(out.value,AvmValue::Int(255));
+    assert!(!out.verified,"raw AVM is not formal proof");
+}

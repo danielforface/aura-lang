@@ -562,3 +562,64 @@ fn legitimate_monomorphic_type_alias_chains_remain_valid_in_core() {
     let ast = aura_parse::parse_source(source).expect("positive alias parses");
     Checker::new().check_program(&ast).expect("valid primitive alias chain must remain legal");
 }
+
+#[test]
+fn forward_declared_monomorphic_integer_aliases_keep_exact_record_abi() {
+    let source=r#"
+type Top = Middle
+type Middle = u8
+type Tiny = record { n: Top = 255 }
+cell forward_default() ->:
+    val t: Tiny = Tiny {}
+    yield t.n
+cell forward_explicit() ->:
+    val n: Top = 255
+    val t: Tiny = Tiny { n: n }
+    yield t.n
+"#;
+    let ast=aura_parse::parse_source(source).expect("forward source parses");
+    Checker::new().check_program(&ast)
+        .expect("Checker must resolve forward mono alias to its terminal width");
+    let ir=lower_program(&ast).expect("forward mono alias must lower as exact scalar");
+    validate_module(&ir).expect("forward alias module SSA must be valid");
+    for cell in ["forward_default","forward_explicit"] {
+        let result=run_oracle_entry(&ir,cell,&[],OracleConfig::default())
+            .expect("forward alias source executes in IR Oracle");
+        assert!(result.ok && result.stderr.is_empty(),"{cell}: {result:?}");
+        assert_eq!(result.return_value,Some(OracleValue::U32(255)), "{cell}");
+    }
+    let artifacts=emit_module(&ir,None).expect("forward alias source must emit C");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "uint8_t forward_default(void);\n",
+        "uint8_t forward_explicit(void);\n",
+        "int main(void) { return (forward_default() == 255 &&",
+        " forward_explicit() == 255) ? 0 : 1; }\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("forward_alias_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("strict clang available");
+        assert!(built.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        let out=Command::new(&exe).output().expect("execute independent linked C");
+        assert!(out.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&out.stderr),artifacts.module_c);
+    }
+}
+
+#[test]
+fn forward_declared_mono_integer_aliases_cannot_launder_out_of_range_values() {
+    let source = "type Top = Middle\ntype Middle = u8\n\
+        type Tiny = record { n: Top }\n\
+        cell main() ->:\n    val n: Top = 300\n    yield Tiny { n: n }\n";
+    let ast=aura_parse::parse_source(source).expect("numeric counterexample parses");
+    let err=Checker::new().check_program(&ast)
+        .expect_err("forward alias width must not permit 300 in u8");
+    assert!(err.message.contains("out of range"),
+        "must preserve precise resolved u8 range refusal, got {err}");
+}
