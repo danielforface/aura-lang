@@ -1,4 +1,4 @@
-name: Lumina headless viewport regression
+name: Lumina headless viewport and layout regressions
 
 on:
   push:
