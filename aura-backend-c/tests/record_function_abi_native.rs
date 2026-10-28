@@ -16,6 +16,13 @@ cell forward_point(p: Point) ->:
     yield project_x(p)
 cell identity_point(p: Point) ->:
     yield p
+cell branch_from_call(flag: bool) ->:
+    val mut p: Point = make_point(7, 13)
+    if flag:
+        p.x = 19
+    else:
+        p.x = 23
+    yield p.x
 cell round_trip(x: u32, y: u32) ->:
     val p: Point = make_point(x, y)
     yield project_x(p)
@@ -58,6 +65,12 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         assert_eq!(identity.return_value, Some(point));
     }
 
+    for (flag, expected) in [(true, 19), (false, 23)] {
+        let value = run_oracle_entry(&ir, "branch_from_call",
+            &[OracleValue::Bool(flag)], OracleConfig::default())
+            .expect("Oracle must join Record returned from a function call");
+        assert_eq!(value.return_value, Some(OracleValue::U32(expected)));
+    }
     let output = emit_module(&ir, None).expect("nominal Record function ABI should emit native C");
     assert!(output.module_c.contains("aura_record_506f696e74"),
         "qualified nominal Point type required, not Tensor fallback");
@@ -67,12 +80,13 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
     // Independent C translation unit: exercise the real platform linker ABI
     // for by-value struct parameters and returns, not merely one-TU inlining.
     fs::write(tmp.0.join("driver.c"), concat!(
-        "#include <stdint.h>\n",
+        "#include <stdint.h>\n#include <stdbool.h>\n",
         "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
         "aura_record_506f696e74 make_point(uint32_t, uint32_t);\n",
         "uint32_t project_x(aura_record_506f696e74);\n",
         "uint32_t forward_point(aura_record_506f696e74);\n",
         "aura_record_506f696e74 identity_point(aura_record_506f696e74);\n",
+        "uint32_t branch_from_call(bool);\n",
         "uint32_t round_trip(uint32_t, uint32_t);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
@@ -80,6 +94,8 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         " && project_x(p) == 31u",
         " && forward_point(p) == 31u",
         " && identity_point(p).aura_f_78 == 31u",
+        " && branch_from_call(true) == 19u",
+        " && branch_from_call(false) == 23u",
         " && round_trip(7u, 13u) == 7u",
         " && round_trip(19u, 23u) == 19u) ? 0 : 1;\n",
         "}\n"
