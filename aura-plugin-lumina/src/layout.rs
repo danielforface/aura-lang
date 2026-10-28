@@ -317,7 +317,8 @@ pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Op
     if !layout.bounds.contains(x, y) { return None; }
     match node.kind.as_str() {
         "Button" => callback(node, "on_click").map(HitTarget::Button),
-        "TextInput" => callback(node, "on_change").map(|on_change| HitTarget::TextInput {
+        "TextInput" if prop(node, "disabled") != Some("true") =>
+            callback(node, "on_change").map(|on_change| HitTarget::TextInput {
             on_change,
             on_submit: callback(node, "on_submit"),
             value: prop(node, "value").or_else(|| prop(node, "text")).unwrap_or("").to_string(),
@@ -375,6 +376,16 @@ pub(crate) fn next_focus(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_text_input_is_not_pointer_actionable_either() {
+        let tree=n("App",&[],vec![n("TextInput",&[
+            ("x","20"),("y","20"),("width","180"),("height","40"),
+            ("on_change","cb:99"),("disabled","true")],vec![])]);
+        let plan=arrange(&tree,Bounds::new(0.0,0.0,640.0,400.0));
+        assert_eq!(hit_test(&tree,&plan,40.0,40.0),None);
+        assert!(focus_order(&tree,&plan).is_empty());
+    }
 
     #[test]
     fn tab_sequence_in_source_order_and_reverse_wrap_from_blur() {
