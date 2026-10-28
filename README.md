@@ -4,6 +4,8 @@
 
 Aura brings program verification into the normal edit → build → run loop. The repository contains the language frontend, semantic core, Aura IR, verification engine, development VM, native-oriented backends, package tooling, language server, Sentinel desktop IDE, SDK, standard library, plugins, Lumina UI runtime, FFI tooling, examples, release tooling, and Android build support.
 
+> **Full-platform long-term vision (2026-10-28; proposed):** Aura must eventually enable complete modern, accessible and easy-to-build applications on Windows/macOS/Linux Desktop, browser/Web, Android and iOS **without weakening formal verification, type/memory safety, native systems capabilities or backend fidelity**. The [proposed Master Qualification V2](docs/qualification/MASTER_ROADMAP_V2.md) preserves all original Q00–Q11 tasks and adds 102 Q12–Q18 requirements. Development continues on Q03-001 / [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57); UI platform targets are not yet qualified. For current state read [PROGRESS](docs/qualification/PROGRESS.md) and [CONTEXT_HANDOFF](docs/qualification/CONTEXT_HANDOFF.md).
+
 > **Repository status:** active, pre-stable language platform. The current compiler workspace identifies itself as `0.2.0` while several component and milestone documents use later milestone labels. Aura therefore treats implementation state, component version, language edition, and roadmap milestone as separate concepts. See [Project Status](PROJECT_STATUS.md).
 
 [Website](https://aura.geniuses.team/) · [Project status](PROJECT_STATUS.md) · [Architecture](ARCHITECTURE.md) · [Language guide](LANGUAGE_GUIDE.md) · [Verification model](VERIFICATION_MODEL.md) · [Toolchain](TOOLCHAIN.md) · [Ecosystem](ECOSYSTEM.md)

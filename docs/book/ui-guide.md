@@ -1,5 +1,8 @@
 # UI Guide (Lumina)
 
+> **Roadmap continuity:** The proposed [Master V2](../qualification/MASTER_ROADMAP_V2.md) defines future Q12–Q18 application-platform requirements (modern components, responsive design, accessibility, Unicode/RTL/IME, Desktop/Web/Android/iOS, tooling, testing). Current Lumina examples are prototype behavior, NOT proof of production platform readiness; Q03-001 remains the current core implementation task.
+
+
 This guide documents Aura’s current UI stack (**Lumina**, Raylib backend) and the near-term plan to reach “real app” capability: keyboard/mouse input, components, theming, and strong layout.
 
 ## 1. Principles

@@ -1,5 +1,7 @@
 # Aura Roadmap Checklist (Future + Status)
 
+> **2026-10-28 expanded product mandate (PROPOSED, NOT complete):** [Master V2](docs/qualification/MASTER_ROADMAP_V2.md) preserves all 88 original Q00–Q11 tasks and R0–R8 while adding 102 Q12–Q18/R9–R15 commitments for a full modern, accessible, developer-friendly Aura-built Desktop/Web/Android/iOS app platform. Old checkbox marks below are **historical signals, not independent qualification evidence**. Current active work remains Q03-001 / [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57); inspect the latest [PROGRESS](docs/qualification/PROGRESS.md), [CONTEXT_HANDOFF](docs/qualification/CONTEXT_HANDOFF.md) and live CI. No merge or release implied.
+
 This is the roadmap converted into a **future checklist**.
 
 Legend:
