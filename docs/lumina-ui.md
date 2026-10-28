@@ -233,3 +233,7 @@ TextInput callbacks receive the latest text via `ui.event_text()`.
 - Grid is MVP: equal-size cells only (no content-based track sizing, alignment, or overflow handling yet).
 - Image rendering is MVP: `fit` works (`stretch`/`contain`/`cover`), but there’s no clipping/radius yet; missing files draw a placeholder.
 - Box is single-child only (for now); use `VStack/HStack` inside it.
+
+## Experimental viewport-root resize groundwork (Agent B, 2026-10-28)
+
+The isolated, unmerged `qual/ui-viewport-bounds-headless` branch (candidate for Draft review against proposed V2) sets the Raylib window as resizable and samples current **logical window dimensions** each frame for the root draw bounds. Initial dimensions remain 1920×1080 but no longer determine subsequent root bounds. Renderer-free geometry tests (including window resize sequences and invalid/nonpositive dimensions) and a source-contract regression run under `cargo test --locked -p aura-plugin-lumina --no-default-features`. This is a **prototype repair**, not qualification of AURA-Q13-002. There is no verified window interaction test, DPI/framebuffer conversion, responsive component/breakpoint engine, native OS matrix, visual pixel snapshot or accessibility proof. Existing `measure_node` happens inside rendering recursion, so true measurement/layout/painting separation remains a significant follow-up. See `aura-plugin-lumina/ENGINEERING_AUDIT.md` and the latest `docs/qualification/` evidence.
