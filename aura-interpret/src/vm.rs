@@ -1802,16 +1802,16 @@ impl Avm {
             }
             Stmt::FieldAssign(a) => {
                 let before = self.env.get(&a.target.node).cloned()
-                    .ok_or_else(|| miette::miette!("AVM: unknown Record local '{}'", a.target.node))?;
-                let AvmValue::Record { name, mut fields } = before else {
-                    return Err(miette::miette!("AVM: '{}' is not a Record", a.target.node));
-                };
-                if !fields.contains_key(&a.field.node) {
-                    return Err(miette::miette!("AVM: unknown Record field '{}'", a.field.node));
-                }
+                    .ok_or_else(|| miette::miette!(
+                        "AVM: unknown Record local '{}'", a.target.node))?;
+                // Functional path update: evaluate the RHS exactly once and
+                // rebuild every ancestor Record by value, never mutate an
+                // existing copy, even when the target passes through nesting.
                 let value = self.eval_expr(&a.expr)?;
-                fields.insert(a.field.node.clone(), value);
-                self.env.insert(a.target.node.clone(), AvmValue::Record { name, fields });
+                let path = std::iter::once(&a.field)
+                    .chain(a.nested.iter()).collect::<Vec<_>>();
+                let updated = Self::replace_record_field_path(before, &path, value)?;
+                self.env.insert(a.target.node.clone(), updated);
                 Ok(AvmValue::Unit)
             }
             Stmt::Prop(p) => {
@@ -2113,6 +2113,30 @@ impl Avm {
         self.user_cell_depth -= 1;
         self.env = caller_env;
         outcome
+    }
+
+    fn replace_record_field_path(
+        before: AvmValue,
+        path: &[&aura_ast::Ident],
+        value: AvmValue,
+    ) -> miette::Result<AvmValue> {
+        let AvmValue::Record { name, mut fields } = before else {
+            return Err(miette::miette!(
+                "AVM: nested field assignment path requires a concrete Record"));
+        };
+        let Some((field, tail)) = path.split_first() else {
+            return Err(miette::miette!("AVM: empty Record field assignment path"));
+        };
+        let previous = fields.get(&field.node).cloned()
+            .ok_or_else(|| miette::miette!(
+                "AVM: unknown Record field '{}'", field.node))?;
+        let next = if tail.is_empty() {
+            value
+        } else {
+            Self::replace_record_field_path(previous, tail, value)?
+        };
+        fields.insert(field.node.clone(), next);
+        Ok(AvmValue::Record { name, fields })
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> miette::Result<AvmValue> {
