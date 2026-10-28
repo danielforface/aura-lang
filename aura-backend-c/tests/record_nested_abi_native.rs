@@ -361,3 +361,58 @@ fn nested_field_assignment_negative_mutability_and_type_guards() {
             "expected {diagnostic:?}, got {err}");
     }
 }
+
+
+const DEEP_PATH_ASSIGN_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+type Container = record { inner: Outer = Outer {}, id: u32 = 5 }
+cell deep_update(flag: bool) ->:
+    val mut c: Container = Container {}
+    if flag:
+        c.inner.p.x = 71
+    else:
+        c.inner.p.x = 73
+    yield c.inner.p.x
+cell deep_sibling() ->:
+    val mut c: Container = Container {}
+    c.inner.p.x = 71
+    yield c.inner.p.y
+"#;
+#[test]
+fn three_level_immutable_record_path_rebuild_survives_nested_phi_and_clang() {
+    let ast=aura_parse::parse_source(DEEP_PATH_ASSIGN_SOURCE).expect("deep path parses");
+    Checker::new().check_program(&ast).expect("deep nominal assignment types");
+    let ir=lower_program(&ast).expect("deep functional SSA lowers");
+    validate_module(&ir).expect("deep source valid SSA");
+    for (entry,args,expected) in [
+        ("deep_update",vec![OracleValue::Bool(true)],71u32),
+        ("deep_update",vec![OracleValue::Bool(false)],73u32),
+        ("deep_sibling",vec![],13u32),
+    ] {
+        let r=run_oracle_entry(&ir,entry,&args,OracleConfig::default())
+            .expect("deep path Oracle");
+        assert_eq!(r.return_value,Some(OracleValue::U32(expected)), "{entry}");
+    }
+    let c=emit_module(&ir,None).expect("deep Record field update codegen");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),&c.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&c.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n",
+        "uint32_t deep_update(bool);\nuint32_t deep_sibling(void);\n",
+        "int main(void){return (deep_update(true)==71u",
+        " && deep_update(false)==73u && deep_sibling()==13u)?0:1;}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("deep_{}",&opt[1..]));
+        let cc=Command::new("clang")
+            .args(["-std=c11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c"))
+            .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().unwrap();
+        assert!(cc.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&cc.stderr),c.module_c);
+        assert!(Command::new(&exe).status().unwrap().success(),"{opt}");
+    }
+}

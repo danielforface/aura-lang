@@ -427,3 +427,35 @@ fn avm_nested_direct_assignment_matches_functional_ir_oracle() {
         assert!(actual.gate_error.as_deref().unwrap_or("").contains("not run"));
     }
 }
+
+
+#[test]
+fn avm_nested_record_lvalue_rejects_wrong_scalar_and_wrong_nominal_without_z3() {
+    let wrong_scalar=r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell main() ->:
+    val mut o: Outer = Outer {}
+    o.p.x = true
+    yield o.p.x
+"#;
+    let wrong_nominal=r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Twin = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell main() ->:
+    val mut o: Outer = Outer {}
+    o.p = Twin {}
+    yield o.p.x
+"#;
+    for (src,diagnostic) in [
+        (wrong_scalar,"type mismatch"),
+        (wrong_nominal,"nominal"),
+    ] {
+        let mut vm=Avm::new(AvmConfig {enable_z3_gate:false,..Default::default()});
+        let e=vm.exec_entry_cell(src,"main")
+            .expect_err("raw no-Z3 AVM must fail closed on ill-typed Record path assignment");
+        assert!(e.to_string().contains(diagnostic),
+            "expected {diagnostic:?}, got {e}");
+    }
+}
