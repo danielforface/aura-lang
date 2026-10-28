@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{fs, io};
 use std::sync::mpsc;
 use std::time::Instant;
@@ -179,6 +179,11 @@ pub struct Avm {
     cfg: AvmConfig,
     // State
     env: HashMap<String, AvmValue>,
+    // Source-local cell definitions for bounded, by-value user-call execution.
+    // Replaced on each source load; never treat earlier sources as callable.
+    user_cells: HashMap<String, aura_ast::CellDef>,
+    source_record_names: HashSet<String>,
+    user_cell_depth: usize,
 
     // Frame-local callback registry used by UI runtimes.
     next_callback_id: u64,
@@ -713,6 +718,9 @@ impl Avm {
         Self {
             cfg,
             env: HashMap::new(),
+            user_cells: HashMap::new(),
+            source_record_names: HashSet::new(),
+            user_cell_depth: 0,
             next_callback_id: 1,
             callbacks: HashMap::new(),
             verify_cache: HashMap::new(),
@@ -1434,6 +1442,7 @@ impl Avm {
         }
 
         let program = aura_parse::parse_source(&normalized)?;
+        self.register_user_cells(&program)?;
 
         // Execute program statements in order.
         let mut last = AvmValue::Unit;
@@ -1501,6 +1510,7 @@ impl Avm {
         }
 
         let program = aura_parse::parse_source(&normalized)?;
+        self.register_user_cells(&program)?;
 
         // Allow top-level initialization statements.
         let mut last = AvmValue::Unit;
@@ -1916,6 +1926,109 @@ impl Avm {
         Ok(last)
     }
 
+    fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
+        self.user_cells.clear();
+        self.source_record_names.clear();
+        self.user_cell_depth = 0;
+        for stmt in &program.stmts {
+            match stmt {
+                Stmt::CellDef(cell) => {
+                    if self.user_cells.insert(cell.name.node.clone(), cell.clone()).is_some() {
+                        return Err(miette::miette!(
+                            "AVM: duplicate user cell '{}'", cell.name.node
+                        ));
+                    }
+                }
+                Stmt::RecordDef(record) => {
+                    self.source_record_names.insert(record.name.node.clone());
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_user_cell_call(
+        &mut self,
+        cell: &aura_ast::CellDef,
+        args: &[CallArg],
+    ) -> miette::Result<AvmValue> {
+        const MAX_USER_CELL_DEPTH: usize = 64;
+        if self.user_cell_depth >= MAX_USER_CELL_DEPTH {
+            return Err(miette::miette!(
+                "AVM: user cell call depth exceeds {} in '{}'",
+                MAX_USER_CELL_DEPTH, cell.name.node,
+            ));
+        }
+
+        // Evaluate arguments exactly once in caller source order, then bind
+        // each value to its declared formal name. Record values are cloned by
+        // value; callee mutations cannot alter a caller's Record binding.
+        let mut slots: Vec<Option<AvmValue>> = vec![None; cell.params.len()];
+        let mut next_pos = 0usize;
+        for arg in args {
+            let value = self.eval_expr(call_arg_value(arg))?;
+            let idx = match arg {
+                CallArg::Named { name, .. } => cell.params.iter()
+                    .position(|p| p.name.node == name.node)
+                    .ok_or_else(|| miette::miette!(
+                        "AVM: unknown named argument '{}' in '{}'", name.node, cell.name.node
+                    ))?,
+                CallArg::Positional(_) => {
+                    while next_pos < slots.len() && slots[next_pos].is_some() {
+                        next_pos += 1;
+                    }
+                    let idx = next_pos;
+                    next_pos += 1;
+                    idx
+                }
+            };
+            if idx >= slots.len() {
+                return Err(miette::miette!(
+                    "AVM: too many arguments in user cell '{}'", cell.name.node
+                ));
+            }
+            if slots[idx].replace(value).is_some() {
+                return Err(miette::miette!(
+                    "AVM: duplicate argument '{}' in user cell '{}'",
+                    cell.params[idx].name.node, cell.name.node
+                ));
+            }
+        }
+        if slots.iter().any(Option::is_none) {
+            return Err(miette::miette!(
+                "AVM: missing argument in user cell '{}'", cell.name.node
+            ));
+        }
+
+        let mut frame = HashMap::new();
+        for (param, value) in cell.params.iter().zip(slots.into_iter()) {
+            let value = value.expect("all call argument slots are present");
+            let nominal = &param.ty.name.node;
+            if self.source_record_names.contains(nominal) {
+                if !matches!(&value, AvmValue::Record { name, .. } if name == nominal) {
+                    return Err(miette::miette!(
+                        "AVM: user cell '{}' parameter '{}' expects nominal Record '{}'",
+                        cell.name.node, param.name.node, nominal
+                    ));
+                }
+            } else if let AvmValue::Record { name, .. } = &value {
+                return Err(miette::miette!(
+                    "AVM: user cell '{}' parameter '{}' expects '{}', got Record '{}'",
+                    cell.name.node, param.name.node, nominal, name
+                ));
+            }
+            frame.insert(param.name.node.clone(), value);
+        }
+
+        let caller_env = std::mem::replace(&mut self.env, frame);
+        self.user_cell_depth += 1;
+        let outcome = self.exec_block(&cell.body, &(), &mut NexusContext::default());
+        self.user_cell_depth -= 1;
+        self.env = caller_env;
+        outcome
+    }
+
     fn eval_expr(&mut self, expr: &Expr) -> miette::Result<AvmValue> {
         match &expr.kind {
             ExprKind::IntLit(n) => Ok(AvmValue::Int(*n as i64)),
@@ -2065,6 +2178,14 @@ impl Avm {
                     self.builtin_ui_dispatch(&name, args)
                 } else if name.starts_with("audio.") {
                     self.builtin_audio_dispatch(&name, args)
+                } else if let Some(cell) = self.user_cells.get(&name).cloned() {
+                    if trailing.is_some() {
+                        Err(miette::miette!(
+                            "AVM: user cell '{}' trailing blocks are not qualified", name
+                        ))
+                    } else {
+                        self.eval_user_cell_call(&cell, args)
+                    }
                 } else if is_ui_call(&name, trailing.is_some()) {
                     let mut node = UiNode::new(name);
 
