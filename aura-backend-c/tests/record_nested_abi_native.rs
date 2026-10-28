@@ -19,6 +19,11 @@ cell replace_child(o: Outer, p: Point) ->:
 cell nested_roundtrip(x: u32, y: u32) ->:
     val o: Outer = make_outer(x, y)
     yield nested_x(o)
+cell child_phi(flag: bool, o: Outer) ->:
+    val mut p: Point = o.p
+    if flag:
+        p.x = 19
+    yield p.x
 "#;
 
 fn point(x: u32, y: u32) -> OracleValue {
@@ -73,18 +78,25 @@ fn nested_nominal_record_return_argument_projection_and_setfield_cross_native_ab
         &[outer(7,13), point(41,43)], OracleConfig::default())
         .expect("Oracle functional nested field update");
     assert_eq!(replaced.return_value, Some(outer(41,43)));
+    for (flag, expected) in [(true, 19), (false, 7)] {
+        let result = run_oracle_entry(&ir, "child_phi",
+            &[OracleValue::Bool(flag), outer(7,13)], OracleConfig::default())
+            .expect("Oracle must merge nested Record field projection through Phi");
+        assert_eq!(result.return_value, Some(OracleValue::U32(expected)));
+    }
     let emitted = emit_module(&ir, None).expect("nested scalar Record C ABI must be emitted");
     let scratch = Scratch::new();
     fs::write(scratch.0.join("aura_runtime.h"), emitted.runtime_h).unwrap();
     fs::write(scratch.0.join("module.c"), &emitted.module_c).unwrap();
     fs::write(scratch.0.join("driver.c"), concat!(
-        "#include <stdint.h>\n",
+        "#include <stdint.h>\n#include <stdbool.h>\n",
         "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
         "typedef struct { aura_record_506f696e74 aura_f_70; uint32_t aura_f_746167; } aura_record_4f75746572;\n",
         "aura_record_4f75746572 make_outer(uint32_t, uint32_t);\n",
         "uint32_t nested_x(aura_record_4f75746572);\n",
         "aura_record_4f75746572 replace_child(aura_record_4f75746572, aura_record_506f696e74);\n",
         "uint32_t nested_roundtrip(uint32_t, uint32_t);\n",
+        "uint32_t child_phi(bool, aura_record_4f75746572);\n",
         "int main(void) {\n",
         "  aura_record_4f75746572 a=make_outer(7u,13u);\n",
         "  aura_record_506f696e74 b={41u,43u};\n",
@@ -93,7 +105,8 @@ fn nested_nominal_record_return_argument_projection_and_setfield_cross_native_ab
         " && a.aura_f_746167==99u && nested_x(a)==7u",
         " && c.aura_f_70.aura_f_78==41u && c.aura_f_70.aura_f_79==43u",
         " && c.aura_f_746167==99u && a.aura_f_70.aura_f_78==7u",
-        " && nested_roundtrip(19u,23u)==19u)?0:1;\n",
+        " && nested_roundtrip(19u,23u)==19u",
+        " && child_phi(true,a)==19u && child_phi(false,a)==7u)?0:1;\n",
         "}\n"
     )).unwrap();
     for opt in ["-O0", "-O2"] {
