@@ -2067,6 +2067,21 @@ impl Avm {
                     .unwrap_or_default();
                 for (field_name, default_expr) in defaults {
                     if !map.contains_key(&field_name) {
+                        // Match the qualified Checker/IR contract, rather
+                        // than executing an arbitrary default expression in
+                        // the caller's frame without a source-scope proof.
+                        let qualified = match &default_expr.kind {
+                            ExprKind::IntLit(_) => true,
+                            ExprKind::Ident(id) =>
+                                id.node == "true" || id.node == "false",
+                            _ => false,
+                        };
+                        if !qualified {
+                            return Err(miette::miette!(
+                                "AVM: unqualified nonliteral Record default '{}.{}'",
+                                name.node, field_name
+                            ));
+                        }
                         let value = self.eval_expr(&default_expr)?;
                         map.insert(field_name, value);
                     }
