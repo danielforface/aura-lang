@@ -67,3 +67,38 @@ fn real_source_record_join_via_if_else_has_correct_avm_values_without_proof() {
             "unverified AVM must disclose no proof");
     }
 }
+
+
+const RECORD_FUNCTION_SOURCE: &str = r#"
+type Point = record { x: u32, y: u32 }
+cell make_point(x: u32, y: u32) ->:
+    yield Point { x: x, y: y }
+cell identity_point(p: Point) ->:
+    yield p
+cell project_x(p: Point) ->:
+    yield p.x
+cell named_projection() ->:
+    val p: Point = make_point(y: 13, x: 7)
+    yield project_x(p)
+cell main() ->:
+    val mut p: Point = identity_point(make_point(y: 13, x: 7))
+    p.x = 19
+    yield project_x(p)
+"#;
+
+#[test]
+fn real_source_record_cross_cell_named_calls_match_oracle_native_without_z3_proof() {
+    for (entry, expected) in [("named_projection", 7), ("main", 19)] {
+        let mut avm = Avm::new(AvmConfig {
+            enable_z3_gate: false,
+            ..Default::default()
+        });
+        let result = avm.exec_entry_cell(RECORD_FUNCTION_SOURCE, entry)
+            .expect("AVM must evaluate source user-defined Record cell calls");
+        assert_eq!(result.value, AvmValue::Int(expected),
+            "AVM Record function call {entry} must match IR Oracle and Clang");
+        assert!(!result.verified, "AVM without Z3 must never claim formal proof");
+        assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"),
+            "AVM Record function execution is not a Z3 proof");
+    }
+}
