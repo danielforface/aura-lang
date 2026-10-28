@@ -70,12 +70,12 @@ fn native_tab_shift_tab_order_wrap_and_skip_hidden_disabled_inputs() {
     // Reverse navigation must return to first, not disabled cb999.
     assert!(press(&plugin,&tree,&mut ctx,"Tab",true).is_empty());
     let a2=press(&plugin,&tree,&mut ctx,"e",false);
-    assert!(has(&a2,101,"Ae"),"Shift-Tab selects cb101: {a2:?}");
+    assert!(has(&a2,101,"Aqe"),"Shift-Tab selects cb101: {a2:?}");
 
     // Reverse from first wraps to last visible field.
     assert!(press(&plugin,&tree,&mut ctx,"Tab",true).is_empty());
     let b2=press(&plugin,&tree,&mut ctx,"z",false);
-    assert!(has(&b2,202,"Bz"),"reverse wrap selects cb202: {b2:?}");
+    assert!(has(&b2,202,"Bwz"),"reverse wrap selects cb202: {b2:?}");
     assert!(a.iter().chain(b.iter()).chain(a2.iter()).chain(b2.iter())
         .all(|e| ![999,303,404].contains(&e.callback_id)),
         "disabled, clipped and offscreen fields must not emit input callbacks");
@@ -90,5 +90,5 @@ fn native_tab_shift_tab_order_wrap_and_skip_hidden_disabled_inputs() {
     let blocked=press(&plugin,&tree,&mut ctx,"p",false);
     assert!(blocked.is_empty(),"disabled field accepted real pointer+keyboard: {blocked:?}");
     drop(plugin);
-    eprintln!("LUMINA_TAB_XTEST: forward/reverse, disabled pointer/Tab, clip+offscreen skip PASS");
+    eprintln!("LUMINA_TAB_XTEST: retained drafts, forward/reverse, disabled pointer/Tab, clip+offscreen skip PASS");
 }
