@@ -1,0 +1,38 @@
+name: Lumina headless viewport regression
+
+on:
+  push:
+    branches:
+      - 'qual/ui-viewport-*'
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+      - 'docs/qualification/**'
+  pull_request:
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  viewport-headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust test (no GUI, no Z3, no persistent cache)
+        run: cargo test --locked -p aura-plugin-lumina --no-default-features
+
+  raylib-feature-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install raylib native Linux compile prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+      - name: Compile Raylib feature (compile-only; no GUI claims)
+        run: cargo check --locked -p aura-plugin-lumina --features raylib

@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+#[cfg(any(feature = "raylib", test))]
+mod viewport;
+
+#[cfg(feature = "raylib")]
+use viewport::RootViewport;
+
 use aura_nexus::{
     AuraPlugin,
     NexusContext,
@@ -70,10 +76,10 @@ void main() {
 "#;
 
 #[cfg(feature = "raylib")]
-const SCREEN_W: i32 = 1920;
+const INITIAL_WINDOW_W: i32 = 1920;
 
 #[cfg(feature = "raylib")]
-const SCREEN_H: i32 = 1080;
+const INITIAL_WINDOW_H: i32 = 1080;
 
 #[cfg(feature = "raylib")]
 pub struct AuraLuminaPlugin {
@@ -197,8 +203,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
-                    .size(SCREEN_W, SCREEN_H)
+                    .size(INITIAL_WINDOW_W, INITIAL_WINDOW_H)
                     .title("Aura Lumina Sentinel")
+                    .resizable()
                     .build();
                 rl.set_target_fps(60);
                 // Keep the AVM-driven UI loop alive; closing should be explicit via the window close button.
@@ -270,6 +277,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
             let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
 
+            // Layout coordinates are logical window pixels, not physical framebuffer DPI pixels.
+            // Sample every frame so the root bounds follow user-driven window resize.
+            let viewport = RootViewport::from_window_size(rl.get_screen_width(), rl.get_screen_height());
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
@@ -279,7 +289,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             render_node(
                 &mut d,
                 tree,
-                Rectangle::new(0.0, 0.0, SCREEN_W as f32, SCREEN_H as f32),
+                Rectangle::new(0.0, 0.0, viewport.width, viewport.height),
                 clicked,
                 mouse,
                 now,
