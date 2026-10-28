@@ -217,3 +217,59 @@ fn type_namespace_collisions_are_rejected_at_declaration_even_when_unused() {
     Checker::new().check_program(&ast)
         .expect("different type names in one type namespace remain legal");
 }
+
+#[test]
+fn record_integer_range_from_inferred_local_cannot_narrow_out_of_bounds() {
+    for (label, src) in [
+        ("u8 constructor from local",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val n = 300\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("i8 constructor from local",
+         "type Tiny = record { n: i8 }\ncell main() ->:\n    val n = 128\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("u8 mutable Record field from local",
+         "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val n = 300\n    val mut t: Tiny = Tiny {}\n    t.n = n\n    yield t.n\n"),
+        ("u8 nested Record field from local",
+         "type Tiny = record { n: u8 = 7 }\ntype Outer = record { t: Tiny = Tiny {} }\ncell main() ->:\n    val n = 300\n    val mut o: Outer = Outer {}\n    o.t.n = n\n    yield o.t.n\n"),
+    ] {
+        let ast = aura_parse::parse_source(src)
+            .unwrap_or_else(|e| panic!("{label}: source must parse: {e}"));
+        let err = Checker::new().check_program(&ast)
+            .expect_err("Record local value must not silently narrow to an unrepresentable field");
+        assert!(err.message.contains("out of range"),
+            "{label}: expected proven local range diagnostic: {err}");
+        assert!(err.span.len() > 0,
+            "{label}: diagnostic must retain source span");
+    }
+}
+#[test]
+fn unsigned_record_negated_expression_fails_closed_before_native() {
+    for (label, src) in [
+        ("constructor",
+         "type Tiny = record { n: u32 }\ncell main() ->:\n    val t: Tiny = Tiny { n: -1 }\n    yield 7\n"),
+        ("field assignment",
+         "type Tiny = record { n: u32 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = -1\n    yield t.n\n"),
+    ] {
+        let ast = aura_parse::parse_source(src)
+            .unwrap_or_else(|e| panic!("{label}: negative expression must parse: {e}"));
+        let err = Checker::new().check_program(&ast)
+            .expect_err("unsigned Record must not accept a negative unary expression");
+        assert!(err.message.contains("negative") || err.message.contains("unqualified"),
+            "{label}: expected negative numeric Record diagnostic: {err}");
+        assert!(err.span.len() > 0, "{label}: source span required");
+    }
+}
+#[test]
+fn in_range_inferred_local_record_values_remain_valid() {
+    for (label, src) in [
+        ("u8 max",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val n = 255\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("i8 max",
+         "type Tiny = record { n: i8 }\ncell main() ->:\n    val n = 127\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("mutable u8",
+         "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val n = 255\n    val mut t: Tiny = Tiny {}\n    t.n = n\n    yield t.n\n"),
+    ] {
+        let ast = aura_parse::parse_source(src)
+            .unwrap_or_else(|e| panic!("{label}: valid boundary source must parse: {e}"));
+        Checker::new().check_program(&ast)
+            .unwrap_or_else(|e| panic!("{label}: representable local should remain valid: {e}"));
+    }
+}

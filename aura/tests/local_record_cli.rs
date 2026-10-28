@@ -309,3 +309,26 @@ fn public_aura_check_rejects_type_namespace_collisions_even_if_unused() {
             "{label}: expected duplicate type diagnosis, got {diagnostic}");
     }
 }
+
+#[test]
+fn public_checker_refuses_proven_local_narrowing_and_unsigned_negative_record() {
+    for (label, src) in [
+        ("u8 from local range",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val n = 300\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("i8 from local range",
+         "type Tiny = record { n: i8 }\ncell main() ->:\n    val n = 128\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("unsigned negative initializer",
+         "type Tiny = record { n: u32 }\ncell main() ->:\n    val t: Tiny = Tiny { n: -1 }\n    yield 7\n"),
+        ("unsigned negative mutation",
+         "type Tiny = record { n: u32 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = -1\n    yield 7\n"),
+    ] {
+        let fixture=SourceFile::new(src);
+        let result=fixture.run(&["check"]);
+        let text=format!("{}\n{}",String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: actual public check accepted unsafe Record value: {text}");
+        assert!(text.contains("out of range") || text.contains("negative"),
+            "{label}: expected numeric Record diagnostic: {text}");
+    }
+}

@@ -604,3 +604,25 @@ fn raw_avm_rejects_cross_kind_type_namespace_collisions_before_entry() {
             "{label}: expected exact type collision diagnosis, got {message}");
     }
 }
+
+#[test]
+fn raw_avm_refuses_unrepresentable_local_and_negative_unsigned_record_values() {
+    for (label, src) in [
+        ("u8 local overflow",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val n = 300\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("i8 local overflow",
+         "type Tiny = record { n: i8 }\ncell main() ->:\n    val n = 128\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("u8 local mutation",
+         "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val n = 300\n    val mut t: Tiny = Tiny {}\n    t.n = n\n    yield t.n\n"),
+        ("u32 negative constructor",
+         "type Tiny = record { n: u32 }\ncell main() ->:\n    val t: Tiny = Tiny { n: -1 }\n    yield t.n\n"),
+        ("u32 negative mutation",
+         "type Tiny = record { n: u32 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = -1\n    yield t.n\n"),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(src, "main")
+            .expect_err("unrepresentable Record value must not execute in no-Z3 AVM");
+        assert!(err.to_string().contains("Record"),
+            "{label}: expected explicit Record runtime typing refusal: {err}");
+    }
+}
