@@ -183,8 +183,6 @@ pub struct Avm {
     // Replaced on each source load; never treat earlier sources as callable.
     user_cells: HashMap<String, aura_ast::CellDef>,
     source_record_names: HashSet<String>,
-    // Declaration-ordered qualified defaults, scoped to the current source.
-    source_record_defaults: HashMap<String, Vec<(String, Expr)>>,
     // Exact current-source schema for nominal/type/cycle guards on defaults.
     source_record_schemas: HashMap<String, aura_ast::RecordDef>,
     user_cell_depth: usize,
@@ -724,7 +722,6 @@ impl Avm {
             env: HashMap::new(),
             user_cells: HashMap::new(),
             source_record_names: HashSet::new(),
-            source_record_defaults: HashMap::new(),
             source_record_schemas: HashMap::new(),
             user_cell_depth: 0,
             next_callback_id: 1,
@@ -1935,7 +1932,6 @@ impl Avm {
     fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
         self.user_cells.clear();
         self.source_record_names.clear();
-        self.source_record_defaults.clear();
         self.source_record_schemas.clear();
         self.user_cell_depth = 0;
         for stmt in &program.stmts {
@@ -1950,15 +1946,6 @@ impl Avm {
                 Stmt::RecordDef(record) => {
                     self.source_record_names.insert(record.name.node.clone());
                     self.source_record_schemas.insert(record.name.node.clone(), record.clone());
-                    if record.params.is_empty() {
-                        self.source_record_defaults.insert(
-                            record.name.node.clone(),
-                            record.fields.iter().filter_map(|field|
-                                field.default.as_ref().map(|value|
-                                    (field.name.node.clone(), value.clone()))
-                            ).collect(),
-                        );
-                    }
                 }
                 _ => {}
             }
