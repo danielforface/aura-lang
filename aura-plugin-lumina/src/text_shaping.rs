@@ -110,10 +110,23 @@ pub(crate) struct ShapedRun {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CaretCandidate {
+    /// Logical UTF-8 grapheme boundary. A BiDi junction can have TWO visual
+    /// positions; never collapse them without explicit affinity.
+    pub(crate) byte: usize,
+    pub(crate) visual_x: f32,
+    pub(crate) visual_run: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShapedText {
     pub(crate) bidi: BidiLayout,
     pub(crate) visual_runs: Vec<ShapedRun>,
     pub(crate) width: f32,
+    /// Only guaranteed at 1:1 grapheme-to-glyph-cluster boundaries.
+    /// Ligature interiors require font caret-position APIs, not guessing.
+    pub(crate) caret_candidates: Vec<CaretCandidate>,
+    pub(crate) caret_map_complete: bool,
     /// False: there is currently no glyph-ID texture upload in Raylib.
     pub(crate) native_paintable: bool,
 }
@@ -177,7 +190,39 @@ pub(crate) fn shape_text(
             glyphs,
         });
     }
-    Some(ShapedText { bidi, visual_runs, width: pen_x, native_paintable: false })
+    // Construct only unambiguous cluster-aligned stops. A ligature may
+    // represent several graphemes with one cluster; mark the map INCOMPLETE,
+    // rather than inventing equal-spaced cursor positions inside it.
+    let mut caret_candidates = Vec::new();
+    let mut complete = true;
+    for (run_index, run) in visual_runs.iter().enumerate() {
+        let corresponding = &bidi.visual_runs[run_index];
+        for g in corresponding.graphemes.clone() {
+            let start = bidi.grapheme_boundaries[g];
+            let end = bidi.grapheme_boundaries[g + 1];
+            let mut left = f32::INFINITY;
+            let mut right = f32::NEG_INFINITY;
+            for glyph in &run.glyphs {
+                if glyph.cluster_byte == start {
+                    left = left.min(glyph.pen_x);
+                    right = right.max(glyph.pen_x + glyph.advance_x);
+                }
+            }
+            if !left.is_finite() || !right.is_finite() {
+                complete = false; // GSUB ligature; cannot deduce interior.
+                continue;
+            }
+            let (a,b) = if run.rtl { (right,left) } else { (left,right) };
+            caret_candidates.push(CaretCandidate { byte:start, visual_x:a, visual_run:run_index });
+            caret_candidates.push(CaretCandidate { byte:end, visual_x:b, visual_run:run_index });
+        }
+    }
+    caret_candidates.sort_by(|a,b|a.byte.cmp(&b.byte)
+        .then(a.visual_run.cmp(&b.visual_run)));
+    Some(ShapedText {
+        bidi, visual_runs, width: pen_x, caret_candidates,
+        caret_map_complete: complete, native_paintable: false,
+    })
 }
 
 #[cfg(test)]
@@ -232,6 +277,23 @@ mod tests {
             assert!(shaped.visual_runs.iter().flat_map(|r|&r.glyphs)
                 .all(|g|g.glyph_id!=0 && s.is_char_boundary(g.cluster_byte)));
             assert!(shaped.visual_runs.iter().any(|r|!r.glyphs.is_empty()));
+        }
+    }
+    #[test] fn shaped_caret_boundaries_retain_bidi_affinity_without_guessing_ligature_interior(){
+        let path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(path).is_file(){return;}
+        let bytes=std::fs::read(path).unwrap();
+        for (text,rtl) in [("Hello",false),("שלום",true)] {
+            let shaped=shape_text(text,&bytes,24.0,ParagraphDirection::Auto).unwrap();
+            assert!(shaped.caret_map_complete,
+                "one glyph cluster per grapheme expected for fixture: {text}");
+            let boundaries=&shaped.bidi.grapheme_boundaries;
+            let stops:Vec<f32>=boundaries.iter().map(|byte|
+                shaped.caret_candidates.iter().find(|s|s.byte==*byte).unwrap().visual_x
+            ).collect();
+            assert_eq!(stops.len(),text.graphemes(true).count()+1);
+            assert!(stops.windows(2).all(|w| if rtl {w[0]>w[1]} else {w[0]<w[1]}),
+                "physical caret direction should reflect real bidi levels");
         }
     }
     #[test] fn rejects_missing_font_excessive_font_bytes_and_bad_px(){
