@@ -2206,33 +2206,47 @@ impl Avm {
                 Ok(AvmValue::Style(map))
             }
             ExprKind::RecordLit { name, fields } => {
-                let mut map: BTreeMap<String, AvmValue> = BTreeMap::new();
-                for (k, v) in fields {
-                    let vv = self.eval_expr(v)?;
-                    map.insert(k.node.clone(), vv);
+                // Raw-source AVM may run with the Checker and Z3 both disabled.
+                // Constructing a partial/structurally-bitcast Record is not
+                // equivalent to typed Core IR. Use the current source schema,
+                // never stale schemas or arbitrary dynamic field names.
+                let schema=self.source_record_schemas.get(&name.node).cloned()
+                    .ok_or_else(|| miette::miette!(
+                        "AVM: unknown Record constructor '{}'",name.node))?;
+                if !schema.params.is_empty() {
+                    return Err(miette::miette!(
+                        "AVM: unqualified generic Record constructor '{}'",name.node));
                 }
-                // Keep the same source-order explicit evaluation and
-                // declaration-order omitted defaults as Core lowering.
-                // Do not evaluate an unused default or overwrite explicit.
-                let defaults = self.source_record_defaults.get(&name.node).cloned()
-                    .unwrap_or_default();
-                for (field_name, default_expr) in defaults {
-                    if !map.contains_key(&field_name) {
-                        // Validate the *entire* static default tree before
-                        // evaluation; reject dynamic, nominal mismatch, missing
-                        // required child fields and cyclic defaults.
-                        let schema=self.source_record_schemas.get(&name.node)
-                            .and_then(|def| def.fields.iter()
-                                .find(|field| field.name.node==field_name))
-                            .ok_or_else(|| miette::miette!(
-                                "AVM: missing Record schema for default '{}.{}'",
-                                name.node,field_name))?;
-                        self.qualify_source_record_default(
-                            &schema.ty.name.node, &default_expr,
-                            &mut vec![name.node.clone()])?;
-                        let value = self.eval_expr(&default_expr)?;
-                        map.insert(field_name, value);
+                let mut seen=HashSet::new();
+                let mut map: BTreeMap<String, AvmValue> = BTreeMap::new();
+                // Preserve explicit initializer evaluation order. Reject bad
+                // schema keys before evaluating a potentially effectful RHS.
+                for (k, v) in fields {
+                    if !seen.insert(k.node.as_str()) {
+                        return Err(miette::miette!(
+                            "AVM: duplicate Record initializer '{}.{}'",
+                            name.node,k.node));
                     }
+                    let expected=schema.fields.iter().find(|d| d.name.node==k.node)
+                        .ok_or_else(|| miette::miette!(
+                            "AVM: unknown field '{}.{}' in Record constructor",
+                            name.node,k.node))?;
+                    let vv=self.eval_expr(v)?;
+                    self.check_record_field_value(&expected.ty,&vv)?;
+                    map.insert(k.node.clone(),vv);
+                }
+                // Omitted field defaults are declaration ordered. Every
+                // required field must be present in the resulting Record.
+                for field in &schema.fields {
+                    if map.contains_key(&field.name.node) { continue; }
+                    let default=field.default.as_ref().ok_or_else(|| miette::miette!(
+                        "AVM: missing required Record field '{}.{}'",
+                        name.node,field.name.node))?;
+                    self.qualify_source_record_default(
+                        &field.ty.name.node,default,&mut vec![name.node.clone()])?;
+                    let value=self.eval_expr(default)?;
+                    self.check_record_field_value(&field.ty,&value)?;
+                    map.insert(field.name.node.clone(),value);
                 }
                 Ok(AvmValue::Record {
                     name: name.node.clone(),
