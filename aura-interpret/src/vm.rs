@@ -187,6 +187,9 @@ pub struct Avm {
     user_cells: HashMap<String, aura_ast::CellDef>,
     // Exact current-source schema for nominal/type/cycle guards on defaults.
     source_record_schemas: HashMap<String, aura_ast::RecordDef>,
+    // Current source only: monomorphic TypeAlias definitions are resolved
+    // to their concrete primitive integer width before raw AVM execution.
+    source_type_aliases: HashMap<String, aura_ast::TypeAlias>,
     user_cell_depth: usize,
 
     // Frame-local callback registry used by UI runtimes.
@@ -725,6 +728,7 @@ impl Avm {
             typed_integer_locals: HashMap::new(),
             user_cells: HashMap::new(),
             source_record_schemas: HashMap::new(),
+            source_type_aliases: HashMap::new(),
             user_cell_depth: 0,
             next_callback_id: 1,
             callbacks: HashMap::new(),
@@ -1644,12 +1648,12 @@ impl Avm {
                 // limited to concrete primitive integer widths; generic and
                 // alias typing is not certified by this runtime slice.
                 if let Some(ty) = &sd.ty {
-                    if qualified_raw_integer_annotation(ty) {
-                        self.check_record_field_value(ty, &v).map_err(|err| miette::miette!(
+                    if let Some(concrete) = self.resolve_raw_integer_annotation(ty)? {
+                        self.check_record_field_value(&concrete, &v).map_err(|err| miette::miette!(
                             "AVM: typed integer local '{}' out of range or type mismatch for '{}': {err}",
                             sd.name.node, ty.name.node
                         ))?;
-                        self.typed_integer_locals.insert(sd.name.node.clone(), ty.clone());
+                        self.typed_integer_locals.insert(sd.name.node.clone(), concrete);
                     } else {
                         self.typed_integer_locals.remove(&sd.name.node);
                     }
@@ -1958,6 +1962,7 @@ impl Avm {
     fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
         self.user_cells.clear();
         self.source_record_schemas.clear();
+        self.source_type_aliases.clear();
         self.typed_integer_locals.clear();
         self.user_cell_depth = 0;
         // Only one type namespace exists for source TypeAlias/Record/Enum.
@@ -1993,6 +1998,9 @@ impl Avm {
                 }
                 Stmt::RecordDef(record) => {
                     self.source_record_schemas.insert(record.name.node.clone(), record.clone());
+                }
+                Stmt::TypeAlias(alias) => {
+                    self.source_type_aliases.insert(alias.name.node.clone(), alias.clone());
                 }
                 _ => {}
             }
@@ -2032,6 +2040,8 @@ impl Avm {
         expr: &Expr,
         active: &mut Vec<String>,
     ) -> miette::Result<()> {
+        let resolved = self.resolve_raw_integer_alias(expected)?;
+        let expected = resolved.as_deref().unwrap_or(expected);
         match &expr.kind {
             ExprKind::IntLit(n) => {
                 // AVM stores integer values in i64. Refuse values which
@@ -2180,12 +2190,12 @@ impl Avm {
                     cell.name.node, param.name.node, nominal, name
                 ));
             }
-            if qualified_raw_integer_annotation(&param.ty) {
-                self.check_record_field_value(&param.ty, &value).map_err(|err| miette::miette!(
+            if let Some(concrete) = self.resolve_raw_integer_annotation(&param.ty)? {
+                self.check_record_field_value(&concrete, &value).map_err(|err| miette::miette!(
                     "AVM: typed integer parameter '{}.{}' out of range or type mismatch: {err}",
                     cell.name.node, param.name.node
                 ))?;
-                frame_integer_types.insert(param.name.node.clone(), param.ty.clone());
+                frame_integer_types.insert(param.name.node.clone(), concrete);
             }
             frame.insert(param.name.node.clone(), value);
         }
@@ -2202,6 +2212,55 @@ impl Avm {
         outcome
     }
 
+    // Source-limited alias resolution: only chains terminating in a concrete
+    // primitive integer have a qualified raw runtime contract. Fail closed on
+    // cycles or unqualified generic/refinement alias edges, not on records or
+    // unrelated nominal types which use their own qualification paths.
+    fn resolve_raw_integer_alias(&self, name: &str) -> miette::Result<Option<String>> {
+        let mut current = name.to_string();
+        let mut seen = HashSet::new();
+        loop {
+            if matches!(current.as_str(),
+                "u8" | "u16" | "u32" | "u64" |
+                "i8" | "i16" | "i32" | "i64" | "Int"
+            ) {
+                return Ok(Some(current));
+            }
+            let Some(alias) = self.source_type_aliases.get(&current) else {
+                return Ok(None);
+            };
+            if !seen.insert(current.clone()) {
+                return Err(miette::miette!(
+                    "AVM: cyclic integer TypeAlias resolution at '{}'", current
+                ));
+            }
+            if !alias.params.is_empty()
+                || !alias.target.args.is_empty()
+                || alias.target.range.is_some()
+            {
+                return Err(miette::miette!(
+                    "AVM: unqualified generic or refined TypeAlias '{}' in raw integer resolution",
+                    current
+                ));
+            }
+            current = alias.target.name.node.clone();
+        }
+    }
+
+    fn resolve_raw_integer_annotation(
+        &self, ty: &aura_ast::TypeRef
+    ) -> miette::Result<Option<aura_ast::TypeRef>> {
+        if !ty.args.is_empty() || ty.range.is_some() {
+            return Ok(None);
+        }
+        let Some(name) = self.resolve_raw_integer_alias(&ty.name.node)? else {
+            return Ok(None);
+        };
+        let mut concrete = ty.clone();
+        concrete.name.node = name;
+        Ok(Some(concrete))
+    }
+
     // This raw-source AVM runs without the static Checker. It must still
     // reject ill-typed functional assignments, instead of silently placing
     // a Bool inside a u32 field or bitcasting a structurally similar Record.
@@ -2210,7 +2269,8 @@ impl Avm {
         ty: &aura_ast::TypeRef,
         value: &AvmValue,
     ) -> miette::Result<()> {
-        let expected = ty.name.node.as_str();
+        let resolved = self.resolve_raw_integer_alias(&ty.name.node)?;
+        let expected = resolved.as_deref().unwrap_or(ty.name.node.as_str());
         if !ty.args.is_empty() {
             return Err(miette::miette!(
                 "AVM: unqualified generic Record field type '{}'", expected));
