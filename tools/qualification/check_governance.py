@@ -36,12 +36,12 @@ def main() -> None:
     if has_v2:
         if "AURA-QUAL-PLAN-002" not in v2 or "PROPOSED SUPERSESSION" not in v2:
             fail("V2 proposal metadata / supersession policy is missing")
-        v1rows = re.findall(r"^\\| AURA-Q\\d{2}-\\d{3} \\|.*$", v1, re.MULTILINE)
-        v2rows = re.findall(r"^\\| AURA-Q\\d{2}-\\d{3} \\|.*$", v2, re.MULTILINE)
+        v1rows = re.findall(r"^\| AURA-Q\d{2}-\d{3} \|.*$", v1, re.MULTILINE)
+        v2rows = re.findall(r"^\| AURA-Q\d{2}-\d{3} \|.*$", v2, re.MULTILINE)
         if not set(v1rows).issubset(set(v2rows)):
             fail("V2 must preserve every original V1 acceptance row byte-for-byte")
         for n in range(12, 19):
-            if not re.search(rf"^\\| AURA-Q{n}-\\d{{3}} \\|", v2, re.MULTILINE):
+            if not re.search(rf"^\| AURA-Q{n}-\d{{3}} \|", v2, re.MULTILINE):
                 fail(f"V2 missing Q{n} gate task entries")
     if not re.search(r"\*\*Active gate:\*\*.*Q\d{2}", progress):
         fail("PROGRESS.md must state Active gate")
