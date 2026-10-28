@@ -345,10 +345,10 @@ fn selected_unicode_font<'a>(
 #[cfg(feature="raylib")]
 fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
     focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>)
-    ->Vec<(String,String,i32,String,String)>{
+    ->Vec<(String,String,Option<String>,i32,String,String)>{
     fn walk(node:&UiNode,plan:&layout::LayoutNode,focus:&Option<FocusedTextInput>,
         sessions:&HashMap<u64,FocusedTextInput>,
-        out:&mut Vec<(String,String,i32,String,String)>){
+        out:&mut Vec<(String,String,Option<String>,i32,String,String)>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
@@ -365,7 +365,8 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
             if let (Some(key),Some(path))=(
                 shaped_gpu::entry_key(node,display,size),prop_string(node,"font_path")){
                 if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
-                    out.push((key,path.to_owned(),size,
+                    out.push((key,path.to_owned(),
+                        prop_string(node,"fallback_font_path").map(str::to_owned),size,
                         prop_string(node,"direction").unwrap_or("auto").to_owned(),display.to_owned()));
                 }
             }
@@ -675,6 +676,26 @@ impl AuraLuminaPlugin {
         let glyph_ids=prepared.shaped.visual_runs.iter()
             .flat_map(|r|r.glyphs.iter().map(|g|g.glyph_id)).collect();
         Some((prepared.cells.len(),glyph_ids,prepared.shaped.width))
+    }
+
+    /// Actual one-frame GPU upload evidence for a two-face atlas.
+    /// Reports (rasterized pair count, [(origin_font_index, real GID)], width).
+    pub fn diagnostic_shaped_gpu_fallback(
+        &self,primary:&str,fallback:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<(usize,u16)>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",primary);
+        node.set_prop("fallback_font_path",fallback);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyphs=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|(g.font_index,g.glyph_id)))
+            .collect();
+        Some((prepared.cells.len(),glyphs,prepared.shaped.width))
     }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red

@@ -11,6 +11,8 @@ pub(crate) const MAX_SHAPE_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_SHAPE_FONT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SHAPE_GLYPHS: usize = 16 * 1024;
 const MAX_VISUAL_RUNS: usize = 1024;
+pub(crate) const MAX_FONT_CHAIN: usize = 2;
+const MAX_FONT_SEGMENTS: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ParagraphDirection { Auto, Ltr, Rtl }
@@ -90,6 +92,8 @@ pub(crate) fn analyze(text: &str, direction: ParagraphDirection) -> Option<BidiL
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShapedGlyph {
     pub(crate) glyph_id: u16,
+    /// Index into explicitly provided [primary, fallback] font faces, NEVER a scalar.
+    pub(crate) font_index: usize,
     /// UTF-8 byte offset in full logical source (not a character index).
     pub(crate) cluster_byte: usize,
     pub(crate) advance_x: f32,
@@ -137,92 +141,138 @@ pub(crate) struct ShapedText {
 pub(crate) fn shape_text(
     source: &str, font_data: &[u8], px: f32, direction: ParagraphDirection,
 ) -> Option<ShapedText> {
-    if font_data.is_empty() || font_data.len() > MAX_SHAPE_FONT_BYTES ||
+    shape_text_with_fonts(source, &[font_data], px, direction)
+}
+
+/// Explicit, bounded primary+one-secondary font selection. Every UAX29
+/// grapheme is covered wholly by ONE cmap; no scalar-by-scalar fallback.
+/// Group same-font neighboring graphemes into script-safe shaping segments,
+/// then reshape every segment in its UAX9 visual position. Font IDs are
+/// carried through to the GPU atlas so GID namespaces never collide.
+pub(crate) fn shape_text_with_fonts(
+    source: &str, font_data: &[&[u8]], px: f32, direction: ParagraphDirection,
+) -> Option<ShapedText> {
+    if font_data.is_empty() || font_data.len()>MAX_FONT_CHAIN ||
         !px.is_finite() || !(10.0..=96.0).contains(&px) { return None; }
-    let bidi = analyze(source, direction)?;
-    let face = rustybuzz::Face::from_slice(font_data, 0)?;
-    let units = face.units_per_em();
-    if units <= 0 { return None; }
-    let scale = px / units as f32;
-    let mut visual_runs = Vec::with_capacity(bidi.visual_runs.len());
-    let mut pen_x = 0.0_f32;
-    let mut count = 0_usize;
-    for run in &bidi.visual_runs {
-        let slice = &source[run.source_bytes.clone()];
-        let mut buffer = rustybuzz::UnicodeBuffer::new();
-        buffer.push_str(slice);
-        buffer.guess_segment_properties();
-        buffer.set_direction(if run.rtl {
-            rustybuzz::Direction::RightToLeft
-        } else { rustybuzz::Direction::LeftToRight });
-        let output = rustybuzz::shape(&face, &[], buffer);
-        if count.saturating_add(output.len()) > MAX_SHAPE_GLYPHS { return None; }
-        count += output.len();
-        let mut glyphs = Vec::with_capacity(output.len());
-        let origin = pen_x;
-        for (info, position) in output.glyph_infos().iter().zip(output.glyph_positions()) {
-            let cluster_byte = run.source_bytes.start.checked_add(info.cluster as usize)?;
-            if cluster_byte >= run.source_bytes.end ||
-                !source.is_char_boundary(cluster_byte) || info.glyph_id == 0 {
-                // Missing glyph or non-source-aligned cluster: no false paint proof.
-                return None;
-            }
-            let advance_x = position.x_advance as f32 * scale;
-            let advance_y = position.y_advance as f32 * scale;
-            let offset_x = position.x_offset as f32 * scale;
-            let offset_y = position.y_offset as f32 * scale;
-            if ![advance_x, advance_y, offset_x, offset_y].iter().all(|n|n.is_finite()) {
-                return None;
-            }
-            glyphs.push(ShapedGlyph {
-                glyph_id: info.glyph_id as u16,
-                cluster_byte,
-                advance_x, advance_y, offset_x, offset_y, pen_x,
-            });
-            pen_x += advance_x;
+    let mut faces=Vec::with_capacity(font_data.len());
+    let mut scales=Vec::with_capacity(font_data.len());
+    for bytes in font_data {
+        if bytes.is_empty() || bytes.len()>MAX_SHAPE_FONT_BYTES {return None;}
+        let face=rustybuzz::Face::from_slice(bytes,0)?;
+        let units=face.units_per_em();
+        if units<=0{return None;}
+        scales.push(px/units as f32);
+        faces.push(face);
+    }
+    let bidi=analyze(source,direction)?;
+    let source_graphemes:Vec<&str>=source.graphemes(true).collect();
+    let mut choices=Vec::with_capacity(source_graphemes.len());
+    for g in &source_graphemes {
+        let selected=faces.iter().position(|face| g.chars().all(|ch|face.glyph_index(ch).is_some()))?;
+        choices.push(selected);
+    }
+    // Never split a cursively joining Arabic/Syriac sequence across fonts.
+    // A font transition in such a sequence requires a shaping backend that
+    // can negotiate cross-font joining, which this bounded path cannot do.
+    fn joining(ch:char)->bool {
+        matches!(ch, '\u{0600}'..='\u{06FF}' | '\u{0700}'..='\u{074F}' |
+            '\u{0750}'..='\u{077F}' | '\u{08A0}'..='\u{08FF}')
+    }
+    for i in 1..choices.len() {
+        if choices[i]!=choices[i-1] {
+            let prev=source_graphemes[i-1].chars().last()?;
+            let next=source_graphemes[i].chars().next()?;
+            if joining(prev)&&joining(next){return None;}
         }
-        if !pen_x.is_finite() || pen_x < origin { return None; }
-        visual_runs.push(ShapedRun {
-            source_bytes: run.source_bytes.clone(),
-            rtl: run.rtl,
-            visual_x: origin,
-            width: pen_x - origin,
-            glyphs,
+    }
+    let mut visual_runs=Vec::with_capacity(bidi.visual_runs.len());
+    let mut pen_x=0.0_f32;
+    let mut count=0_usize;
+    let mut segment_total=0_usize;
+    for run in &bidi.visual_runs {
+        let origin=pen_x;
+        let mut glyphs=Vec::new();
+        // Segment *logical* order at complete graphemes and same font.
+        let mut groups=Vec::new();
+        let mut i=run.graphemes.start;
+        while i<run.graphemes.end {
+            let face_idx=choices[i];
+            let start=i;
+            i+=1;
+            while i<run.graphemes.end&&choices[i]==face_idx{i+=1;}
+            groups.push((start,i,face_idx));
+            segment_total+=1;
+            if segment_total>MAX_FONT_SEGMENTS{return None;}
+        }
+        // UAX9 visual runs are left-to-right, but an RTL run's logical
+        // font groups must be processed last-to-first before glyph layout.
+        if run.rtl {groups.reverse();}
+        for (start,end,face_idx) in groups {
+            let first=bidi.grapheme_boundaries[start];
+            let last=bidi.grapheme_boundaries[end];
+            let mut buffer=rustybuzz::UnicodeBuffer::new();
+            buffer.push_str(&source[first..last]);
+            buffer.guess_segment_properties();
+            buffer.set_direction(if run.rtl {
+                rustybuzz::Direction::RightToLeft
+            }else{rustybuzz::Direction::LeftToRight});
+            let output=rustybuzz::shape(&faces[face_idx],&[],buffer);
+            if count.saturating_add(output.len())>MAX_SHAPE_GLYPHS{return None;}
+            count+=output.len();
+            for (info,pos) in output.glyph_infos().iter().zip(output.glyph_positions()) {
+                let cluster_byte=first.checked_add(info.cluster as usize)?;
+                if cluster_byte>=last || !source.is_char_boundary(cluster_byte) ||
+                    info.glyph_id==0 || info.glyph_id>u16::MAX as u32{return None;}
+                let scale=scales[face_idx];
+                let advance_x=pos.x_advance as f32*scale;
+                let advance_y=pos.y_advance as f32*scale;
+                let offset_x=pos.x_offset as f32*scale;
+                let offset_y=pos.y_offset as f32*scale;
+                if ![advance_x,advance_y,offset_x,offset_y].iter().all(|x|x.is_finite()) {
+                    return None;
+                }
+                glyphs.push(ShapedGlyph{
+                    glyph_id:info.glyph_id as u16,font_index:face_idx,
+                    cluster_byte,advance_x,advance_y,offset_x,offset_y,pen_x,
+                });
+                pen_x+=advance_x;
+            }
+        }
+        if !pen_x.is_finite()||pen_x<origin{return None;}
+        visual_runs.push(ShapedRun{
+            source_bytes:run.source_bytes.clone(),rtl:run.rtl,visual_x:origin,
+            width:pen_x-origin,glyphs
         });
     }
-    // Construct only unambiguous cluster-aligned stops. A ligature may
-    // represent several graphemes with one cluster; mark the map INCOMPLETE,
-    // rather than inventing equal-spaced cursor positions inside it.
-    let mut caret_candidates = Vec::new();
-    let mut complete = true;
-    for (run_index, run) in visual_runs.iter().enumerate() {
-        let corresponding = &bidi.visual_runs[run_index];
-        for g in corresponding.graphemes.clone() {
-            let start = bidi.grapheme_boundaries[g];
-            let end = bidi.grapheme_boundaries[g + 1];
-            let mut left = f32::INFINITY;
-            let mut right = f32::NEG_INFINITY;
+    // Keep the *same* exact-cluster UAX9 caret model as the old one-font
+    // shaper: no interpolated caret inside a glyph ligature.
+    let mut caret_candidates=Vec::new();
+    let mut complete=true;
+    for (run_index,run) in visual_runs.iter().enumerate(){
+        let corresponding=&bidi.visual_runs[run_index];
+        for g in corresponding.graphemes.clone(){
+            let start=bidi.grapheme_boundaries[g];
+            let end=bidi.grapheme_boundaries[g+1];
+            let mut left=f32::INFINITY;
+            let mut right=f32::NEG_INFINITY;
             for glyph in &run.glyphs {
-                if glyph.cluster_byte == start {
-                    left = left.min(glyph.pen_x);
-                    right = right.max(glyph.pen_x + glyph.advance_x);
+                if glyph.cluster_byte==start{
+                    left=left.min(glyph.pen_x);
+                    right=right.max(glyph.pen_x+glyph.advance_x);
                 }
             }
-            if !left.is_finite() || !right.is_finite() {
-                complete = false; // GSUB ligature; cannot deduce interior.
-                continue;
+            if !left.is_finite()||!right.is_finite(){
+                complete=false;continue;
             }
-            let (a,b) = if run.rtl { (right,left) } else { (left,right) };
-            caret_candidates.push(CaretCandidate { byte:start, visual_x:a, visual_run:run_index });
-            caret_candidates.push(CaretCandidate { byte:end, visual_x:b, visual_run:run_index });
+            let (a,b)=if run.rtl{(right,left)}else{(left,right)};
+            caret_candidates.push(CaretCandidate{byte:start,visual_x:a,visual_run:run_index});
+            caret_candidates.push(CaretCandidate{byte:end,visual_x:b,visual_run:run_index});
         }
     }
     caret_candidates.sort_by(|a,b|a.byte.cmp(&b.byte)
         .then(a.visual_run.cmp(&b.visual_run)));
-    Some(ShapedText {
-        bidi, visual_runs, width: pen_x, caret_candidates,
-        caret_map_complete: complete, native_paintable: false,
-    })
+    Some(ShapedText{bidi,visual_runs,width:pen_x,caret_candidates,
+        caret_map_complete:complete,native_paintable:false})
 }
 
 #[cfg(test)]
@@ -301,5 +351,42 @@ mod tests {
         assert!(shape_text("abc",&vec![0;MAX_SHAPE_FONT_BYTES+1],24.0,ParagraphDirection::Auto).is_none());
         assert!(shape_text("abc",b"",24.0,ParagraphDirection::Auto).is_none());
         assert!(shape_text("abc",b"bad",f32::NAN,ParagraphDirection::Auto).is_none());
+    }
+
+    #[test] fn real_serif_to_sans_hebrew_and_arabic_fallback_owns_actual_glyph_ids(){
+        let p="/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf";
+        let f="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(p).is_file()||!std::path::Path::new(f).is_file(){return;}
+        let serif=std::fs::read(p).unwrap();
+        let sans=std::fs::read(f).unwrap();
+        for (text,needle) in [("Hello שלום","שלום"),("ABC سلام","سلام")] {
+            assert!(shape_text(text,&serif,28.0,ParagraphDirection::Auto).is_none(),
+                "primary alone must fail missing cmap without .notdef substitution");
+            let shaped=shape_text_with_fonts(text,&[&serif,&sans],28.0,
+                ParagraphDirection::Auto).expect("whole grapheme secondary font");
+            let fallback_start=text.find(needle).unwrap();
+            let g:Vec<_>=shaped.visual_runs.iter().flat_map(|r|r.glyphs.iter()).collect();
+            assert!(g.iter().any(|g|g.font_index==0&&g.cluster_byte<fallback_start));
+            assert!(g.iter().any(|g|g.font_index==1&&g.cluster_byte>=fallback_start));
+            assert!(g.iter().all(|g|g.glyph_id!=0&&text.is_char_boundary(g.cluster_byte)));
+            assert!(shaped.width>10.0);
+        }
+    }
+    #[test] fn fallback_is_bounded_complete_cluster_and_bidi_non_destructive(){
+        let p="/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf";
+        let f="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(p).is_file()||!std::path::Path::new(f).is_file(){return;}
+        let a=std::fs::read(p).unwrap();let b=std::fs::read(f).unwrap();
+        assert!(shape_text_with_fonts("שלום",&[&a,&b],26.0,ParagraphDirection::Auto).is_some());
+        assert!(shape_text_with_fonts("שלום",&[&a],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,&b,&b],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,b"no font"],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,&b],f32::NAN,ParagraphDirection::Auto).is_none());
+        // The same source UTF-8 grapheme boundaries must survive fallback.
+        let t="Aשָׁלום";
+        let res=shape_text_with_fonts(t,&[&a,&b],26.0,ParagraphDirection::Auto).unwrap();
+        assert_eq!(res.bidi.grapheme_boundaries.last(),Some(&t.len()));
+        assert!(res.visual_runs.iter().flat_map(|r|r.glyphs.iter()).all(|g|
+            g.cluster_byte<t.len()&&t.is_char_boundary(g.cluster_byte)));
     }
 }
