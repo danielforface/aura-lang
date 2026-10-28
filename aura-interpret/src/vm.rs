@@ -185,6 +185,8 @@ pub struct Avm {
     source_record_names: HashSet<String>,
     // Declaration-ordered qualified defaults, scoped to the current source.
     source_record_defaults: HashMap<String, Vec<(String, Expr)>>,
+    // Exact current-source schema for nominal/type/cycle guards on defaults.
+    source_record_schemas: HashMap<String, aura_ast::RecordDef>,
     user_cell_depth: usize,
 
     // Frame-local callback registry used by UI runtimes.
@@ -723,6 +725,7 @@ impl Avm {
             user_cells: HashMap::new(),
             source_record_names: HashSet::new(),
             source_record_defaults: HashMap::new(),
+            source_record_schemas: HashMap::new(),
             user_cell_depth: 0,
             next_callback_id: 1,
             callbacks: HashMap::new(),
@@ -1933,6 +1936,7 @@ impl Avm {
         self.user_cells.clear();
         self.source_record_names.clear();
         self.source_record_defaults.clear();
+        self.source_record_schemas.clear();
         self.user_cell_depth = 0;
         for stmt in &program.stmts {
             match stmt {
@@ -1945,6 +1949,7 @@ impl Avm {
                 }
                 Stmt::RecordDef(record) => {
                     self.source_record_names.insert(record.name.node.clone());
+                    self.source_record_schemas.insert(record.name.node.clone(), record.clone());
                     if record.params.is_empty() {
                         self.source_record_defaults.insert(
                             record.name.node.clone(),
@@ -1959,6 +1964,74 @@ impl Avm {
             }
         }
         Ok(())
+    }
+
+    // No-Z3 AVM executes raw parsed source, so a missing Record field must
+    // not become an arbitrary expression evaluator. Permit only concrete
+    // scalar literals and finite, schema-compatible nested nominal literals.
+    // This mirrors the bounded source subset admitted by Core; the AVM guard
+    // is not a replacement for full semantic checking or formal verification.
+    fn qualify_source_record_default(
+        &self,
+        expected: &str,
+        expr: &Expr,
+        active: &mut Vec<String>,
+    ) -> miette::Result<()> {
+        match &expr.kind {
+            ExprKind::IntLit(_) if matches!(expected,
+                "Int" | "u8" | "u16" | "u32" | "u64" |
+                "i8" | "i16" | "i32" | "i64" |
+                "f32" | "f64" | "char") => Ok(()),
+            ExprKind::Ident(id) if expected == "bool"
+                && (id.node == "true" || id.node == "false") => Ok(()),
+            ExprKind::RecordLit { name, fields } => {
+                if name.node != expected {
+                    return Err(miette::miette!(
+                        "AVM: nominal Record default type mismatch: expected '{}', got '{}'",
+                        expected, name.node
+                    ));
+                }
+                let def=self.source_record_schemas.get(&name.node)
+                    .ok_or_else(|| miette::miette!(
+                        "AVM: unknown source Record default '{}'", name.node))?;
+                if !def.params.is_empty() {
+                    return Err(miette::miette!(
+                        "AVM: unqualified generic Record default '{}'", name.node));
+                }
+                if active.iter().any(|v| v == &name.node) {
+                    return Err(miette::miette!(
+                        "AVM: cyclic nominal Record default '{}'", name.node));
+                }
+                active.push(name.node.clone());
+                let mut seen=HashSet::new();
+                for (field_name,field_expr) in fields {
+                    if !seen.insert(field_name.node.as_str()) {
+                        return Err(miette::miette!(
+                            "AVM: duplicate Record default field '{}'", field_name.node));
+                    }
+                    let declaration=def.fields.iter()
+                        .find(|f| f.name.node==field_name.node)
+                        .ok_or_else(|| miette::miette!(
+                            "AVM: unknown Record default field '{}'", field_name.node))?;
+                    self.qualify_source_record_default(
+                        &declaration.ty.name.node,field_expr,active)?;
+                }
+                for declaration in &def.fields {
+                    if seen.contains(declaration.name.node.as_str()) { continue; }
+                    let default=declaration.default.as_ref()
+                        .ok_or_else(|| miette::miette!(
+                            "AVM: missing required Record default field '{}'",
+                            declaration.name.node))?;
+                    self.qualify_source_record_default(
+                        &declaration.ty.name.node,default,active)?;
+                }
+                active.pop();
+                Ok(())
+            }
+            _ => Err(miette::miette!(
+                "AVM: unqualified nonliteral Record default for '{}'",expected
+            )),
+        }
     }
 
     fn eval_user_cell_call(
@@ -2067,21 +2140,18 @@ impl Avm {
                     .unwrap_or_default();
                 for (field_name, default_expr) in defaults {
                     if !map.contains_key(&field_name) {
-                        // Match the qualified Checker/IR contract, rather
-                        // than executing an arbitrary default expression in
-                        // the caller's frame without a source-scope proof.
-                        let qualified = match &default_expr.kind {
-                            ExprKind::IntLit(_) => true,
-                            ExprKind::Ident(id) =>
-                                id.node == "true" || id.node == "false",
-                            _ => false,
-                        };
-                        if !qualified {
-                            return Err(miette::miette!(
-                                "AVM: unqualified nonliteral Record default '{}.{}'",
-                                name.node, field_name
-                            ));
-                        }
+                        // Validate the *entire* static default tree before
+                        // evaluation; reject dynamic, nominal mismatch, missing
+                        // required child fields and cyclic defaults.
+                        let schema=self.source_record_schemas.get(&name.node)
+                            .and_then(|def| def.fields.iter()
+                                .find(|field| field.name.node==field_name))
+                            .ok_or_else(|| miette::miette!(
+                                "AVM: missing Record schema for default '{}.{}'",
+                                name.node,field_name))?;
+                        self.qualify_source_record_default(
+                            &schema.ty.name.node, &default_expr,
+                            &mut vec![name.node.clone()])?;
                         let value = self.eval_expr(&default_expr)?;
                         map.insert(field_name, value);
                     }
