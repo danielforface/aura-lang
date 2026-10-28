@@ -45,7 +45,7 @@ impl LayoutNode {
     }
 }
 
-fn prop(node: &UiNode, key: &str) -> Option<&str> {
+fn prop<'a>(node: &'a UiNode, key: &str) -> Option<&'a str> {
     node.props.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 fn int(node: &UiNode, key: &str) -> Option<i32> {
