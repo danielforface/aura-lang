@@ -657,3 +657,44 @@ fn raw_avm_preserves_valid_typed_local_bounds_without_proof() {
         assert!(!result.verified, "raw AVM cannot claim proof");
     }
 }
+
+#[test]
+fn raw_avm_rejects_typed_integer_local_reassignment_even_if_unused() {
+    for (label,src) in [
+        ("u8 direct overflow",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    n = 300\n    yield 7\n"),
+        ("i8 direct overflow",
+         "type Signed = record { n: i8 }\ncell main() ->:\n    val mut n: i8 = 7\n    n = 128\n    yield 7\n"),
+        ("u8 indirect overflow",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    val raw = 300\n    n = raw\n    yield 7\n"),
+        ("u8 negative",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    n = -1\n    yield 7\n"),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let failure=vm.exec_entry_cell(src,"main")
+            .expect_err("typed numeric local must not accept a violating reassignment");
+        let msg=failure.to_string();
+        assert!(msg.contains("typed") && msg.contains("range"),
+            "{label}: expected source-local width diagnosis, got {msg}");
+    }
+}
+#[test]
+fn raw_avm_typed_integer_guards_are_call_frame_isolated() {
+    let source=r#"
+type Tiny = record { n: u8 }
+cell inner() ->:
+    val mut n: u8 = 7
+    n = 255
+    yield n
+cell main() ->:
+    val mut n: i8 = 7
+    val seen = inner()
+    n = 127
+    yield n
+"#;
+    let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    let result=vm.exec_entry_cell(source,"main")
+        .expect("valid typed local assignments across call frames must succeed");
+    assert_eq!(result.value,AvmValue::Int(127));
+    assert!(!result.verified, "raw AVM is not proof");
+}
