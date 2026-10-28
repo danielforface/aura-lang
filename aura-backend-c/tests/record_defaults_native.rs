@@ -512,9 +512,9 @@ cell alias_signed() ->:
     fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
     fs::write(scratch.0.join("driver.c"),concat!(
         "#include <stdint.h>\n",
-        "uint32_t alias_default(void);\n",
-        "uint32_t alias_explicit(void);\n",
-        "uint32_t alias_signed(void);\n",
+        "uint8_t alias_default(void);\n",
+        "uint8_t alias_explicit(void);\n",
+        "int8_t alias_signed(void);\n",
         "int main(void) {\n",
         "  return (alias_default()==255 && alias_explicit()==255",
         " && alias_signed()==127) ? 0 : 1;\n",
