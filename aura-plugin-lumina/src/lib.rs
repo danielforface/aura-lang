@@ -20,6 +20,8 @@ mod font_atlas;
 
 #[cfg(any(feature = "raylib", test))]
 mod text_shaping;
+#[cfg(feature="raylib")]
+mod shaped_gpu;
 
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
@@ -117,6 +119,7 @@ struct LuminaWindow {
     // shutdown in the actual Xvfb Raylib smoke, not in headless unit tests.
     textures: HashMap<String, Texture2D>,
     fonts: HashMap<String,LoadedUnicodeFont>,
+    shaped_textures: HashMap<String,shaped_gpu::PreparedGlyphText>,
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
@@ -269,7 +272,7 @@ fn ensure_fonts_loaded(
         focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
         result:&mut HashMap<String,(String,i32,Vec<String>)>) {
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
-        if node.kind=="Text" || node.kind=="TextInput" {
+        if (node.kind=="Text" || node.kind=="TextInput") && !shaped_gpu::is_opted(node) {
             if let Some(path)=prop_string(node,"font_path") {
                 let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text" {20}else{18}).max(10);
                 if let Some(key)=font_atlas::font_key(path,size) {
@@ -333,6 +336,41 @@ fn selected_unicode_font<'a>(
     if font_atlas::covers(&loaded.glyphs,text){Some(&loaded.font)}else{None}
 }
 
+#[cfg(feature="raylib")]
+fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
+    focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>)
+    ->Vec<(String,String,i32,String,String)>{
+    fn walk(node:&UiNode,plan:&layout::LayoutNode,focus:&Option<FocusedTextInput>,
+        sessions:&HashMap<u64,FocusedTextInput>,
+        out:&mut Vec<(String,String,i32,String,String)>){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
+            let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
+            let display=if node.kind=="Text"{
+                prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
+            }else{
+                let id=parse_callback_id(prop_string(node,"on_change"));
+                let value=focus.as_ref().filter(|e|Some(e.on_change)==id)
+                    .or_else(||id.and_then(|id|sessions.get(&id)))
+                    .map(|e|e.session.buffer.as_str())
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))).unwrap_or("");
+                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value}
+            };
+            if let (Some(key),Some(path))=(
+                shaped_gpu::entry_key(node,display,size),prop_string(node,"font_path")){
+                if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
+                    out.push((key,path.to_owned(),size,
+                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display.to_owned()));
+                }
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children){
+            if let Some(prepared)=slot{walk(child,prepared,focus,sessions,out);}
+        }
+    }
+    let mut out=Vec::new();walk(tree,plan,focus,sessions,&mut out);out
+}
+
 #[cfg(feature = "raylib")]
 fn measure_input_visuals(
     rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
@@ -340,6 +378,7 @@ fn measure_input_visuals(
     focused: &mut Option<FocusedTextInput>,
     sessions: &mut HashMap<u64,FocusedTextInput>,
     fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
 ) -> HashMap<u64,text_viewport::Visual> {
     let allowed: std::collections::HashSet<u64> = focus_order.iter().filter_map(|x|match x {
         layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
@@ -351,6 +390,7 @@ fn measure_input_visuals(
         focused:&mut Option<FocusedTextInput>,
         sessions:&mut HashMap<u64,FocusedTextInput>,
         fonts:&HashMap<String,LoadedUnicodeFont>,
+        shaped:&HashMap<String,shaped_gpu::PreparedGlyphText>,
         result:&mut HashMap<u64,text_viewport::Visual>,
     ) {
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
@@ -362,22 +402,30 @@ fn measure_input_visuals(
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
-                let font=selected_unicode_font(fonts,node,size,value);
+                let opt=shaped_gpu::is_opted(node);
+                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
+                let prepared=shaped_gpu::entry_key(node,display,size).and_then(|k|shaped.get(&k));
+                let font=if opt{None}else{selected_unicode_font(fonts,node,size,value)};
                 let measure=|text:&str|->f32 {
-                    if let Some(font)=font {
-                        font.measure_text(text,size as f32,0.0).x.max(0.0)
-                    } else {rl.measure_text(text,size).max(0) as f32}
+                    if let Some(font)=font{font.measure_text(text,size as f32,0.0).x.max(0.0)}
+                    else {rl.measure_text(text,size).max(0) as f32}
                 };
-                let width=measure(value);
-                let caret=if active {
-                    entry.as_ref().map(|fi|measure(
-                        text_viewport::grapheme_prefix(value,fi.session.caret)))
-                }else{None}.unwrap_or(0.0);
-                let selection=if active {
+                let width=prepared.map(|r|r.shaped.width)
+                    .unwrap_or(if opt {0.0}else{measure(value)});
+                let at=|index:usize|->Option<f32>{
+                    let byte=text_viewport::grapheme_prefix(value,index).len();
+                    prepared?.shaped.caret_candidates.iter().find(|g|g.byte==byte).map(|g|g.visual_x)
+                };
+                let caret=if active{entry.as_ref().map(|fi|{
+                    if opt{at(fi.session.caret).unwrap_or(0.0)}
+                    else{measure(text_viewport::grapheme_prefix(value,fi.session.caret))}
+                })}else{None}.unwrap_or(0.0);
+                let selection=if active{
                     entry.as_ref().and_then(|fi|fi.session.selection())
-                        .map(|(a,b)|(
-                            measure(text_viewport::grapheme_prefix(value,a)),
-                            measure(text_viewport::grapheme_prefix(value,b))))
+                        .and_then(|(a,b)|if opt{Some((at(a)?,at(b)?))}
+                            else{Some((measure(text_viewport::grapheme_prefix(value,a)),
+                                measure(text_viewport::grapheme_prefix(value,b))))})
+                        .map(|(a,b)|(a.min(b),a.max(b)))
                 }else{None};
                 let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
                 let content=text_viewport::content_bounds(plan.bounds);
@@ -388,12 +436,12 @@ fn measure_input_visuals(
         }
         for (child,slot) in node.children.iter().zip(&plan.children){
             if let Some(child_plan)=slot {
-                collect(rl,child,child_plan,allowed,focused,sessions,fonts,result);
+                collect(rl,child,child_plan,allowed,focused,sessions,fonts,shaped,result);
             }
         }
     }
     let mut result=HashMap::new();
-    collect(rl,tree,plan,&allowed,focused,sessions,fonts,&mut result);
+    collect(rl,tree,plan,&allowed,focused,sessions,fonts,shaped,&mut result);
     result
 }
 
@@ -555,6 +603,53 @@ impl AuraLuminaPlugin {
         Some(loaded.font.measure_text(text,size as f32,0.0).x)
     }
 
+    /// Reports exactly which actual font-index glyphs have an uploaded GPU
+    /// raster atlas; unlike a mere successful CPU shaper this requires a
+    /// prepared Texture2D in the active Raylib window.
+    pub fn diagnostic_shaped_gpu(
+        &self,font_path:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<u16>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",font_path);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyph_ids=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|g.glyph_id)).collect();
+        Some((prepared.cells.len(),glyph_ids,prepared.shaped.width))
+    }
+
+    /// Pixel-position sensitive framebuffer digest. Counts only text-red
+    /// pixels (not background); different visual forms produce distinct
+    /// hashes even if the raw number of red pixels is similar. Xvfb only.
+    pub fn diagnostic_red_signature(&self,x:i32,y:i32,width:i32,height:i32)
+        ->Option<(usize,u64)> {
+        if width<=0||height<=0||width>640||height>480{return None;}
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),win.rl.get_screen_height(),
+            win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut count=0;
+        let mut hash=14695981039346656037u64;
+        for iy in y..y.saturating_add(height) {
+            for ix in x..x.saturating_add(width) {
+                let (px,py)=m.logical_to_framebuffer(ix as f32,iy as f32)?;
+                if px>=image.width()||py>=image.height(){return None;}
+                let c=image.get_color(px,py);
+                if c.r>160&&c.g<155&&c.b<155 {
+                    count+=1;
+                    hash=(hash^(ix as u64)).wrapping_mul(1099511628211);
+                    hash=(hash^(iy as u64)).wrapping_mul(1099511628211);
+                }
+            }
+        }
+        Some((count,hash))
+    }
+
     /// One GPU readback over a bounded logical rectangle, counting only
     /// distinctly red text pixels. Never expose the raw screenshot pixels.
     pub fn diagnostic_red_pixels_in_rect(&self,x:i32,y:i32,width:i32,height:i32)->Option<usize> {
@@ -695,6 +790,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
+                    shaped_textures: HashMap::new(),
                 });
             }
 
@@ -845,9 +941,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             }
             ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
                 &planned_layout,&win.focused_input,&win.input_sessions);
+            let requests=collect_shaped_requests(tree,&planned_layout,
+                &win.focused_input,&win.input_sessions);
+            shaped_gpu::prepare(&mut win.rl,&win.thread,&mut win.shaped_textures,&requests);
             let text_views=measure_input_visuals(
                 &win.rl,tree,&planned_layout,&focus_order,
-                &mut win.focused_input,&mut win.input_sessions,&win.fonts);
+                &mut win.focused_input,&mut win.input_sessions,&win.fonts,&win.shaped_textures);
             win.last_text_views=text_views.clone();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
@@ -859,7 +958,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
-                    &text_views,&win.fonts,
+                    &text_views,&win.fonts,&win.shaped_textures,
                 );
             }
             fb.clicked_callback_id = click_cb;
@@ -1043,10 +1142,11 @@ fn render_children(
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
     fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -1064,6 +1164,7 @@ fn render_node(
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
     fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
 ) {
     // Independent scissor scopes. TextInput draws its frame under inherited
     // clipping, then its text under its inner bounds, never nesting scissors.
@@ -1071,7 +1172,7 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, textures, input_sessions, text_views, fonts, false);
+            focused_input, textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -1079,10 +1180,10 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,textures,input_sessions,text_views,fonts,true);
+                focused_input,textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -1098,6 +1199,7 @@ fn paint_node<D: RaylibDraw>(
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
     fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
     text_only: bool,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
@@ -1140,7 +1242,11 @@ fn paint_node<D: RaylibDraw>(
             let text = prop_string(node, "text")
                 .or_else(|| prop_string(node, "content"))
                 .unwrap_or("");
-            if let Some(font)=selected_unicode_font(fonts,node,size,text) {
+            if shaped_gpu::is_opted(node) {
+                if let Some(r)=shaped_gpu::entry_key(node,text,size).and_then(|k|shaped.get(&k)){
+                    shaped_gpu::paint(d,r,bounds.x,bounds.y,color);
+                } // fail-closed: no incorrect legacy codepoint RTL paint.
+            } else if let Some(font)=selected_unicode_font(fonts,node,size,text) {
                 d.draw_text_ex(font,text,Vector2::new(bounds.x,bounds.y),size as f32,0.0,color);
             } else {
                 d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
@@ -1283,7 +1389,12 @@ fn paint_node<D: RaylibDraw>(
                         x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
                 }
             }
-            if let Some(font)=selected_unicode_font(fonts,node,ts,display) {
+            let shaped_present=shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k));
+            if shaped_gpu::is_opted(node) {
+                if let Some(r)=shaped_present{
+                    shaped_gpu::paint(d,r,text_x,rect.y+pad_y,display_color);
+                }
+            } else if let Some(font)=selected_unicode_font(fonts,node,ts,display) {
                 d.draw_text_ex(font,display,Vector2::new(text_x,rect.y+pad_y),ts as f32,0.0,display_color);
             } else {
                 d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
@@ -1291,7 +1402,7 @@ fn paint_node<D: RaylibDraw>(
 
             // Exact default-font pixel measurements, not an average cell;
             // separate BiDi/IME/font fallback certification is still needed.
-            if is_focused {
+            if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
                 if let Some(v)=visual {
                     let cx=v.caret_screen(content);
                     let cy0=rect.y+10.0;
