@@ -120,3 +120,30 @@ cell main() ->:
         "public Aura named Record C build failed: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_nested_nominal_record_function_check_and_c_build() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+type Outer = record { p: Point, tag: u32 }
+cell make_outer() ->:
+    yield Outer { p: Point { x: 7, y: 13 }, tag: 99 }
+cell read_x(o: Outer) ->:
+    yield o.p.x
+cell main() ->:
+    val mut o: Outer = make_outer()
+    o.p = Point { x: 41, y: 43 }
+    yield read_x(o)
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public CLI nested nominal Record check fails: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 nested Record check must disclose no formal verification");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public CLI nested nominal Record native C build fails: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
