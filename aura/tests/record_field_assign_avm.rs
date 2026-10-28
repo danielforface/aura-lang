@@ -563,3 +563,22 @@ fn avm_rejects_out_of_range_unused_scalar_record_default_even_without_use() {
             "expected {expected:?} width diagnostic, got {err}");
     }
 }
+
+
+#[test]
+fn avm_rejects_duplicate_nominal_record_declarations_before_any_execution() {
+    for defs in [
+        "type Point = record { x: u32 = 7 }\ntype Point = record { x: u32 = 13 }\n",
+        "type Point = record { x: u32 = 7 }\ntype Point = record { x: bool = true }\n",
+    ] {
+        let src=format!("{defs}cell main() ->:\n    yield 7\n");
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let error=vm.exec_entry_cell(&src,"main")
+            .expect_err("raw AVM must not silently overwrite a nominal Record schema");
+        let msg=error.to_string();
+        assert!(msg.contains("duplicate") && msg.contains("Point"),
+            "expected duplicate nominal Record diagnostic, got {msg}");
+    }
+}

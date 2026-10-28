@@ -265,3 +265,22 @@ fn public_aura_check_rejects_record_integer_narrowing_before_native_build() {
             "{label}: preserve exact width diagnostic: {diagnostic}");
     }
 }
+
+
+#[test]
+fn public_aura_check_rejects_duplicate_nominal_record_type_definitions() {
+    let source=concat!(
+        "type Point = record { x: u32 = 7 }\n",
+        "type Point = record { x: u32 = 13 }\n",
+        "cell main() ->:\n    yield 7\n"
+    );
+    let fixture=SourceFile::new(source);
+    let checked=fixture.run(&["check"]);
+    let output=format!("{}\n{}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr));
+    assert!(!checked.status.success(),
+        "public Aura check must reject duplicate Record declarations: {output}");
+    assert!(output.contains("duplicate") && output.contains("Point"),
+        "public diagnostic must explain nominal type collision: {output}");
+}

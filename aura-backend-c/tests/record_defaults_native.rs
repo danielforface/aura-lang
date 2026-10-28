@@ -171,3 +171,21 @@ fn record_integer_width_boundary_literals_remain_valid_in_checker() {
             .expect("representable Record integer literal must typecheck");
     }
 }
+
+
+#[test]
+fn duplicate_nominal_record_type_declarations_are_rejected_even_when_unused() {
+    for definitions in [
+        "type Point = record { x: u32 = 7 }\ntype Point = record { x: u32 = 13 }\n",
+        "type Point = record { x: u32 = 7 }\ntype Point = record { x: bool = true }\n",
+    ] {
+        let src=format!("{definitions}cell main() ->:\n    yield 7\n");
+        let parsed=aura_parse::parse_source(&src)
+            .expect("duplicate Record declarations must parse as distinct nodes");
+        let error=Checker::new().check_program(&parsed)
+            .expect_err("duplicate nominal Record declarations must fail at source registration");
+        assert!(error.message.contains("duplicate") && error.message.contains("Point"),
+            "expected explicit duplicate Point declaration diagnostic, got {error}");
+        assert!(error.span.len()>0, "duplicate Record diagnostic must retain source span");
+    }
+}
