@@ -309,3 +309,45 @@ cell main() ->:
             err.to_string().contains("default"),
         "AVM omitted default must fail closed: {err}");
 }
+
+
+const NESTED_NOMINAL_DEFAULT_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell default_nested_x() ->:
+    val o: Outer = Outer {}
+    yield o.p.x
+cell override_nested_x() ->:
+    val o: Outer = Outer { p: Point { x: 19, y: 23 } }
+    yield o.p.x
+cell override_outer_tag() ->:
+    val o: Outer = Outer { tag: 44 }
+    yield o.p.y
+"#;
+
+#[test]
+fn avm_nested_nominal_record_defaults_match_same_source_ir_oracle() {
+    let ast=aura_parse::parse_source(NESTED_NOMINAL_DEFAULT_SOURCE)
+        .expect("nested defaults source parses");
+    aura_core::Checker::new().check_program(&ast)
+        .expect("nested defaults must be qualified by Core");
+    let ir=aura_core::lower_program(&ast).expect("nested defaults must lower");
+    aura_ir::validate_module(&ir).expect("nested defaults SSA valid");
+    for (entry,expected) in [
+        ("default_nested_x",7u32),
+        ("override_nested_x",19u32),
+        ("override_outer_tag",13u32),
+    ] {
+        let oracle=aura_ir::run_oracle_entry(&ir,entry,&[],aura_ir::OracleConfig::default())
+            .expect("nested default IR Oracle");
+        assert_eq!(oracle.return_value,Some(aura_ir::OracleValue::U32(expected)));
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let actual=vm.exec_entry_cell(NESTED_NOMINAL_DEFAULT_SOURCE,entry)
+            .expect("AVM must evaluate qualified nested default Record value");
+        assert_eq!(actual.value,AvmValue::Int(i64::from(expected)));
+        assert!(!actual.verified,"no-Z3 AVM must not claim proof");
+        assert!(actual.gate_error.as_deref().unwrap_or("").contains("not run"));
+    }
+}
