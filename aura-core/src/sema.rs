@@ -822,6 +822,18 @@ impl Checker {
                     }
                 }
                 Stmt::RecordDef(r) => {
+                    // A nominal type name must have exactly one source schema.
+                    // Overwriting a prior Record definition makes the Checker,
+                    // IR layout and no-Z3 runtime disagree on field ABI.
+                    if self.record_defs.contains_key(&r.name.node) {
+                        return Err(SemanticError {
+                            message: format!(
+                                "duplicate nominal Record type declaration '{}'",
+                                r.name.node
+                            ),
+                            span: r.name.span,
+                        });
+                    }
                     self.record_defs.insert(r.name.node.clone(), r.clone());
                     self.define_type_placeholder(&r.name)?;
                 }

@@ -1944,7 +1944,14 @@ impl Avm {
                     }
                 }
                 Stmt::RecordDef(record) => {
-                    self.source_record_names.insert(record.name.node.clone());
+                    // Raw no-Z3 source execution must never silently replace
+                    // a previously registered nominal schema in this source.
+                    if !self.source_record_names.insert(record.name.node.clone()) {
+                        return Err(miette::miette!(
+                            "AVM: duplicate nominal Record type declaration '{}'",
+                            record.name.node
+                        ));
+                    }
                     self.source_record_schemas.insert(record.name.node.clone(), record.clone());
                 }
                 _ => {}
