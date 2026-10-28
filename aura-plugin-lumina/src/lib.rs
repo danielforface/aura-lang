@@ -307,6 +307,11 @@ fn ensure_fonts_loaded(
         };
         if fonts.get(&key).is_some_and(|entry|entry.glyphs==wanted) {continue;}
         // No O(n) upload if already covered; only grow/rebuild when needed.
+        // Optional local font files are untrusted; avoid arbitrary large
+        // allocations by limiting source files before native atlas upload.
+        let admissible=std::fs::metadata(&path).is_ok_and(|m|
+            m.is_file() && m.len()>0 && m.len()<=font_atlas::MAX_FONT_FILE_BYTES);
+        if !admissible {fonts.remove(&key);continue;}
         if let Ok(font)=rl.load_font_ex(thread,&path,size,Some(wanted.as_str())) {
             fonts.insert(key,LoadedUnicodeFont{font,glyphs:wanted});
         } else {
