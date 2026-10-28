@@ -737,3 +737,57 @@ fn raw_avm_integer_contract_registry_clears_between_source_runs() {
         assert!(!result.verified);
     }
 }
+
+#[test]
+fn raw_avm_type_alias_integer_width_is_not_erased_for_local_and_calls() {
+    for (label,source) in [
+        ("unused aliased u8", "type Byte = u8\ncell main() ->:\n    val n: Byte = 300\n    yield 7\n"),
+        ("unused chained i8", "type Small = i8\ntype Another = Small\ncell main() ->:\n    val n: Another = 128\n    yield 7\n"),
+        ("aliased local mutable overflow", "type Byte = u8\ncell main() ->:\n    val mut n: Byte = 7\n    n = 300\n    yield 7\n"),
+        ("aliased u8 user parameter", "type Byte = u8\ncell identity(n: Byte) ->:\n    yield n\ncell main() ->:\n    yield identity(300)\n"),
+        ("aliased i8 user parameter", "type Small = i8\ncell identity(n: Small) ->:\n    yield n\ncell main() ->:\n    yield identity(128)\n"),
+        ("aliased Record field overflow", "type Byte = u8\ntype Tiny = record { n: Byte }\ncell main() ->:\n    val t: Tiny = Tiny { n: 300 }\n    yield t.n\n"),
+        ("unused aliased Record default", "type Byte = u8\ntype Tiny = record { n: Byte = 300 }\ncell main() ->:\n    yield 7\n"),
+    ] {
+        let mut avm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let error=avm.exec_entry_cell(source,"main")
+            .expect_err("raw no-Z3 AVM must not erase type alias numeric width");
+        let message=error.to_string();
+        assert!(message.contains("range") || message.contains("mismatch"),
+            "{label}: expected alias-resolved numeric range diagnostic, got {message}");
+    }
+}
+
+#[test]
+fn raw_avm_type_alias_integer_boundaries_and_defaults_execute_without_proof() {
+    for (label, source, expected) in [
+        ("u8 local and Record",
+         "type Byte = u8\ntype Tiny = record { n: Byte }\ncell main() ->:\n    val n: Byte = 255\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n", 255),
+        ("chained i8 and Record",
+         "type Small = i8\ntype Number = Small\ntype Signed = record { n: Number }\ncell main() ->:\n    val n: Number = 127\n    val s: Signed = Signed { n: n }\n    yield s.n\n",127),
+        ("u8 aliased Record default",
+         "type Byte = u8\ntype Tiny = record { n: Byte = 255 }\ncell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n",255),
+        ("u8 aliased parameter",
+         "type Byte = u8\ncell identity(n: Byte) ->:\n    yield n\ncell main() ->:\n    yield identity(255)\n",255),
+        ("u8 aliased mutable",
+         "type Byte = u8\ncell main() ->:\n    val mut n: Byte = 7\n    n = 255\n    yield n\n",255),
+    ] {
+        let mut avm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let result=avm.exec_entry_cell(source,"main")
+            .unwrap_or_else(|e|panic!("{label}: legal alias-bound integer should execute: {e}"));
+        assert_eq!(result.value, AvmValue::Int(expected),"{label}");
+        assert!(!result.verified,"raw AVM cannot attest Z3 proof");
+    }
+}
+
+#[test]
+fn raw_avm_type_alias_resolution_does_not_leak_between_source_loads() {
+    let mut avm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    let first="type Width = u8\ncell main() ->:\n    val n: Width = 200\n    yield n\n";
+    assert_eq!(avm.exec_entry_cell(first,"main").unwrap().value,AvmValue::Int(200));
+    let second="type Width = i8\ncell main() ->:\n    val n: Width = 200\n    yield n\n";
+    let error=avm.exec_entry_cell(second,"main")
+        .expect_err("new source must resolve Width as i8, not stale u8");
+    assert!(error.to_string().contains("range") || error.to_string().contains("mismatch"),
+        "source-specific alias state required: {error}");
+}
