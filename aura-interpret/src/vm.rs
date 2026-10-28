@@ -182,7 +182,6 @@ pub struct Avm {
     // Source-local cell definitions for bounded, by-value user-call execution.
     // Replaced on each source load; never treat earlier sources as callable.
     user_cells: HashMap<String, aura_ast::CellDef>,
-    source_record_names: HashSet<String>,
     // Exact current-source schema for nominal/type/cycle guards on defaults.
     source_record_schemas: HashMap<String, aura_ast::RecordDef>,
     user_cell_depth: usize,
@@ -721,7 +720,6 @@ impl Avm {
             cfg,
             env: HashMap::new(),
             user_cells: HashMap::new(),
-            source_record_names: HashSet::new(),
             source_record_schemas: HashMap::new(),
             user_cell_depth: 0,
             next_callback_id: 1,
@@ -1931,10 +1929,31 @@ impl Avm {
 
     fn register_user_cells(&mut self, program: &Program) -> miette::Result<()> {
         self.user_cells.clear();
-        self.source_record_names.clear();
         self.source_record_schemas.clear();
         self.user_cell_depth = 0;
+        // Only one type namespace exists for source TypeAlias/Record/Enum.
+        // Refuse collisions before registering calls, schemas or executing entry.
+        let mut source_type_names: HashMap<String, &'static str> = HashMap::new();
         for stmt in &program.stmts {
+            let declaration = match stmt {
+                Stmt::TypeAlias(alias) => Some((&alias.name, "TypeAlias")),
+                Stmt::RecordDef(record) => Some((&record.name, "Record")),
+                Stmt::EnumDef(enumeration) => Some((&enumeration.name, "Enum")),
+                _ => None,
+            };
+            if let Some((name, kind)) = declaration {
+                if let Some(previous) = source_type_names.insert(name.node.clone(), kind) {
+                    let message = if previous == "Record" && kind == "Record" {
+                        format!("duplicate nominal Record type declaration '{}'", name.node)
+                    } else {
+                        format!(
+                            "duplicate type declaration '{}': {} conflicts with earlier {}",
+                            name.node, kind, previous
+                        )
+                    };
+                    return Err(miette::miette!("AVM: {message}"));
+                }
+            }
             match stmt {
                 Stmt::CellDef(cell) => {
                     if self.user_cells.insert(cell.name.node.clone(), cell.clone()).is_some() {
@@ -1944,14 +1963,6 @@ impl Avm {
                     }
                 }
                 Stmt::RecordDef(record) => {
-                    // Raw no-Z3 source execution must never silently replace
-                    // a previously registered nominal schema in this source.
-                    if !self.source_record_names.insert(record.name.node.clone()) {
-                        return Err(miette::miette!(
-                            "AVM: duplicate nominal Record type declaration '{}'",
-                            record.name.node
-                        ));
-                    }
                     self.source_record_schemas.insert(record.name.node.clone(), record.clone());
                 }
                 _ => {}

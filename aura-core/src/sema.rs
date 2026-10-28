@@ -790,6 +790,32 @@ impl Checker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), SemanticError> {
+        // TypeAlias, Record and Enum all occupy the same source type namespace:
+        // resolve_type_ref consults their registries in a fixed order. Before
+        // mutating any registry, reject ambiguity even when no type is used.
+        let mut source_type_names: HashMap<String, &'static str> = HashMap::new();
+        for stmt in &program.stmts {
+            let declaration = match stmt {
+                Stmt::TypeAlias(alias) => Some((&alias.name, "TypeAlias")),
+                Stmt::RecordDef(record) => Some((&record.name, "Record")),
+                Stmt::EnumDef(enumeration) => Some((&enumeration.name, "Enum")),
+                _ => None,
+            };
+            if let Some((name, kind)) = declaration {
+                if let Some(previous) = source_type_names.insert(name.node.clone(), kind) {
+                    let message = if previous == "Record" && kind == "Record" {
+                        format!("duplicate nominal Record type declaration '{}'", name.node)
+                    } else {
+                        format!(
+                            "duplicate type declaration '{}': {} conflicts with earlier {}",
+                            name.node, kind, previous
+                        )
+                    };
+                    return Err(SemanticError { message, span: name.span });
+                }
+            }
+        }
+
         // First pass: register type aliases and cell headers.
         for stmt in &program.stmts {
             match stmt {
