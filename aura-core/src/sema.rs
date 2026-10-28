@@ -875,9 +875,32 @@ impl Checker {
                 }
                 Stmt::TypeAlias(ta) => {
                     if ta.params.is_empty() {
-                        let ty = self.resolve_type_ref(&ta.target)?;
-                        self.type_aliases
-                            .insert(ta.name.node.clone(), AliasEntry::Mono(ty));
+                        // Resolve valid forward monomorphic alias dependencies
+                        // in terminal-first order. Without this, Top=Middle
+                        // before Middle=u8 is stored as Named(Middle), losing
+                        // numeric width before Record and native lowering.
+                        // The source-graph preflight already excludes cycles.
+                        if !self.type_aliases.contains_key(&ta.name.node) {
+                            let mut pending = vec![ta];
+                            while let Some(dep) = mono_aliases.get(
+                                pending.last().expect("nonempty alias chain")
+                                    .target.name.node.as_str()
+                            ) {
+                                if self.type_aliases.contains_key(&dep.name.node) {
+                                    break;
+                                }
+                                pending.push(*dep);
+                            }
+                            for def in pending.into_iter().rev() {
+                                if self.type_aliases.contains_key(&def.name.node) {
+                                    continue;
+                                }
+                                let ty = self.resolve_type_ref(&def.target)?;
+                                self.type_aliases.insert(
+                                    def.name.node.clone(), AliasEntry::Mono(ty)
+                                );
+                            }
+                        }
                     } else {
                         let def = TypeAliasDef {
                             params: ta
