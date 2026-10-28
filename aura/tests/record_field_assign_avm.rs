@@ -88,7 +88,22 @@ cell main() ->:
 
 #[test]
 fn real_source_record_cross_cell_named_calls_match_oracle_native_without_z3_proof() {
+    // Compare AVM to the IR Oracle for the exact same parsed Aura program,
+    // not to a parallel hand-written fixture with similar semantics.
+    let ast = aura_parse::parse_source(RECORD_FUNCTION_SOURCE)
+        .expect("Record function differential source parses");
+    aura_core::Checker::new().check_program(&ast)
+        .expect("Record function differential source is semantically valid");
+    let ir = aura_core::lower_program(&ast)
+        .expect("Record function differential source lowers to IR");
+    aura_ir::validate_module(&ir).expect("Record function differential structural SSA");
     for (entry, expected) in [("named_projection", 7), ("main", 19)] {
+        let oracle = aura_ir::run_oracle_entry(&ir, entry, &[],
+            aura_ir::OracleConfig::default())
+            .expect("same-source Record function Oracle");
+        assert!(oracle.ok && oracle.stderr.is_empty());
+        assert_eq!(oracle.return_value, Some(aura_ir::OracleValue::U32(expected as u32)),
+            "same-source Record function IR Oracle observation");
         let mut avm = Avm::new(AvmConfig {
             enable_z3_gate: false,
             ..Default::default()
