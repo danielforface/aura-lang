@@ -198,3 +198,27 @@ fn public_no_z3_aura_check_rejects_invalid_unused_or_overridden_record_declarati
             "public Aura check must preserve semantic diagnostic {expected:?}: {output}");
     }
 }
+
+
+#[test]
+fn public_no_z3_aura_nested_nominal_defaults_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell make_outer() ->:
+    yield Outer {}
+cell main() ->:
+    val o: Outer = make_outer()
+    yield o.p.x
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura nested defaults check failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 check cannot claim formal verification");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public Aura nested default Record build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}

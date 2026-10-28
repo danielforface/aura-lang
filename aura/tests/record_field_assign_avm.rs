@@ -351,3 +351,26 @@ fn avm_nested_nominal_record_defaults_match_same_source_ir_oracle() {
         assert!(actual.gate_error.as_deref().unwrap_or("").contains("not run"));
     }
 }
+
+
+#[test]
+fn avm_qualified_nested_defaults_fail_closed_for_dynamic_and_recursive_sources() {
+    for (source,needle) in [
+        (
+            "type Point = record { x: u32 = 7 }\ntype Outer = record { p: Point = Point { x: 1 + 2 } }\ncell main() ->:\n    val a: Outer = Outer {}\n    yield a.p.x\n",
+            "unqualified",
+        ),
+        (
+            "type Node = record { next: Node = Node {} }\ncell main() ->:\n    val n: Node = Node {}\n    yield 7\n",
+            "cyclic",
+        ),
+    ] {
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let error=vm.exec_entry_cell(source,"main")
+            .expect_err("AVM may not execute arbitrary or cyclic default trees");
+        assert!(error.to_string().contains(needle),
+            "AVM guard expected {needle:?}; got {error}");
+    }
+}

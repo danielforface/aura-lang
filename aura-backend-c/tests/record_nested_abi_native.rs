@@ -236,3 +236,34 @@ fn nested_nominal_record_default_and_overrides_are_real_c_abi_values() {
             String::from_utf8_lossy(&ran.stderr),c.module_c);
     }
 }
+
+
+#[test]
+fn nominal_nested_default_rejects_mismatch_dynamic_cycle_and_missing_required_child() {
+    let inputs=[
+        (
+            "type Point = record { x: u32 = 7 }\ntype Twin = record { x: u32 = 13 }\ntype Outer = record { p: Point = Twin {} }\ncell main() ->:\n    yield 7\n",
+            "type mismatch",
+        ),
+        (
+            "type Point = record { x: u32 = 7 }\ntype Outer = record { p: Point = Point { x: 1 + 2 } }\ncell main() ->:\n    yield 7\n",
+            "unqualified",
+        ),
+        (
+            "type Node = record { next: Node = Node {} }\ncell main() ->:\n    yield 7\n",
+            "cyclic",
+        ),
+        (
+            "type Point = record { x: u32, y: u32 = 13 }\ntype Outer = record { p: Point = Point {} }\ncell main() ->:\n    yield 7\n",
+            "missing required field",
+        ),
+    ];
+    for (source,needle) in inputs {
+        let ast=aura_parse::parse_source(source).expect("negative source syntax parses");
+        let error=Checker::new().check_program(&ast)
+            .expect_err("invalid nested default must be rejected even when unused");
+        assert!(error.message.contains(needle),
+            "expected {needle:?}, got {error}");
+        assert!(error.span.len()>0,"negative diagnostic needs source span");
+    }
+}
