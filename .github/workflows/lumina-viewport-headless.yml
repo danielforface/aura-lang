@@ -36,3 +36,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
       - name: Compile Raylib feature (compile-only; no GUI claims)
         run: cargo check --locked -p aura-plugin-lumina --features raylib
+
+  raylib-xvfb-window-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install software-display and native Raylib prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri
+      - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --test window_smoke -- --test-threads=1
