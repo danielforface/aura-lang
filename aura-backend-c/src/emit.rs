@@ -160,6 +160,39 @@ fn record_field_ctype(ty: &Type) -> Option<CType> {
         _ => None,
     }
 }
+// A Record field receives a scalar of its exact C type, or a narrower
+// integer converted from a statically proven U32 constant. Unknown runtime
+// values and computed expressions are never narrowed based on C's implicit
+// conversion rules. This is a proof local to IR SSA constant/copy provenance.
+fn qualified_record_scalar_value(
+    expected: CType,
+    actual: CType,
+    value: ValueId,
+    cname: &str,
+    known_u32_constants: &HashMap<ValueId, u64>,
+) -> Option<String> {
+    if expected == actual {
+        return Some(cname.to_string());
+    }
+    if actual != CType::U32 {
+        return None;
+    }
+    let max = match expected {
+        CType::U8 => u8::MAX as u64,
+        CType::U16 => u16::MAX as u64,
+        CType::U64 => u64::MAX,
+        CType::I8 => i8::MAX as u64,
+        CType::I16 => i16::MAX as u64,
+        CType::I32 => i32::MAX as u64,
+        CType::I64 => i64::MAX as u64,
+        _ => return None,
+    };
+    match known_u32_constants.get(&value) {
+        Some(n) if *n <= u32::MAX as u64 && *n <= max =>
+            Some(format!("({})({})", map_ctype_decl(expected), cname)),
+        _ => None,
+    }
+}
 // Each qualified nominal field retains its own type identity; a nested
 // Record is NEVER reduced to a scalar width or the generic Tensor ABI.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -651,6 +684,39 @@ fn emit_function(
         if !progressed { break; }
     }
 
+    // Qualified scalar Record narrowing from literal-derived locals needs
+    // provenance beyond CType: a typed U32 alone can represent unsafe values.
+    // Track ONLY SSA ConstU32 and pure Local copies, to a fixed point. No
+    // generic arithmetic, call, Phi, or mutable parameter is a proof of range.
+    let mut known_u32_constants: HashMap<ValueId, u64> = HashMap::new();
+    for _ in 0..max_rounds {
+        let mut progressed = false;
+        for block in &f.blocks {
+            for inst in &block.insts {
+                let Some(dest) = inst.dest else { continue };
+                let constant = match &inst.kind {
+                    InstKind::BindStrand { expr: RValue::ConstU32(n), .. }
+                        if *n <= u32::MAX as u64 => Some(*n),
+                    InstKind::BindStrand { expr: RValue::Local(source), .. } =>
+                        known_u32_constants.get(source).copied(),
+                    _ => None,
+                };
+                if let Some(n) = constant {
+                    if let Some(old) = known_u32_constants.insert(dest, n) {
+                        if old != n {
+                            return Err(CBackendError { message: format!(
+                                "conflicting inferred U32 constant at SSA v{}", dest.0,
+                            ) });
+                        }
+                    } else {
+                        progressed = true;
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+
     // A Phi is SSA-level typed storage whose writes occur on its incoming
     // predecessor edges. Declare it before all block labels so every goto
     // and edge assignment references an in-scope C variable.
@@ -819,11 +885,12 @@ fn emit_function(
                         }
                         let cname = match expected {
                             RecordFieldCType::Scalar(ty) => match values.get(value) {
-                                Some((actual, cname)) if actual == ty => cname.clone(),
-                                Some((actual, _)) => return Err(CBackendError { message: format!(
-                                    "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?}",
+                                Some((actual, cname)) => qualified_record_scalar_value(
+                                    *ty, *actual, *value, cname, &known_u32_constants,
+                                ).ok_or_else(|| CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?} (no proven in-range constant)",
                                     record_name, field, actual, ty,
-                                ) }),
+                                ) })?,
                                 None => return Err(CBackendError { message: format!(
                                     "unqualified C Record '{}' field '{}' unemitted SSA v{} or nominal Record supplied to scalar field",
                                     record_name, field, value.0,
@@ -904,11 +971,12 @@ fn emit_function(
                         ) })?;
                     let rhs = match expected {
                         RecordFieldCType::Scalar(ty) => match values.get(value) {
-                            Some((actual, name)) if actual == ty => name.clone(),
-                            Some((actual, _)) => return Err(CBackendError { message: format!(
-                                "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?}",
+                            Some((actual, name)) => qualified_record_scalar_value(
+                                *ty, *actual, *value, name, &known_u32_constants,
+                            ).ok_or_else(|| CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?} (no proven in-range constant)",
                                 record, field_name, actual, ty,
-                            ) }),
+                            ) })?,
                             None => return Err(CBackendError { message: format!(
                                 "unqualified C Record '{}' SetField '{}' unavailable scalar SSA v{}",
                                 record, field_name, value.0,
