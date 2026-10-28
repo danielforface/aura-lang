@@ -22,6 +22,28 @@ impl Bounds {
                width: size(width), height: size(height) }
     }
 
+    pub(crate) fn is_empty(self) -> bool { self.width <= 0.0 || self.height <= 0.0 }
+
+    pub(crate) fn intersect(self, other: Self) -> Self {
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let right = (self.x + self.width).min(other.x + other.width);
+        let bottom = (self.y + self.height).min(other.y + other.height);
+        Self::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
+    }
+
+    /// Logical-pixel raster scissor; not a DPI/framebuffer conversion.
+    pub(crate) fn scissor(self) -> Option<(i32, i32, i32, i32)> {
+        if self.is_empty() { return None; }
+        let x = self.x.floor() as i32;
+        let y = self.y.floor() as i32;
+        let x1 = (self.x + self.width).ceil() as i32;
+        let y1 = (self.y + self.height).ceil() as i32;
+        let w = (i64::from(x1) - i64::from(x)).clamp(0, i32::MAX as i64) as i32;
+        let h = (i64::from(y1) - i64::from(y)).clamp(0, i32::MAX as i64) as i32;
+        if w == 0 || h == 0 { None } else { Some((x,y,w,h)) }
+    }
+
     pub(crate) fn contains(self, x: f32, y: f32) -> bool {
         self.width > 0.0 && self.height > 0.0
             && x >= self.x && x <= self.x + self.width
@@ -35,6 +57,7 @@ impl Bounds {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutNode {
     pub bounds: Bounds,
+    pub clip: Bounds,
     pub children: Vec<Option<LayoutNode>>,
 }
 
@@ -158,6 +181,11 @@ fn with_abs(node: &UiNode, mut b: Bounds) -> Bounds {
     b
 }
 
+fn clip_children(node: &UiNode) -> bool {
+    matches!(node.kind.as_str(), "App" | "Box" | "Grid" | "VStack" | "HStack")
+        && (prop(node, "overflow") == Some("hidden") || prop(node, "clip") == Some("true"))
+}
+
 fn content_rect(b: Bounds, pad: (f32, f32, f32, f32)) -> Bounds {
     let (t, r, bottom, l) = pad;
     Bounds::new(b.x + l, b.y + t, (b.width - l - r).max(0.0),
@@ -166,10 +194,18 @@ fn content_rect(b: Bounds, pad: (f32, f32, f32, f32)) -> Bounds {
 
 pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
     let measurements = measure_tree(node);
-    arrange_measured(node, &measurements, incoming)
+    arrange_measured(node, &measurements, incoming, incoming)
 }
-fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) -> LayoutNode {
+fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds, clip: Bounds) -> LayoutNode {
     let bounds = with_abs(node, incoming);
+    let child_clip = if clip_children(node) {
+        clip.intersect(match node.kind.as_str() {
+            "Box" | "Grid" => Bounds::new(bounds.x, bounds.y,
+                positive(node, "width", bounds.width),
+                positive(node, "height", bounds.height)),
+            _ => bounds,
+        })
+    } else { clip };
     let mut children: Vec<Option<LayoutNode>> = (0..node.children.len()).map(|_| None).collect();
     match node.kind.as_str() {
         "Box" => {
@@ -178,9 +214,9 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 positive(node, "height", bounds.height).max(1.0));
             if let Some(child) = node.children.first() {
                 let content = content_rect(rect, padding(node));
-                children[0] = Some(arrange_measured(child, &measured.children[0], content));
+                children[0] = Some(arrange_measured(child, &measured.children[0], content, child_clip));
             }
-            LayoutNode { bounds: rect, children }
+            LayoutNode { bounds: rect, clip, children }
         }
         "Grid" => {
             let rect = Bounds::new(bounds.x, bounds.y,
@@ -203,9 +239,9 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 let y = content.y + row as f32 * (ch + gy);
                 let w = (cw * cs as f32 + gx * (cs - 1) as f32).min((content.x + content.width - x).max(0.0));
                 let h = (ch * rs as f32 + gy * (rs - 1) as f32).min((content.y + content.height - y).max(0.0));
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, w, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, w, h), child_clip));
             }
-            LayoutNode { bounds: rect, children }
+            LayoutNode { bounds: rect, clip, children }
         }
         "VStack" => {
             let p = spacing(node, "padding");
@@ -217,10 +253,10 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 let (w, h) = measured.children[i].size;
                 let x = if centered && w > 0.0 { content.x + (content.width - w)/2.0 } else { content.x };
                 let width = if w > 0.0 { w } else { content.width };
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, width, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, width, h), child_clip));
                 y += h + gap;
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "HStack" => {
             let p = spacing(node, "padding");
@@ -229,33 +265,62 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
             let mut x = content.x;
             for (i, child) in node.children.iter().enumerate() {
                 let (w, h) = measured.children[i].size;
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, content.y, w, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, content.y, w, h), child_clip));
                 x += w + gap;
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "App" => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds, child_clip));
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "Button" | "TextInput" => {
             let (w,h) = measured.size;
-            LayoutNode { bounds: Bounds::new(bounds.x, bounds.y, w, h), children }
+            LayoutNode { bounds: Bounds::new(bounds.x, bounds.y, w, h), clip, children }
         }
         "Image" | "Rect" => {
             LayoutNode { bounds: Bounds::new(bounds.x, bounds.y,
                 positive(node, "width", bounds.width).max(1.0),
-                positive(node, "height", bounds.height).max(1.0)), children }
+                positive(node, "height", bounds.height).max(1.0)), clip, children }
         }
-        "Text" => LayoutNode { bounds, children },
+        "Text" => LayoutNode { bounds, clip, children },
         _ => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds, child_clip));
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
+    }
+}
+
+/// Only actionable controls compete for pointer hits; last-painted wins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HitTarget {
+    Button(u64),
+    TextInput { on_change: u64, on_submit: Option<u64>, value: String },
+}
+fn callback(node: &UiNode, key: &str) -> Option<u64> {
+    prop(node, key)?.strip_prefix("cb:")?.parse::<u64>().ok()
+}
+/// Pure clip-aware, reversed-paint-order hit resolution.
+pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
+    if !layout.clip.contains(x, y) { return None; }
+    for (child, planned) in node.children.iter().zip(layout.children.iter()).rev() {
+        if let Some(planned) = planned {
+            if let Some(hit) = hit_test(child, planned, x, y) { return Some(hit); }
+        }
+    }
+    if !layout.bounds.contains(x, y) { return None; }
+    match node.kind.as_str() {
+        "Button" => callback(node, "on_click").map(HitTarget::Button),
+        "TextInput" => callback(node, "on_change").map(|on_change| HitTarget::TextInput {
+            on_change,
+            on_submit: callback(node, "on_submit"),
+            value: prop(node, "value").or_else(|| prop(node, "text")).unwrap_or("").to_string(),
+        }),
+        _ => None,
     }
 }
 
