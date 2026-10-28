@@ -1,4 +1,4 @@
-# Aura Qualification Operating Protocol v1
+# Aura Qualification Operating Protocol v2 (proposed; maintainer review required)
 
 This defines the repeatable *process*, not the frozen technical acceptance contents. Changes to protocol require reviewed PR, rationale in handoff, and consistent updates to progress.
 
@@ -16,7 +16,7 @@ This defines the repeatable *process*, not the frozen technical acceptance conte
 - `PROGRESS.md` is live state (including **active gate**, active train, backlog, statuses and blockers). Never mark VERIFIED or RELEASED without artifact.
 - `CONTEXT_HANDOFF.md` stores what is not obvious from Git history: user intent, past decisions, why choices were made, current collaboration expectations, last actual work, lost work, next action and connection recipe.
 - `EVIDENCE_LOG.md` and `RELEASE_LEDGER.md` grow append-only; corrections are new superseding entries.
-- Any scope amendment is a **new** `MASTER_ROADMAP_V2.md` (or higher), a reviewed supersession decision and updated pointer; immutable v1 stays untouched.
+- The 2026-10-28 user-requested scope amendment is the proposed `MASTER_ROADMAP_V2.md`: all V1 acceptance requirements remain unchanged and new Q12–Q18 are additive future gates. V1 is immutable; V2 becomes frozen upon reviewed approval/merge; subsequent amendments require V3+, never in-place edits.
 
 ## 3. Every work increment (including partial work)
 
@@ -47,6 +47,8 @@ No gate is CLOSED just because tasks were coded. Each listed acceptance requirem
 ## 6. Governance CI behavior
 
 `tools/qualification/check_governance.py` checks (on PR):
+- V1 remains byte-identical and V2 preserves every V1 original acceptance row verbatim; after adoption V2 also freezes in place;
+- while V2 exists, the stage tracker must list Q00–Q18, with newly proposed gates NOT_STARTED and no invented CI;
 - frozen master file equals base branch's content, once the base branch contains it;
 - both `PROGRESS.md` and `CONTEXT_HANDOFF.md` changed on any substantive PR once bootstrap merged;
 - all task IDs referenced in status/handoff exist in the master plan (format sanity);
@@ -58,6 +60,10 @@ Bootstrap PR may add the frozen baseline. For any later revision, publish a new 
 
 New chat opening request:
 
-> Work directly in `danielforface/aura-lang`. Read the latest `docs/qualification/CONTEXT_HANDOFF.md`, `PROGRESS.md`, `MASTER_ROADMAP_V1.md`, `EVIDENCE_LOG.md` and `OPERATING_PROTOCOL.md`. Discover and verify GitHub connection. Inspect active branch/PR, live CI and current source. Continue the exact Next safe action. Do not alter the frozen plan or make unsupported test claims. Update handoff and progress along with each change; keep the program auditable across future chats.
+ > Work directly in `danielforface/aura-lang`. Read the latest appended `docs/qualification/CONTEXT_HANDOFF.md` and `PROGRESS.md`, proposed/active `MASTER_ROADMAP_V2.md`, frozen `MASTER_ROADMAP_V1.md`, `EVIDENCE_LOG.md` and `OPERATING_PROTOCOL.md`. Discover and verify GitHub connection. Inspect active branch/PR, live CI and current source. Continue the exact Next safe action. Do not alter the frozen plan or make unsupported test claims. Update handoff and progress along with each change; keep the program auditable across future chats.
 
 If head differs from recorded notes, **GitHub is the authority for code and branches, not an out-of-date handoff**; reconcile carefully and document the discrepancy. Do not recreate branches/files without checking first.
+
+## 8. Scope expansion with no implementation diversion
+
+Future development chats MUST see the new eventual Desktop/Web/iOS/Android application-platform goal (Q12–Q18), but MUST continue Q03-001 on Draft PR #57 as the current implementation stream until maintainer direction changes it. A roadmap amendment never authorizes a source rebase/merge, automatic implementation switch, removal of earlier requirements, or all-platform stability claim. Preserve V1, require reviewed supersession for V2, keep PROGRESS/HANDOFF updated together and EVIDENCE_LOG append-only. Core releases and separately qualified UI releases remain distinct; no software evidence exists merely because a document is updated.

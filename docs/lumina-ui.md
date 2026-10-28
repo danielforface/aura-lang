@@ -1,5 +1,8 @@
 # Lumina UI (Aura) — current syntax & runtime
 
+> **Implemented MVP versus long-term qualified app platform:** This is the evolving Raylib runtime's current API, not full UI certification. The proposed [qualification Master V2](qualification/MASTER_ROADMAP_V2.md) specifies Q12–Q18 for typed state/components, advanced layout/text/RTL/accessibility, modern Desktop, browser/Web, genuine Android/iOS UI, IDE tooling, app release and independent E2E. These plans do **not** qualify or implement Web/Mobile today; active development stays on Q03-001.
+
+
 Lumina is Aura’s UI runtime plugin. The UI is expressed as a tree of nodes ("widgets") built by Aura code and rendered frame-by-frame by the Lumina plugin.
 
 This document describes **what works today** in this repo (not a long-term locked spec).
