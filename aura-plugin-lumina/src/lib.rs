@@ -22,6 +22,8 @@ mod font_atlas;
 mod text_shaping;
 #[cfg(feature="raylib")]
 mod shaped_gpu;
+#[cfg(any(feature="raylib",test))]
+mod bidi_editor;
 
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
@@ -141,6 +143,7 @@ struct FocusedTextInput {
     revision: text_revision::RevisionTracker,
     session: text_input::EditSession,
     scroll_x: f32,
+    visual_affinity: Option<usize>,
 }
 
 #[cfg(feature = "raylib")]
@@ -157,6 +160,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             revision: text_revision::RevisionTracker::new(&source_value, revision),
             session: text_input::EditSession::new(source_value.clone()),
             scroll_x: 0.0,
+            visual_affinity: None,
         });
         if entry.revision.observe(&source_value,revision)
             == text_revision::Decision::Rebase
@@ -164,6 +168,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             // Even identical text at a *new* explicit revision starts new
             // authority epoch: old undo history must not resurrect stale data.
             entry.session = text_input::EditSession::new(source_value.clone());
+            entry.visual_affinity=None;
         }
         entry.on_submit = on_submit;
         win.focused_input = Some(entry);
@@ -232,6 +237,7 @@ fn reconcile_input_sessions(
         if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
             && (entry.session.buffer!=prop || revision.is_some()) {
             entry.session=text_input::EditSession::new(prop.to_owned());
+            entry.visual_affinity=None;
         }
         entry.on_submit=submit;
     };
@@ -371,6 +377,30 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
     let mut out=Vec::new();walk(tree,plan,focus,sessions,&mut out);out
 }
 
+#[cfg(feature="raylib")]
+fn find_input_by_callback<'a>(node:&'a UiNode,plan:&'a layout::LayoutNode,cb:u64)
+    ->Option<(&'a UiNode,&'a layout::LayoutNode)>{
+    if plan.bounds.intersect(plan.clip).is_empty(){return None;}
+    if node.kind=="TextInput"&&parse_callback_id(prop_string(node,"on_change"))==Some(cb){
+        return Some((node,plan));
+    }
+    for (child,slot) in node.children.iter().zip(&plan.children){
+        if let Some(child_plan)=slot {
+            if let Some(found)=find_input_by_callback(child,child_plan,cb){return Some(found);}
+        }
+    }
+    None
+}
+#[cfg(feature="raylib")]
+fn loaded_shaped_input<'a>(node:&UiNode,value:&str,
+    cache:&'a HashMap<String,shaped_gpu::PreparedGlyphText>)
+    ->Option<&'a text_shaping::ShapedText>{
+    let size=prop_i32(node,"size").unwrap_or(18).max(10);
+    let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
+    let key=shaped_gpu::entry_key(node,display,size)?;
+    Some(&cache.get(&key)?.shaped)
+}
+
 #[cfg(feature = "raylib")]
 fn measure_input_visuals(
     rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
@@ -412,24 +442,35 @@ fn measure_input_visuals(
                 };
                 let width=prepared.map(|r|r.shaped.width)
                     .unwrap_or(if opt {0.0}else{measure(value)});
-                let at=|index:usize|->Option<f32>{
-                    let byte=text_viewport::grapheme_prefix(value,index).len();
-                    prepared?.shaped.caret_candidates.iter().find(|g|g.byte==byte).map(|g|g.visual_x)
-                };
+                let caret_stop=if active&&opt {
+                    entry.as_ref().and_then(|fi|prepared.and_then(|p|
+                        bidi_editor::caret_position(&p.shaped,fi.session.caret,fi.visual_affinity)))
+                }else{None};
                 let caret=if active{entry.as_ref().map(|fi|{
-                    if opt{at(fi.session.caret).unwrap_or(0.0)}
+                    if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
                     else{measure(text_viewport::grapheme_prefix(value,fi.session.caret))}
                 })}else{None}.unwrap_or(0.0);
-                let selection=if active{
+                let segments=if active&&opt{
                     entry.as_ref().and_then(|fi|fi.session.selection())
-                        .and_then(|(a,b)|if opt{Some((at(a)?,at(b)?))}
-                            else{Some((measure(text_viewport::grapheme_prefix(value,a)),
-                                measure(text_viewport::grapheme_prefix(value,b))))})
-                        .map(|(a,b)|(a.min(b),a.max(b)))
+                        .and_then(|(a,b)|prepared.and_then(|p|
+                            bidi_editor::selection_fragments(&p.shaped,a,b)))
+                        .unwrap_or_default()
+                }else{Vec::new()};
+                let selection=if active&&!opt{
+                    entry.as_ref().and_then(|fi|fi.session.selection())
+                        .map(|(a,b)|{
+                            let x=measure(text_viewport::grapheme_prefix(value,a));
+                            let y=measure(text_viewport::grapheme_prefix(value,b));
+                            (x.min(y),x.max(y))
+                        })
                 }else{None};
                 let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
                 let content=text_viewport::content_bounds(plan.bounds);
-                let v=text_viewport::plan(content.width,width,caret,selection,previous,active);
+                let mut v=text_viewport::plan(content.width,width,caret,selection,previous,active);
+                if opt {
+                    v.caret_valid=!active || caret_stop.is_some();
+                    v.selection_spans=segments;
+                }
                 if let Some(entry)=entry {entry.scroll_x=v.scroll;}
                 result.insert(cb,v);
             }
@@ -506,12 +547,17 @@ pub struct DiagnosticPixel {
 }
 
 #[cfg(feature = "lumina-diagnostics")]
-#[derive(Clone,Copy,Debug,PartialEq)]
+#[derive(Clone,Debug,PartialEq)]
 pub struct DiagnosticTextVisual {
     pub scroll_x: f32,
     pub measured_caret: f32,
     pub caret_screen_x: f32,
     pub selection_screen: Option<(f32,f32)>,
+    pub selection_screens: Vec<(f32,f32)>,
+    pub caret_visible: bool,
+    pub caret_affinity: Option<usize>,
+    pub caret_grapheme: Option<usize>,
+    pub logical_selection: Option<(usize,usize)>,
     pub content_left: f32,
     pub content_right: f32,
 }
@@ -580,7 +626,7 @@ impl AuraLuminaPlugin {
     pub fn diagnostic_text_visual(&self,on_change:u64,content_left:f32,content_width:f32)
         ->Option<DiagnosticTextVisual> {
         let w=self.window.borrow();
-        let v=*w.as_ref()?.last_text_views.get(&on_change)?;
+        let v=w.as_ref()?.last_text_views.get(&on_change)?.clone();
         if !content_left.is_finite() || !content_width.is_finite()
             || content_width<=0.0 { return None; }
         let c=layout::Bounds::new(content_left,0.0,content_width,1.0);
@@ -588,6 +634,15 @@ impl AuraLuminaPlugin {
             scroll_x:v.scroll,measured_caret:v.caret,
             caret_screen_x:v.caret_screen(c),
             selection_screen:v.selection_screen(c),
+            selection_screens:v.selection_screens(c),
+            caret_visible:v.caret_valid,
+            caret_affinity:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change)
+                .and_then(|fi|fi.visual_affinity),
+            caret_grapheme:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).map(|fi|fi.session.caret),
+            logical_selection:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).and_then(|fi|fi.session.selection()),
             content_left:c.x,content_right:c.x+c.width,
         })
     }
@@ -885,6 +940,26 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
                             switch_input(win,Some((on_change,on_submit,value,
                                 revisions.get(&on_change).copied().flatten())));
+                            // Apply cursor placement in shaped, scrolled logical
+                            // coordinates using the previously displayed GPU
+                            // atlas; on missing/incomplete clusters, do not
+                            // manufacture a byte position.
+                            if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
+                                if shaped_gpu::is_opted(n) {
+                                    let hit=win.focused_input.as_ref().and_then(|fi|{
+                                        let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
+                                        let c=text_viewport::content_bounds(pl.bounds);
+                                        let scroll=win.last_text_views.get(&on_change)
+                                            .map(|v|v.scroll).unwrap_or(0.0);
+                                        bidi_editor::hit_test(shape,mouse.x-c.x+scroll)
+                                    });
+                                    if let (Some(stop),Some(fi))=(hit,win.focused_input.as_mut()) {
+                                        fi.session.caret=stop.grapheme;
+                                        fi.session.anchor=stop.grapheme;
+                                        fi.visual_affinity=Some(stop.run);
+                                    }
+                                }
+                            }
                         } else {
                             // Duplicate callback IDs are ambiguous: never
                             // grant mouse focus to a field that cannot own a
@@ -912,10 +987,39 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 } else {
                     use text_input::{EditCommand,SessionAction};
                     if select_all {fi.session.apply(SessionAction::SelectAll);}
-                    if home {fi.session.apply(SessionAction::Move(EditCommand::Home,extend_selection));}
-                    if end {fi.session.apply(SessionAction::Move(EditCommand::End,extend_selection));}
-                    if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
-                    if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                    // Physical Left/Right for opt-in shaped text only: every
+                    // move carries its UAX9 run affinity separately from
+                    // logical UAX29 grapheme index. No false logical fallback
+                    // if GSUB cannot provide an exact boundary.
+                    let found=find_input_by_callback(tree,&planned_layout,fi.on_change);
+                    let opted=found.is_some_and(|(n,_)|shaped_gpu::is_opted(n));
+                    let geometry=found.and_then(|(n,_)|
+                        loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures));
+                    if home||end {
+                        if !opted {
+                            if home {fi.session.apply(SessionAction::Move(EditCommand::Home,extend_selection));}
+                            if end {fi.session.apply(SessionAction::Move(EditCommand::End,extend_selection));}
+                        }else if let Some(shape)=geometry {
+                            if let Some(stop)=bidi_editor::edge(shape,end){
+                                fi.session.caret=stop.grapheme;
+                                fi.visual_affinity=Some(stop.run);
+                                if !extend_selection{fi.session.anchor=stop.grapheme;}
+                            }
+                        }
+                    }
+                    if left||right {
+                        if !opted {
+                            if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
+                            if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                        }else if let Some(shape)=geometry {
+                            if let Some(stop)=bidi_editor::navigate(shape,fi.session.caret,
+                                fi.visual_affinity,right,extend_selection,fi.session.selection()){
+                                fi.session.caret=stop.grapheme;
+                                fi.visual_affinity=Some(stop.run);
+                                if !extend_selection{fi.session.anchor=stop.grapheme;}
+                            }
+                        }
+                    }
                     let mut changed=false;
                     if undo {changed|=fi.session.apply(SessionAction::Undo);}
                     if redo {changed|=fi.session.apply(SessionAction::Redo);}
@@ -925,6 +1029,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
                     }
                     if changed {
+                        fi.visual_affinity=None;
                         fi.revision.record_local_edit(&fi.session.buffer);
                         fb.text_input_events.push(UiTextInputEvent {
                             callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
@@ -1384,9 +1489,11 @@ fn paint_node<D: RaylibDraw>(
             // Native MeasureText widths shared by selection and caret;
             // scissor prevents long text from escaping the input widget.
             if is_focused {
-                if let Some((x0,x1))=visual.and_then(|v|v.selection_screen(content)) {
-                    d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
-                        x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
+                if let Some(v)=visual {
+                    for (x0,x1) in v.selection_screens(content) {
+                        d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
+                            x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
+                    }
                 }
             }
             let shaped_present=shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k));
@@ -1403,7 +1510,7 @@ fn paint_node<D: RaylibDraw>(
             // Exact default-font pixel measurements, not an average cell;
             // separate BiDi/IME/font fallback certification is still needed.
             if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
-                if let Some(v)=visual {
+                if let Some(v)=visual.filter(|v|v.caret_valid) {
                     let cx=v.caret_screen(content);
                     let cy0=rect.y+10.0;
                     let cy1=rect.y+rect.height-10.0;

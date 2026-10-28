@@ -7,24 +7,39 @@ use crate::layout::Bounds;
 pub(crate) const PAD_X: f32 = 12.0;
 const CARET_MARGIN: f32 = 2.0;
 
-#[derive(Clone,Copy,Debug,PartialEq)]
+#[derive(Clone,Debug,PartialEq)]
 pub(crate) struct Visual {
     pub scroll: f32,
     /// Widths in the unscrolled text coordinate system.
     pub caret: f32,
     pub selection: Option<(f32,f32)>,
+    /// Real visually separated ranges for an opt-in shaped BiDi editor.
+    pub selection_spans: Vec<(f32,f32)>,
+    /// Don't paint a fake caret inside an unresolved ligature cluster.
+    pub caret_valid: bool,
 }
 impl Visual {
-    pub(crate) fn origin(self, content: Bounds) -> f32 { content.x-self.scroll }
-    pub(crate) fn caret_screen(self, content: Bounds) -> f32 {
+    pub(crate) fn origin(&self, content: Bounds) -> f32 { content.x-self.scroll }
+    pub(crate) fn caret_screen(&self, content: Bounds) -> f32 {
         (self.origin(content)+self.caret).clamp(content.x,content.x+content.width)
     }
-    pub(crate) fn selection_screen(self,content:Bounds)->Option<(f32,f32)> {
+    pub(crate) fn selection_screen(&self,content:Bounds)->Option<(f32,f32)> {
         self.selection.and_then(|(a,b)|{
             let x0=(self.origin(content)+a).clamp(content.x,content.x+content.width);
             let x1=(self.origin(content)+b).clamp(content.x,content.x+content.width);
             (x1>x0).then_some((x0,x1))
         })
+    }
+    /// Retain one rectangle per noncontiguous UAX9 visual run segment.
+    pub(crate) fn selection_screens(&self,content:Bounds)->Vec<(f32,f32)>{
+        if !self.selection_spans.is_empty(){
+            return self.selection_spans.iter().filter_map(|&(a,b)|{
+                let x0=(self.origin(content)+a).clamp(content.x,content.x+content.width);
+                let x1=(self.origin(content)+b).clamp(content.x,content.x+content.width);
+                (x1>x0).then_some((x0,x1))
+            }).collect();
+        }
+        self.selection_screen(content).into_iter().collect()
     }
 }
 pub(crate) fn content_bounds(rect:Bounds)->Bounds {
@@ -63,7 +78,7 @@ pub(crate) fn plan(
         let hi=clean(b).min(full);
         (hi>lo).then_some((lo,hi))
     });
-    Visual {scroll,caret,selection}
+    Visual {scroll,caret,selection,selection_spans:Vec::new(),caret_valid:true}
 }
 #[cfg(test)]
 mod tests {
