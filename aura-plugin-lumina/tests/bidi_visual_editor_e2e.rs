@@ -98,7 +98,7 @@ fn true_x11_mixed_direction_select_all_is_split_and_shaded_in_framebuffer(){
  // Sample inside the top 4px selection area; this is outside rendered
  // glyphs and must be physically blue-tinted, not a synthetic geometry test.
  for &(a,b) in &chosen.selection_screens{
-   let mid=((a+b)*.5).floor();
+   let mid=((a+b)*0.5).floor();
    let pix=p.diagnostic_capture_pixel(mid,35.0).unwrap();
    assert!(pix.b>35 && pix.b>pix.r / 3,
       "selection rectangle must physically paint in native Raylib: span=({a},{b}) pix={pix:?}");
