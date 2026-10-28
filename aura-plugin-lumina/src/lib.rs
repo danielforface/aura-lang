@@ -18,6 +18,9 @@ mod text_viewport;
 #[cfg(any(feature = "raylib", test))]
 mod font_atlas;
 
+#[cfg(any(feature = "raylib", test))]
+mod text_shaping;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
