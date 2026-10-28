@@ -21,6 +21,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_source_phi_native -- --nocapture
       - name: Real source Record function ABI Oracle and native Clang O0 O2 (test first)
         run: cargo test --locked -p aura-backend-c --test record_function_abi_native -- --nocapture
+      - name: Omitted scalar Record default values source Oracle and strict Clang O0 O2
+        run: cargo test --locked -p aura-backend-c --test record_defaults_native -- --nocapture
       - name: Nested nominal Record value ABI and cycle guard (source Oracle Clang O0 O2)
         run: cargo test --locked -p aura-backend-c --test record_nested_abi_native -- --nocapture
       - name: Guard nominal Record Phi mismatches and scalar mixes
