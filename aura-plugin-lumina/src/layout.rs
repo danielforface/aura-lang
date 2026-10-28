@@ -256,7 +256,7 @@ mod tests {
             vec![n("Button",&[("width","40"),("height","30")],vec![]),text]);
         let root = n("VStack",&[("padding","10"),("spacing","5")],
             vec![nested,n("Button",&[("width","60"),("height","20")],vec![])]);
-        assert_eq!(measure(&root), (80.0, 83.0));
+        assert_eq!(measure(&root), (91.0, 79.0));
         let plan = arrange(&root, b(0.0,0.0,300.0,200.0));
         assert_eq!(plan.child(0).bounds, b(10.0,10.0,71.0,34.0));
         assert_eq!(plan.child(1).bounds, b(10.0,49.0,60.0,20.0));
