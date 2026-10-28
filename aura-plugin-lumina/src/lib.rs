@@ -91,19 +91,20 @@ pub struct AuraLuminaPlugin {
 
 #[cfg(feature = "raylib")]
 struct LuminaWindow {
-    rl: RaylibHandle,
-    thread: RaylibThread,
+    // Rust drops struct fields in declaration order. All GPU objects MUST be
+    // released while the native Raylib/OpenGL context is still alive.
+    // Keep the window handle LAST; dropping it first caused a SIGSEGV at
+    // shutdown in the actual Xvfb Raylib smoke, not in headless unit tests.
+    textures: HashMap<String, Texture2D>,
+    sdf: RoundedRectShader,
+
+    focused_input: Option<FocusedTextInput>,
+    click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
 
-    sdf: RoundedRectShader,
-
-    // Minimal tween state: animate the last-clicked callback for a short duration.
-    click_anim: Option<(u64, f64)>,
-
-    focused_input: Option<FocusedTextInput>,
-
-    textures: HashMap<String, Texture2D>,
+    thread: RaylibThread,
+    rl: RaylibHandle,
 }
 
 #[cfg(feature = "raylib")]
