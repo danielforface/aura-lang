@@ -331,6 +331,7 @@ fn measure_input_visuals(
     focus_order: &[layout::HitTarget],
     focused: &mut Option<FocusedTextInput>,
     sessions: &mut HashMap<u64,FocusedTextInput>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
 ) -> HashMap<u64,text_viewport::Visual> {
     let allowed: std::collections::HashSet<u64> = focus_order.iter().filter_map(|x|match x {
         layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
@@ -341,6 +342,7 @@ fn measure_input_visuals(
         allowed:&std::collections::HashSet<u64>,
         focused:&mut Option<FocusedTextInput>,
         sessions:&mut HashMap<u64,FocusedTextInput>,
+        fonts:&HashMap<String,LoadedUnicodeFont>,
         result:&mut HashMap<u64,text_viewport::Visual>,
     ) {
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
@@ -352,16 +354,22 @@ fn measure_input_visuals(
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
-                let width=rl.measure_text(value,size).max(0) as f32;
+                let font=selected_unicode_font(fonts,node,size,value);
+                let measure=|text:&str|->f32 {
+                    if let Some(font)=font {
+                        font.measure_text(text,size as f32,0.0).x.max(0.0)
+                    } else {rl.measure_text(text,size).max(0) as f32}
+                };
+                let width=measure(value);
                 let caret=if active {
-                    entry.as_ref().map(|fi|rl.measure_text(
-                        text_viewport::grapheme_prefix(value,fi.session.caret),size).max(0) as f32)
+                    entry.as_ref().map(|fi|measure(
+                        text_viewport::grapheme_prefix(value,fi.session.caret)))
                 }else{None}.unwrap_or(0.0);
                 let selection=if active {
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .map(|(a,b)|(
-                            rl.measure_text(text_viewport::grapheme_prefix(value,a),size).max(0) as f32,
-                            rl.measure_text(text_viewport::grapheme_prefix(value,b),size).max(0) as f32))
+                            measure(text_viewport::grapheme_prefix(value,a)),
+                            measure(text_viewport::grapheme_prefix(value,b))))
                 }else{None};
                 let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
                 let content=text_viewport::content_bounds(plan.bounds);
@@ -372,12 +380,12 @@ fn measure_input_visuals(
         }
         for (child,slot) in node.children.iter().zip(&plan.children){
             if let Some(child_plan)=slot {
-                collect(rl,child,child_plan,allowed,focused,sessions,result);
+                collect(rl,child,child_plan,allowed,focused,sessions,fonts,result);
             }
         }
     }
     let mut result=HashMap::new();
-    collect(rl,tree,plan,&allowed,focused,sessions,&mut result);
+    collect(rl,tree,plan,&allowed,focused,sessions,fonts,&mut result);
     result
 }
 
@@ -737,9 +745,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
+                &planned_layout,&win.focused_input,&win.input_sessions);
             let text_views=measure_input_visuals(
                 &win.rl,tree,&planned_layout,&focus_order,
-                &mut win.focused_input,&mut win.input_sessions);
+                &mut win.focused_input,&mut win.input_sessions,&win.fonts);
             win.last_text_views=text_views.clone();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
@@ -751,7 +761,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
-                    &text_views,
+                    &text_views,&win.fonts,
                 );
             }
             fb.clicked_callback_id = click_cb;
