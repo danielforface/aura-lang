@@ -256,3 +256,37 @@ fn avm_omitted_scalar_record_defaults_match_same_source_ir_oracle() {
         assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
     }
 }
+
+
+#[test]
+fn avm_record_boolean_defaults_are_typed_and_scoped_per_source() {
+    let true_source=r#"
+type Flag = record { enabled: bool = true, count: u32 = 17 }
+cell main() ->:
+    val f: Flag = Flag {}
+    yield f.enabled
+"#;
+    let false_source=r#"
+type Flag = record { enabled: bool = false, count: u32 = 19 }
+cell main() ->:
+    val f: Flag = Flag {}
+    yield f.enabled
+"#;
+    let mut vm=Avm::new(AvmConfig {
+        enable_z3_gate:false,..Default::default()
+    });
+    for (source, expected) in [(true_source,true),(false_source,false)] {
+        let ast=aura_parse::parse_source(source).expect("bool default source parse");
+        aura_core::Checker::new().check_program(&ast).expect("bool default source checker");
+        let ir=aura_core::lower_program(&ast).expect("bool default lowerer");
+        aura_ir::validate_module(&ir).expect("bool default SSA valid");
+        let oracle=aura_ir::run_oracle_entry(&ir,"main",&[],aura_ir::OracleConfig::default())
+            .expect("bool default IR Oracle");
+        assert_eq!(oracle.return_value,Some(aura_ir::OracleValue::Bool(expected)));
+        let result=vm.exec_entry_cell(source,"main")
+            .expect("bool default AVM execution, no stale source definitions");
+        assert_eq!(result.value,AvmValue::Bool(expected));
+        assert!(!result.verified);
+        assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
+    }
+}
