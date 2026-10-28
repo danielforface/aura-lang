@@ -98,3 +98,8 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test bidi_visual_editor_e2e -- --nocapture --test-threads=1
+
+      - name: Real explicit secondary font atlas GPU and X11 keyboard proof
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test font_fallback_e2e -- --nocapture --test-threads=1
