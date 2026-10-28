@@ -603,6 +603,53 @@ impl AuraLuminaPlugin {
         Some(loaded.font.measure_text(text,size as f32,0.0).x)
     }
 
+    /// Reports exactly which actual font-index glyphs have an uploaded GPU
+    /// raster atlas; unlike a mere successful CPU shaper this requires a
+    /// prepared Texture2D in the active Raylib window.
+    pub fn diagnostic_shaped_gpu(
+        &self,font_path:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<u16>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",font_path);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyph_ids=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|g.glyph_id)).collect();
+        Some((prepared.cells.len(),glyph_ids,prepared.shaped.width))
+    }
+
+    /// Pixel-position sensitive framebuffer digest. Counts only text-red
+    /// pixels (not background); different visual forms produce distinct
+    /// hashes even if the raw number of red pixels is similar. Xvfb only.
+    pub fn diagnostic_red_signature(&self,x:i32,y:i32,width:i32,height:i32)
+        ->Option<(usize,u64)> {
+        if width<=0||height<=0||width>640||height>480{return None;}
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),win.rl.get_screen_height(),
+            win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut count=0;
+        let mut hash=14695981039346656037u64;
+        for iy in y..y.saturating_add(height) {
+            for ix in x..x.saturating_add(width) {
+                let (px,py)=m.logical_to_framebuffer(ix as f32,iy as f32)?;
+                if px>=image.width()||py>=image.height(){return None;}
+                let c=image.get_color(px,py);
+                if c.r>160&&c.g<155&&c.b<155 {
+                    count+=1;
+                    hash=(hash^(ix as u64)).wrapping_mul(1099511628211);
+                    hash=(hash^(iy as u64)).wrapping_mul(1099511628211);
+                }
+            }
+        }
+        Some((count,hash))
+    }
+
     /// One GPU readback over a bounded logical rectangle, counting only
     /// distinctly red text pixels. Never expose the raw screenshot pixels.
     pub fn diagnostic_red_pixels_in_rect(&self,x:i32,y:i32,width:i32,height:i32)->Option<usize> {
