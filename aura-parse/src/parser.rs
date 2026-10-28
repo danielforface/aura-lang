@@ -605,10 +605,7 @@ impl<'a> Parser<'a> {
                     Ok(Stmt::Prop(self.parse_prop_stmt()?))
                 } else if self.peek_kind_n(1).is_some_and(|k| matches!(k, TokenKind::Eq)) {
                     Ok(Stmt::Assign(self.parse_assign_stmt()?))
-                } else if self.peek_kind_n(1).is_some_and(|k| matches!(k, TokenKind::Dot))
-                    && self.peek_kind_n(2).is_some_and(|k| matches!(k, TokenKind::Ident(_)))
-                    && self.peek_kind_n(3).is_some_and(|k| matches!(k, TokenKind::Eq))
-                {
+                } else if self.is_field_assign_start() {
                     Ok(Stmt::FieldAssign(self.parse_field_assign_stmt()?))
                 } else {
                     let expr = self.parse_expr()?;
@@ -1286,15 +1283,44 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
+    // Recognize the complete Ident(.Ident)+ '=' lvalue without consuming
+    // tokens; method calls and standalone member expressions parse normally.
+    fn is_field_assign_start(&self) -> bool {
+        let mut at = 1usize;
+        for _ in 0..16 {
+            if !self.peek_kind_n(at).is_some_and(|k| matches!(k, TokenKind::Dot))
+                || !self.peek_kind_n(at + 1).is_some_and(|k| matches!(k, TokenKind::Ident(_)))
+            {
+                return false;
+            }
+            at += 2;
+            if self.peek_kind_n(at).is_some_and(|k| matches!(k, TokenKind::Eq)) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn parse_field_assign_stmt(&mut self) -> Result<FieldAssignStmt, ParseError> {
         let target = self.expect_ident()?;
         self.expect(TokenKind::Dot)?;
         let field = self.expect_ident()?;
+        let mut nested = Vec::new();
+        while self.at(TokenKind::Dot) {
+            if nested.len() >= 15 {
+                return Err(ParseError {
+                    message: "Record field assignment path exceeds 16 components".into(),
+                    span: self.peek_span().unwrap_or(target.span),
+                });
+            }
+            self.next();
+            nested.push(self.expect_ident()?);
+        }
         self.expect(TokenKind::Eq)?;
         let expr = self.parse_expr()?;
         self.expect_stmt_terminator()?;
         let span = join(target.span, expr.span);
-        Ok(FieldAssignStmt { span, target, field, expr })
+        Ok(FieldAssignStmt { span, target, field, nested, expr })
     }
 
     fn parse_assign_stmt(&mut self) -> Result<AssignStmt, ParseError> {
