@@ -107,6 +107,7 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    input_sessions: HashMap<u64, FocusedTextInput>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
@@ -120,8 +121,61 @@ struct LuminaWindow {
 struct FocusedTextInput {
     on_change: u64,
     on_submit: Option<u64>,
-    buffer: String,
-    caret: usize,
+    source_value: String,
+    session: text_input::EditSession,
+}
+
+#[cfg(feature = "raylib")]
+fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String)>) {
+    if let (Some(active), Some((new_id, _, _))) = (&win.focused_input, &target) {
+        if active.on_change == *new_id { return; }
+    }
+    if let Some(previous) = win.focused_input.take() {
+        win.input_sessions.insert(previous.on_change, previous);
+    }
+    if let Some((on_change, on_submit, source_value)) = target {
+        let mut entry = win.input_sessions.remove(&on_change).unwrap_or_else(|| FocusedTextInput {
+            on_change, on_submit, source_value: source_value.clone(),
+            session: text_input::EditSession::new(source_value.clone()),
+        });
+        if entry.source_value != source_value {
+            if entry.session.buffer != source_value {
+                entry.session = text_input::EditSession::new(source_value.clone());
+            }
+            entry.source_value = source_value;
+        }
+        entry.on_submit = on_submit;
+        win.focused_input = Some(entry);
+    }
+}
+
+/// Unchanged controlled prop is NOT authoritative over an unacknowledged
+/// local edit. A genuinely changed prop is authoritative and rebases history.
+#[cfg(feature = "raylib")]
+fn reconcile_input_sessions(win: &mut LuminaWindow, order: &[layout::HitTarget]) {
+    let present: HashMap<u64, (&str, Option<u64>)> = order.iter().filter_map(|item| match item {
+        layout::HitTarget::TextInput { on_change, on_submit, value } =>
+            Some((*on_change, (value.as_str(), *on_submit))),
+        _ => None,
+    }).collect();
+    win.input_sessions.retain(|id, _| present.contains_key(id));
+    let refresh = |entry: &mut FocusedTextInput, prop: &str, submit: Option<u64>| {
+        if entry.source_value != prop {
+            if entry.session.buffer != prop {
+                entry.session = text_input::EditSession::new(prop.to_owned());
+            }
+            entry.source_value = prop.to_owned();
+        }
+        entry.on_submit = submit;
+    };
+    for (id, entry) in &mut win.input_sessions {
+        if let Some((prop, submit)) = present.get(id) { refresh(entry, prop, *submit); }
+    }
+    if let Some(entry) = &mut win.focused_input {
+        if let Some((prop, submit)) = present.get(&entry.on_change) {
+            refresh(entry, prop, *submit);
+        } else { win.focused_input = None; }
+    }
 }
 
 #[cfg(feature = "raylib")]
@@ -301,6 +355,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    input_sessions: HashMap::new(),
                     textures: HashMap::new(),
                 });
             }
@@ -339,6 +394,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
                 || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
             let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+            let ctrl = win.rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL);
+            let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
+            let undo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Z);
+            let redo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Y);
+            let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
             let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
@@ -351,110 +413,91 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }
 
-            let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
-
             // Geometry & pointer coordinates stay LOGICAL. The shader alone
             // transforms gl_FragCoord physical bottom-left pixels to logical
             // top-left coordinates. Raylib's scissor mode performs its own DPI
             // transform: do NOT scale scissor rectangles again here.
             let frame = FrameMetrics::from_window(
-                rl.get_screen_width(), rl.get_screen_height(),
-                rl.get_render_width(), rl.get_render_height(),
+                win.rl.get_screen_width(), win.rl.get_screen_height(),
+                win.rl.get_render_width(), win.rl.get_render_height(),
             );
             let viewport = frame.logical;
             let valid_frame = frame.scale_x > 0.0 && frame.scale_y > 0.0;
             if valid_frame {
-                sdf.shader.set_shader_value(
-                    sdf.loc_framebuffer_scale, [frame.scale_x, frame.scale_y]);
-                sdf.shader.set_shader_value(
-                    sdf.loc_framebuffer_height, frame.render_height as f32);
+                win.sdf.shader.set_shader_value(
+                    win.sdf.loc_framebuffer_scale, [frame.scale_x, frame.scale_y]);
+                win.sdf.shader.set_shader_value(
+                    win.sdf.loc_framebuffer_height, frame.render_height as f32);
             }
             // Construct all geometry before beginning the paint pass. Headless
             // tests exercise this exact measure/arrange model without Raylib.
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
-            // Resolve a single topmost visible control before paint, using the
-            // same arranged bounds and ancestor clips as native drawing.
+            let focus_order = layout::focus_order(tree, &planned_layout);
+            reconcile_input_sessions(win, &focus_order);
             let click_cb = if clicked {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
-                        win.focused_input = None;
-                        Some(id)
+                        switch_input(win, None);Some(id)
                     }
-                    Some(layout::HitTarget::TextInput { on_change, on_submit, value }) => {
-                        let caret = text_input::grapheme_count(&value);
-                        win.focused_input = Some(FocusedTextInput {
-                            on_change, on_submit, buffer: value, caret,
-                        });
+                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
+                        if focus_order.iter().any(|candidate|matches!(candidate,
+                            layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
+                            switch_input(win,Some((on_change,on_submit,value)));
+                        } else {
+                            // Duplicate callback IDs are ambiguous: never
+                            // grant mouse focus to a field that cannot own a
+                            // unique session identity.
+                            switch_input(win,None);
+                        }
                         None
                     }
-                    None => { win.focused_input = None; None }
+                    None => {switch_input(win,None);None}
                 }
-            } else { None };
-            // Native Tab/Shift+Tab uses the same measured tree as paint and
-            // mouse hit testing. Excludes hidden/disabled/skipped controls.
-            // An already-focused sole input keeps its unsent draft text.
+            } else {None};
             if tab {
-                let order = layout::focus_order(tree, &planned_layout);
-                let current = win.focused_input.as_ref().map(|fi| fi.on_change);
-                match layout::next_focus(&order, current, reverse_tab) {
-                    Some(layout::HitTarget::TextInput { on_change, on_submit, value }) => {
-                        if current != Some(on_change) {
-                            win.focused_input = Some(FocusedTextInput {
-                                on_change, on_submit,
-                                caret: text_input::grapheme_count(&value),
-                                buffer: value,
-                            });
-                        }
-                    }
-                    _ => win.focused_input = None,
+                let active=win.focused_input.as_ref().map(|fi|fi.on_change);
+                let target=layout::next_focus(&focus_order,active,reverse_tab);
+                match target {
+                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) =>
+                        switch_input(win,Some((on_change,on_submit,value))),
+                    _=>switch_input(win,None),
                 }
             }
-            // Apply keyboard transitions BEFORE painting: the caret and
-            // rendered text correspond to the same frame that publishes
-            // UiTextInputEvent, including after a focus click.
-            if let Some(fi) = &mut win.focused_input {
+            if let Some(fi)=&mut win.focused_input {
                 if escape {
-                    win.focused_input = None;
+                    switch_input(win,None);
                 } else {
-                    use text_input::EditCommand;
-                    // Grapheme navigation changes only the caret; never emits a
-                    // false on_change callback.
-                    if home { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Home); }
-                    if end { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::End); }
-                    if left { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Left); }
-                    if right { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Right); }
-
-                    let mut changed = false;
-                    if backspace {
-                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Backspace);
-                    }
-                    if delete {
-                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Delete);
-                    }
-                    if !typed.is_empty() {
-                        changed |= text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Insert(typed));
+                    use text_input::{EditCommand,SessionAction};
+                    if select_all {fi.session.apply(SessionAction::SelectAll);}
+                    if home {fi.session.apply(SessionAction::Move(EditCommand::Home,extend_selection));}
+                    if end {fi.session.apply(SessionAction::Move(EditCommand::End,extend_selection));}
+                    if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
+                    if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                    let mut changed=false;
+                    if undo {changed|=fi.session.apply(SessionAction::Undo);}
+                    if redo {changed|=fi.session.apply(SessionAction::Redo);}
+                    if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
+                    if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
+                    if !ctrl && !typed.is_empty() {
+                        changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
                     }
                     if changed {
                         fb.text_input_events.push(UiTextInputEvent {
-                            callback_id: fi.on_change,
-                            text: fi.buffer.clone(),
-                            submitted: false,
+                            callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
                         });
                     }
                     if enter {
-                        if let Some(cb) = fi.on_submit {
+                        if let Some(cb)=fi.on_submit {
                             fb.text_input_events.push(UiTextInputEvent {
-                                callback_id: cb,
-                                text: fi.buffer.clone(),
-                                submitted: true,
+                                callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
                             });
                         }
                     }
                 }
             }
-
+            let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
@@ -463,7 +506,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             if valid_frame {
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
-                    win.click_anim, &win.focused_input, &win.textures,
+                    win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
                 );
             }
             fb.clicked_callback_id = click_cb;
@@ -644,10 +687,11 @@ fn render_children(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions);
         }
     }
 }
@@ -662,15 +706,16 @@ fn render_node(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
 ) {
     // Each node gets an independent scissor; it is dropped before children
     // draw. Avoid nested raylib scissors (EndScissorMode is not a push/pop).
     let Some((x, y, width, height)) = layout.clip.scissor() else { return };
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
-        paint_node(&mut clipped, node, layout, now, sdf, click_anim, focused_input, textures);
+        paint_node(&mut clipped, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
 }
 
 #[cfg(feature = "raylib")]
@@ -683,6 +728,7 @@ fn paint_node<D: RaylibDraw>(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
     // No geometry measurement or placement occurs during draw recursion.
@@ -831,15 +877,15 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
             }
 
-            // Display value (controlled input).
+            // Display retained drafts for nonfocused inputs until the host
+            // changes their authoritative value. Avoid the old visual reset
+            // to stale controlled props on Tab/blur.
             let value = if is_focused {
-                focused_input
-                    .as_ref()
-                    .map(|fi| fi.buffer.as_str())
-                    .unwrap_or("")
+                focused_input.as_ref().map(|fi|fi.session.buffer.as_str()).unwrap_or("")
             } else {
-                prop_string(node, "value")
-                    .or_else(|| prop_string(node, "text"))
+                on_change.and_then(|cb|input_sessions.get(&cb))
+                    .map(|fi|fi.session.buffer.as_str())
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("")
             };
 
@@ -850,6 +896,25 @@ fn paint_node<D: RaylibDraw>(
             let ts = prop_i32(node, "size").unwrap_or(18);
             let pad_x = 12.0_f32;
             let pad_y = (rect.height - ts as f32) / 2.0;
+            // Approximate (not font-shaped) selection highlight for grapheme
+            // ranges. The text is drawn on top; X11 pixel sampling covers
+            // solid overlays separately from layout semantics.
+            if is_focused {
+                if let Some(fi)=focused_input.as_ref() {
+                    if let Some((a,b))=fi.session.selection() {
+                        let cell=(ts as f32*0.6).max(1.0);
+                        let x0=rect.x+pad_x+(a as f32)*cell;
+                        let x1=(rect.x+pad_x+(b as f32)*cell)
+                            .min(rect.x+rect.width-2.0);
+                        if x1>x0 {
+                            d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
+                                x1-x0,(rect.height-8.0).max(0.0)),
+                                Color::new(59,130,246,100));
+                        }
+                    }
+                }
+            }
+
             d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
 
             // This MVP caret tracks the edited UAX29 grapheme index and
@@ -857,7 +922,7 @@ fn paint_node<D: RaylibDraw>(
             // glyph metrics, graphemes and bidi shaping remain unqualified.
             if is_focused {
                 if let Some(fi) = focused_input.as_ref() {
-                    let before = fi.caret.min(text_input::grapheme_count(&fi.buffer));
+                    let before = fi.session.caret.min(text_input::grapheme_count(&fi.session.buffer));
                     let est_w = (before as f32) * (ts as f32 * 0.6);
                     let cx = (rect.x + pad_x + est_w + 1.0)
                         .min(rect.x + rect.width - 2.0);

@@ -353,6 +353,19 @@ pub(crate) fn focus_order(node: &UiNode, plan: &LayoutNode) -> Vec<HitTarget> {
     }
     let mut order = Vec::new();
     collect(node, plan, &mut order);
+    // Callback ID is the only focus identity available to this MVP. Two
+    // distinct fields sharing an ID must NOT silently share one local draft.
+    // Fail closed on duplicates instead of guessing which field received it.
+    let mut multiplicity=std::collections::HashMap::<u64,usize>::new();
+    for candidate in &order {
+        if let HitTarget::TextInput{on_change,..}=candidate {
+            *multiplicity.entry(*on_change).or_default()+=1;
+        }
+    }
+    order.retain(|candidate|match candidate {
+        HitTarget::TextInput{on_change,..} => multiplicity.get(on_change)==Some(&1),
+        _ => false,
+    });
     order
 }
 
@@ -376,6 +389,21 @@ pub(crate) fn next_focus(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_callback_ids_fail_closed_without_merging_drafts() {
+        let tree=n("App",&[],vec![
+            n("TextInput",&[("x","10"),("y","10"),("width","100"),("on_change","cb:71")],vec![]),
+            n("TextInput",&[("x","10"),("y","80"),("width","100"),("on_change","cb:71")],vec![]),
+            n("TextInput",&[("x","10"),("y","150"),("width","100"),("on_change","cb:72")],vec![]),
+        ]);
+        let plan=arrange(&tree,Bounds::new(0.0,0.0,640.0,400.0));
+        let order=focus_order(&tree,&plan);
+        assert_eq!(order.len(),1);
+        assert!(matches!(&order[0],HitTarget::TextInput{on_change:72,..}));
+        assert!(matches!(next_focus(&order,None,false),
+            Some(HitTarget::TextInput{on_change:72,..})));
+    }
 
     #[test]
     fn disabled_text_input_is_not_pointer_actionable_either() {

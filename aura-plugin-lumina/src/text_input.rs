@@ -67,6 +67,122 @@ pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditComman
     false
 }
 
+
+/// Per-widget ephemeral editor state, including grapheme selection and
+/// bounded undo/redo. This is independent of rendering and host callbacks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EditSession {
+    pub buffer: String,
+    pub caret: usize,
+    pub anchor: usize,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Snapshot { buffer: String, caret: usize, anchor: usize }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionAction {
+    Move(EditCommand, bool), // second arg extends selection
+    Edit(EditCommand),
+    SelectAll,
+    Undo,
+    Redo,
+}
+const MAX_HISTORY: usize = 64;
+impl EditSession {
+    pub(crate) fn new(text: String) -> Self {
+        let end=grapheme_count(&text);
+        Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new() }
+    }
+    fn snapshot(&self) -> Snapshot {
+        Snapshot { buffer:self.buffer.clone(),caret:self.caret,anchor:self.anchor }
+    }
+    fn restore(&mut self, s: Snapshot) {
+        self.buffer=s.buffer;
+        self.caret=s.caret.min(grapheme_count(&self.buffer));
+        self.anchor=s.anchor.min(grapheme_count(&self.buffer));
+    }
+    pub(crate) fn selection(&self) -> Option<(usize,usize)> {
+        (self.anchor!=self.caret).then(||(self.anchor.min(self.caret),self.anchor.max(self.caret)))
+    }
+    fn push(undo:&mut Vec<Snapshot>,snapshot:Snapshot) {
+        if undo.len()==MAX_HISTORY {undo.remove(0);}
+        undo.push(snapshot);
+    }
+    pub(crate) fn apply(&mut self, action: SessionAction) -> bool {
+        let len=grapheme_count(&self.buffer);
+        self.caret=self.caret.min(len); self.anchor=self.anchor.min(len);
+        match action {
+            SessionAction::SelectAll => {self.anchor=0;self.caret=len;false}
+            SessionAction::Move(cmd,extend) => {
+                if !extend {
+                    if let Some((start,end))=self.selection() {
+                        match cmd {
+                            EditCommand::Left=>{self.caret=start;self.anchor=start;return false;}
+                            EditCommand::Right=>{self.caret=end;self.anchor=end;return false;}
+                            _=>{}
+                        }
+                    }
+                }
+                let old=self.caret;
+                // Navigation only: never create undo entries or emit on_change.
+                let _=apply_edit(&mut self.buffer,&mut self.caret,cmd);
+                if !extend {self.anchor=self.caret;}
+                if self.caret==old && !extend {self.anchor=self.caret;}
+                false
+            }
+            SessionAction::Undo => {
+                if let Some(previous)=self.undo.pop() {
+                    let now=self.snapshot();
+                    Self::push(&mut self.redo,now);
+                    self.restore(previous);return true;
+                }
+                false
+            }
+            SessionAction::Redo => {
+                if let Some(next)=self.redo.pop() {
+                    let now=self.snapshot();
+                    Self::push(&mut self.undo,now);
+                    self.restore(next);return true;
+                }
+                false
+            }
+            SessionAction::Edit(cmd) => {
+                let insertion=match &cmd { EditCommand::Insert(s) =>
+                    !s.chars().any(|c| !c.is_control()), _=>false };
+                if insertion {return false;}
+                let old=self.snapshot();
+                let mut changed=false;
+                if let Some((start,end))=self.selection() {
+                    match cmd {
+                        EditCommand::Backspace|EditCommand::Delete|EditCommand::Insert(_) => {
+                            let a=byte_offset(&self.buffer,start);
+                            let z=byte_offset(&self.buffer,end);
+                            self.buffer.replace_range(a..z,"");
+                            self.caret=start;self.anchor=start;
+                            changed=true;
+                        }
+                        _=>{}
+                    }
+                }
+                // Do not delete an extra grapheme after replacing a selection.
+                changed |= match cmd {
+                    EditCommand::Backspace|EditCommand::Delete if changed => false,
+                    other => apply_edit(&mut self.buffer,&mut self.caret,other),
+                };
+                self.anchor=self.caret;
+                if changed {
+                    Self::push(&mut self.undo,old);
+                    self.redo.clear();
+                }
+                changed
+            }
+        }
+    }
+    pub(crate) fn undo_len(&self) -> usize {self.undo.len()}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +193,72 @@ mod tests {
         (s,caret,diffs)
     }
 
+    #[test]
+    fn select_all_replace_graphemes_and_restore_undo_redo() {
+        let mut s=EditSession::new("👩‍👩‍👧‍👦 A".into());
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert_eq!(s.selection(),Some((0,3)));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("B".into()))));
+        assert_eq!((s.buffer.as_str(),s.caret,s.selection()),("B",1,None));
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"👩‍👩‍👧‍👦 A");
+        assert_eq!(s.selection(),Some((0,3)));
+        assert!(s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"B");
+    }
+    #[test]
+    fn shift_left_selects_whole_zwj_and_backspace_erases_only_selection() {
+        let mut s=EditSession::new("A👩‍👩‍👧‍👦".into());
+        s.apply(SessionAction::Move(EditCommand::Left,true));
+        assert_eq!(s.selection(),Some((1,2)));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"A");
+        assert_eq!(s.caret,1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"A👩‍👩‍👧‍👦");
+    }
+    #[test]
+    fn left_and_right_collapse_existing_selection_without_mutating_text() {
+        let mut s=EditSession::new("abcd".into());
+        s.apply(SessionAction::Move(EditCommand::Left,true));
+        s.apply(SessionAction::Move(EditCommand::Left,true));
+        assert_eq!(s.selection(),Some((2,4)));
+        assert!(!s.apply(SessionAction::Move(EditCommand::Left,false)));
+        assert_eq!((s.caret,s.anchor),(2,2));
+        s.apply(SessionAction::SelectAll);
+        s.apply(SessionAction::Move(EditCommand::Right,false));
+        assert_eq!((s.caret,s.anchor),(4,4));
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]
+    fn external_rebase_new_session_has_no_cross_text_history() {
+        let mut s=EditSession::new("old".into());
+        s.apply(SessionAction::Edit(EditCommand::Insert("!".into())));
+        s=EditSession::new("server".into());
+        assert_eq!(s.buffer,"server");
+        assert!(!s.apply(SessionAction::Undo));
+    }
+    #[test]
+    fn undo_is_bounded_and_new_edit_invalidates_redo() {
+        let mut s=EditSession::new(String::new());
+        for _ in 0..80 { assert!(s.apply(SessionAction::Edit(EditCommand::Insert("X".into())))); }
+        assert_eq!(s.undo_len(),64);
+        assert!(s.apply(SessionAction::Undo));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("!".into()))));
+        assert!(!s.apply(SessionAction::Redo));
+    }
+    #[test]
+    fn selection_delete_is_one_undo_step_and_control_chars_are_noop() {
+        let mut s=EditSession::new("abc".into());
+        s.apply(SessionAction::SelectAll);
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("\n".into()))));
+        assert_eq!(s.buffer,"abc");
+        assert!(s.apply(SessionAction::Edit(EditCommand::Delete)));
+        assert_eq!(s.buffer,"");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"abc");
+    }
     #[test]
     fn ascii_home_right_insert_then_end_backspace() {
         let r=edit("abc",3,vec![EditCommand::Home,EditCommand::Right,
