@@ -92,3 +92,8 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test bidi_shaping_e2e -- --nocapture --test-threads=1
+
+      - name: Real indexed glyph-ID GPU pixel silhouette and shaped TextInput XTest
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test shaped_gpu_e2e -- --nocapture --test-threads=1
