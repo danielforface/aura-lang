@@ -339,6 +339,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
                 || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
             let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+            let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
+            let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
             let mut typed = String::new();
             while let Some(ch) = win.rl.get_char_pressed() {
@@ -380,7 +383,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         Some(id)
                     }
                     Some(layout::HitTarget::TextInput { on_change, on_submit, value }) => {
-                        let caret = value.chars().count();
+                        let caret = text_input::grapheme_count(&value);
                         win.focused_input = Some(FocusedTextInput {
                             on_change, on_submit, buffer: value, caret,
                         });
@@ -389,6 +392,25 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     None => { win.focused_input = None; None }
                 }
             } else { None };
+            // Native Tab/Shift+Tab uses the same measured tree as paint and
+            // mouse hit testing. Excludes hidden/disabled/skipped controls.
+            // An already-focused sole input keeps its unsent draft text.
+            if tab {
+                let order = layout::focus_order(tree, &planned_layout);
+                let current = win.focused_input.as_ref().map(|fi| fi.on_change);
+                match layout::next_focus(&order, current, reverse_tab) {
+                    Some(layout::HitTarget::TextInput { on_change, on_submit, value }) => {
+                        if current != Some(on_change) {
+                            win.focused_input = Some(FocusedTextInput {
+                                on_change, on_submit,
+                                caret: text_input::grapheme_count(&value),
+                                buffer: value,
+                            });
+                        }
+                    }
+                    _ => win.focused_input = None,
+                }
+            }
             // Apply keyboard transitions BEFORE painting: the caret and
             // rendered text correspond to the same frame that publishes
             // UiTextInputEvent, including after a focus click.
@@ -397,7 +419,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     win.focused_input = None;
                 } else {
                     use text_input::EditCommand;
-                    // Navigation changes only the caret and never publishes a
+                    // Grapheme navigation changes only the caret; never emits a
                     // false on_change callback.
                     if home { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::Home); }
                     if end { text_input::apply_edit(&mut fi.buffer, &mut fi.caret, EditCommand::End); }
@@ -830,12 +852,12 @@ fn paint_node<D: RaylibDraw>(
             let pad_y = (rect.height - ts as f32) / 2.0;
             d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
 
-            // This MVP caret tracks the edited Unicode scalar index and
+            // This MVP caret tracks the edited UAX29 grapheme index and
             // uses the same rough font-width estimate as button text. Exact
             // glyph metrics, graphemes and bidi shaping remain unqualified.
             if is_focused {
                 if let Some(fi) = focused_input.as_ref() {
-                    let before = fi.buffer.chars().take(fi.caret).count();
+                    let before = fi.caret.min(text_input::grapheme_count(&fi.buffer));
                     let est_w = (before as f32) * (ts as f32 * 0.6);
                     let cx = (rect.x + pad_x + est_w + 1.0)
                         .min(rect.x + rect.width - 2.0);
