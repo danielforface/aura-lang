@@ -1777,8 +1777,12 @@ impl Checker {
                     expected.remove(&k.node);
                 }
 
-                // Remaining fields must have defaults.
-                for (fname, (_ty_ref, has_default)) in expected {
+                // Remaining fields must have defaults. A *used* default
+                // must be typechecked before we lower it as an SSA initializer.
+                // Only source-local scalar constants are qualified in Q03:
+                // accepting a dynamic/nominal default would otherwise create
+                // unscoped runtime evaluation or an untyped C field.
+                for (fname, (ty_ref, has_default)) in expected {
                     if !has_default {
                         return Err(SemanticError {
                             message: format!(
@@ -1787,6 +1791,42 @@ impl Checker {
                             ),
                             span: expr.span,
                         });
+                    }
+                    if def.params.is_empty() {
+                        let value = def.fields.iter()
+                            .find(|field| field.name.node == fname)
+                            .and_then(|field| field.default.as_ref())
+                            .expect("checked source default must exist");
+                        let literal = match &value.kind {
+                            ExprKind::IntLit(_) => true,
+                            ExprKind::Ident(id) =>
+                                id.node == "true" || id.node == "false",
+                            _ => false,
+                        };
+                        if !literal {
+                            return Err(SemanticError {
+                                message: format!(
+                                    "unqualified nonliteral Record default '{}.{}'",
+                                    name.node, fname
+                                ),
+                                span: value.span,
+                            });
+                        }
+                        let required = self.resolve_type_ref(&ty_ref)?;
+                        if !matches!(required,
+                            Type::Bool | Type::U8 | Type::U16 | Type::U32 |
+                            Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                            Type::I64 | Type::F32 | Type::F64 | Type::Char) {
+                            return Err(SemanticError {
+                                message: format!(
+                                    "unqualified non-scalar Record default '{}.{}'",
+                                    name.node, fname
+                                ),
+                                span: value.span,
+                            });
+                        }
+                        let actual = self.infer_expr(value)?;
+                        self.check_assignable(&required, &actual, value)?;
                     }
                 }
 
