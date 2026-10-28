@@ -62,4 +62,8 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test keyboard_e2e -- --nocapture --test-threads=1
+      - name: Real X11 Tab and Shift-Tab traversal skips clipped and disabled controls
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test tab_focus_e2e -- --nocapture --test-threads=1
 
