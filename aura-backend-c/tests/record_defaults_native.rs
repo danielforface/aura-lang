@@ -71,3 +71,32 @@ fn omitted_scalar_defaults_are_qualified_in_oracle_and_native_c_abi() {
         assert!(run.status.success(),"{opt} failed: {}\n{}",String::from_utf8_lossy(&run.stderr),artifacts.module_c);
     }
 }
+
+
+#[test]
+fn wrong_typed_omitted_default_is_rejected_by_checker_before_codegen() {
+    let source=r#"
+type Point = record { x: u32 = true, y: u32 = 13 }
+cell bad() ->:
+    yield Point { y: 9 }
+"#;
+    let ast=aura_parse::parse_source(source).expect("well formed default syntax");
+    let e=Checker::new().check_program(&ast)
+        .expect_err("default bool must not flow into u32 field");
+    assert!(e.message.contains("type") || e.message.contains("assign"),
+        "expected typed omitted-default diagnostic, got {e}");
+}
+
+#[test]
+fn omitted_nonliteral_default_is_refused_until_qualified() {
+    let source=r#"
+type Point = record { x: u32 = 1 + 2, y: u32 = 13 }
+cell bad() ->:
+    yield Point { y: 9 }
+"#;
+    let ast=aura_parse::parse_source(source).expect("well formed default expression");
+    let e=Checker::new().check_program(&ast)
+        .expect_err("unsupported nonliteral default cannot be lowered by a partial ABI");
+    assert!(e.message.contains("default") && e.message.contains("unqualified"),
+        "expected explicit fail-closed default diagnostic, got {e}");
+}
