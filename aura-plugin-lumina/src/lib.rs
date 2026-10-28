@@ -3,6 +3,9 @@
 #[cfg(any(feature = "raylib", test))]
 mod viewport;
 
+#[cfg(any(feature = "raylib", test))]
+mod layout;
+
 #[cfg(feature = "raylib")]
 use viewport::RootViewport;
 
@@ -280,6 +283,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // Layout coordinates are logical window pixels, not physical framebuffer DPI pixels.
             // Sample every frame so the root bounds follow user-driven window resize.
             let viewport = RootViewport::from_window_size(rl.get_screen_width(), rl.get_screen_height());
+            // Construct all geometry before beginning the paint pass. Headless
+            // tests exercise this exact measure/arrange model without Raylib.
+            let planned_layout = layout::arrange(tree, layout::Bounds::new(
+                0.0, 0.0, viewport.width, viewport.height,
+            ));
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
@@ -289,7 +297,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             render_node(
                 &mut d,
                 tree,
-                Rectangle::new(0.0, 0.0, viewport.width, viewport.height),
+                &planned_layout,
                 clicked,
                 mouse,
                 now,
@@ -527,118 +535,6 @@ fn point_in_rect(p: Vector2, r: Rectangle) -> bool {
 }
 
 #[cfg(feature = "raylib")]
-fn measure_node(node: &UiNode) -> (f32, f32) {
-    match node.kind.as_str() {
-        "Box" => {
-            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
-            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
-
-            let (pt, pr, pb, pl) = padding_4(node);
-            let (cw, ch) = node
-                .children
-                .first()
-                .map(measure_node)
-                .unwrap_or((0.0, 0.0));
-
-            let w = w_prop.unwrap_or(cw + pl + pr);
-            let h = h_prop.unwrap_or(ch + pt + pb);
-            (w, h)
-        }
-        "Grid" => {
-            let cols = prop_i32(node, "cols")
-                .or_else(|| prop_i32(node, "columns"))
-                .unwrap_or(1)
-                .max(1) as usize;
-
-            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
-            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
-            if rows == 0 {
-                for child in &node.children {
-                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-                    rows = rows.max(r + rs);
-                }
-                rows = rows.max(1);
-            }
-
-            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
-            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
-            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
-
-            let (pt, pr, pb, pl) = padding_4(node);
-
-            let mut max_cell_w = 0.0_f32;
-            let mut max_cell_h = 0.0_f32;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                max_cell_w = max_cell_w.max(cw);
-                max_cell_h = max_cell_h.max(ch);
-            }
-
-            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
-            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
-
-            let w = w_prop.unwrap_or((cols as f32) * max_cell_w + ((cols - 1) as f32) * gap_x + pl + pr);
-            let h = h_prop.unwrap_or((rows as f32) * max_cell_h + ((rows - 1) as f32) * gap_y + pt + pb);
-            (w, h)
-        }
-        "Button" => {
-            let w = prop_i32(node, "width").unwrap_or(200) as f32;
-            let h = prop_i32(node, "height").unwrap_or(50) as f32;
-            (w, h)
-        }
-        "Rect" => {
-            let w = prop_i32(node, "width").unwrap_or(100) as f32;
-            let h = prop_i32(node, "height").unwrap_or(100) as f32;
-            (w, h)
-        }
-        "Text" => {
-            let size = prop_i32(node, "size").unwrap_or(20) as f32;
-            let text = prop_string(node, "text")
-                .or_else(|| prop_string(node, "content"))
-                .unwrap_or("");
-            // Best-effort estimate (avoids font API differences across raylib-rs versions).
-            let w = (text.chars().count() as f32) * (size * 0.6);
-            let h = size;
-            (w, h)
-        }
-        "TextInput" => {
-            let w = prop_i32(node, "width").unwrap_or(360) as f32;
-            let h = prop_i32(node, "height").unwrap_or(46) as f32;
-            (w, h)
-        }
-        "Image" => {
-            let w = prop_i32(node, "width").unwrap_or(256) as f32;
-            let h = prop_i32(node, "height").unwrap_or(256) as f32;
-            (w, h)
-        }
-        _ => {
-            // Containers default to available space.
-            (0.0, 0.0)
-        }
-    }
-}
-
-#[cfg(feature = "raylib")]
-fn padding_4(node: &UiNode) -> (f32, f32, f32, f32) {
-    // Box model padding: allow `padding` shorthand plus overrides.
-    let p = prop_i32(node, "padding").unwrap_or(0) as f32;
-    let px = prop_i32(node, "padding_x").map(|v| v as f32);
-    let py = prop_i32(node, "padding_y").map(|v| v as f32);
-
-    let pt = prop_i32(node, "padding_top").map(|v| v as f32);
-    let pr = prop_i32(node, "padding_right").map(|v| v as f32);
-    let pb = prop_i32(node, "padding_bottom").map(|v| v as f32);
-    let pl = prop_i32(node, "padding_left").map(|v| v as f32);
-
-    let top = pt.or(py).unwrap_or(p).max(0.0);
-    let right = pr.or(px).unwrap_or(p).max(0.0);
-    let bottom = pb.or(py).unwrap_or(p).max(0.0);
-    let left = pl.or(px).unwrap_or(p).max(0.0);
-    (top, right, bottom, left)
-}
-
-#[cfg(feature = "raylib")]
 fn ensure_textures_loaded(
     rl: &mut RaylibHandle,
     thread: &RaylibThread,
@@ -662,10 +558,11 @@ fn ensure_textures_loaded(
 }
 
 #[cfg(feature = "raylib")]
-fn render_node(
+#[allow(clippy::too_many_arguments)]
+fn render_children(
     d: &mut RaylibDrawHandle,
     node: &UiNode,
-    bounds: Rectangle,
+    layout: &layout::LayoutNode,
     mouse_clicked: bool,
     mouse: Vector2,
     now: f64,
@@ -675,265 +572,68 @@ fn render_node(
     focused_input: &mut Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
 ) {
-    // Optional absolute positioning: if a node provides `x`/`y` props, render it at that position.
-    // This enables simple "game-ish" demos (moving objects) without adding a full canvas API yet.
-    let mut bounds = bounds;
-    if let Some(x) = prop_i32(node, "x") {
-        bounds.x = x as f32;
+    for (child, prepared) in node.children.iter().zip(layout.children.iter()) {
+        if let Some(prepared) = prepared {
+            render_node(
+                d, child, prepared, mouse_clicked, mouse, now, sdf,
+                click_anim, click_state, focused_input, textures,
+            );
+        }
     }
-    if let Some(y) = prop_i32(node, "y") {
-        bounds.y = y as f32;
-    }
+}
+
+#[cfg(feature = "raylib")]
+fn render_node(
+    d: &mut RaylibDrawHandle,
+    node: &UiNode,
+    layout: &layout::LayoutNode,
+    mouse_clicked: bool,
+    mouse: Vector2,
+    now: f64,
+    sdf: &mut RoundedRectShader,
+    click_anim: Option<(u64, f64)>,
+    click_state: &mut ClickState,
+    focused_input: &mut Option<FocusedTextInput>,
+    textures: &HashMap<String, Texture2D>,
+) {
+    // Paint consumes the already arranged (including absolute overrides) bounds.
+    // No geometry measurement or placement occurs during draw recursion.
+    let b = layout.bounds;
+    let bounds = Rectangle::new(b.x, b.y, b.width, b.height);
 
     match node.kind.as_str() {
-        "Box" => {
-            let w = prop_i32(node, "width")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.width);
-            let h = prop_i32(node, "height")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.height);
-
-            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
-            let (pt, pr, pb, pl) = padding_4(node);
-
+        "Box" | "Grid" => {
+            // Draw only; Box/Grid dimensions and children were arranged in
+            // the pure layout prepass. No per-frame measurement inside paint.
+            let rect = bounds;
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
             let border_w = prop_i32(node, "border_width")
                 .or_else(|| prop_i32(node, "stroke_width"))
-                .unwrap_or(0)
-                .max(0) as f32;
+                .unwrap_or(0).max(0) as f32;
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
 
             if radius > 0.0 {
                 let min_dim = rect.width.min(rect.height).max(1.0);
                 let rect_u = [rect.x, rect.y, rect.width, rect.height];
-                let radius_u = radius.min(min_dim * 0.5);
-                let softness_u = 1.25_f32;
-
                 sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
-                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
-                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
+                sdf.shader.set_shader_value(sdf.loc_radius, radius.min(min_dim * 0.5));
+                sdf.shader.set_shader_value(sdf.loc_softness, 1.25_f32);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
-
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
-                if bg.a > 0 {
-                    d.draw_rectangle_rec(rect, bg);
-                }
-                if border_w > 0.0 {
-                    d.draw_rectangle_lines_ex(rect, border_w, border);
-                }
+                if bg.a > 0 { d.draw_rectangle_rec(rect, bg); }
+                if border_w > 0.0 { d.draw_rectangle_lines_ex(rect, border_w, border); }
             }
-
-            // Render single child in the padded content rect.
-            if let Some(child) = node.children.first() {
-                let content = Rectangle::new(
-                    rect.x + pl,
-                    rect.y + pt,
-                    (rect.width - pl - pr).max(1.0),
-                    (rect.height - pt - pb).max(1.0),
-                );
-                render_node(
-                    d,
-                    child,
-                    content,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
+            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
+                click_anim, click_state, focused_input, textures);
         }
-        "App" => {
-            // App is just a root container.
-            for child in &node.children {
-                render_node(
-                    d,
-                    child,
-                    bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
-        }
-        "VStack" => {
-            let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
-            let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
-            let alignment = prop_string(node, "alignment").unwrap_or("start");
-
-            let mut y = bounds.y + padding;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                let x = if alignment == "center" && cw > 0.0 {
-                    bounds.x + (bounds.width - cw) / 2.0
-                } else {
-                    bounds.x + padding
-                };
-
-                let child_bounds = Rectangle::new(x, y, if cw > 0.0 { cw } else { bounds.width }, ch);
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-                y += ch + spacing;
-            }
-        }
-        "Grid" => {
-            let w = prop_i32(node, "width")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.width);
-            let h = prop_i32(node, "height")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.height);
-
-            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
-            let (pt, pr, pb, pl) = padding_4(node);
-
-            let cols = prop_i32(node, "cols")
-                .or_else(|| prop_i32(node, "columns"))
-                .unwrap_or(1)
-                .max(1) as usize;
-            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
-            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
-            if rows == 0 {
-                for child in &node.children {
-                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-                    rows = rows.max(r + rs);
-                }
-                rows = rows.max(1);
-            }
-
-            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
-            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
-            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
-
-            // Optional background/border like Box (useful for debugging grid bounds).
-            let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
-            let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
-            let border_w = prop_i32(node, "border_width")
-                .or_else(|| prop_i32(node, "stroke_width"))
-                .unwrap_or(0)
-                .max(0) as f32;
-            let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
-
-            if radius > 0.0 {
-                let min_dim = rect.width.min(rect.height).max(1.0);
-                let rect_u = [rect.x, rect.y, rect.width, rect.height];
-                let radius_u = radius.min(min_dim * 0.5);
-                let softness_u = 1.25_f32;
-
-                sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
-                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
-                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
-                sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
-                sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
-                sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
-
-                let mut sd = d.begin_shader_mode(&mut sdf.shader);
-                sd.draw_rectangle_rec(rect, Color::WHITE);
-            } else {
-                if bg.a > 0 {
-                    d.draw_rectangle_rec(rect, bg);
-                }
-                if border_w > 0.0 {
-                    d.draw_rectangle_lines_ex(rect, border_w, border);
-                }
-            }
-
-            let content = Rectangle::new(
-                rect.x + pl,
-                rect.y + pt,
-                (rect.width - pl - pr).max(1.0),
-                (rect.height - pt - pb).max(1.0),
-            );
-
-            let total_gap_x = ((cols - 1) as f32) * gap_x;
-            let total_gap_y = ((rows - 1) as f32) * gap_y;
-            let cell_w = ((content.width - total_gap_x) / cols as f32).max(1.0);
-            let cell_h = ((content.height - total_gap_y) / rows as f32).max(1.0);
-
-            for child in &node.children {
-                let col = prop_i32(child, "col").unwrap_or(0).max(0) as usize;
-                let row = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                let col_span = prop_i32(child, "col_span").unwrap_or(1).max(1) as usize;
-                let row_span = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-
-                if col >= cols || row >= rows {
-                    continue;
-                }
-
-                let col_span = col_span.min(cols - col);
-                let row_span = row_span.min(rows - row);
-
-                let span_w = (cell_w * (col_span as f32)) + (gap_x * ((col_span - 1) as f32));
-                let span_h = (cell_h * (row_span as f32)) + (gap_y * ((row_span - 1) as f32));
-
-                let x = content.x + (col as f32) * (cell_w + gap_x);
-                let y = content.y + (row as f32) * (cell_h + gap_y);
-                let child_bounds = Rectangle::new(x, y, span_w.min(content.width), span_h.min(content.height));
-
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
-        }
-        "HStack" => {
-            let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
-            let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
-
-            let mut x = bounds.x + padding;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                let child_bounds = Rectangle::new(x, bounds.y + padding, cw, ch);
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-                x += cw + spacing;
-            }
+        "App" | "VStack" | "HStack" => {
+            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
+                click_anim, click_state, focused_input, textures);
         }
         "Text" => {
             let size = prop_i32(node, "size").unwrap_or(20);
@@ -944,9 +644,7 @@ fn render_node(
             d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
         }
         "Image" => {
-            let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
-            let h = prop_i32(node, "height").unwrap_or(bounds.height as i32).max(1) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let src = prop_string(node, "src").or_else(|| prop_string(node, "path"));
             let Some(src) = src else {
@@ -1013,9 +711,7 @@ fn render_node(
             }
         }
         "TextInput" => {
-            let w = prop_i32(node, "width").unwrap_or(360) as f32;
-            let h = prop_i32(node, "height").unwrap_or(46) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")).or(Some("#0D1117")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
@@ -1106,9 +802,7 @@ fn render_node(
             }
         }
         "Rect" => {
-            let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
-            let h = prop_i32(node, "height").unwrap_or(bounds.height as i32).max(1) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let fill = parse_color(prop_string(node, "color").or_else(|| prop_string(node, "fg")).or_else(|| prop_string(node, "fill")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
@@ -1135,9 +829,7 @@ fn render_node(
 
         }
         "Button" => {
-            let w = prop_i32(node, "width").unwrap_or(200) as f32;
-            let h = prop_i32(node, "height").unwrap_or(50) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
@@ -1195,22 +887,9 @@ fn render_node(
             }
         }
         _ => {
-            // Unknown nodes: traverse children.
-            for child in &node.children {
-                render_node(
-                    d,
-                    child,
-                    bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
+            // Preserve unknown wrapper traversal, but use prepared child bounds.
+            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
+                click_anim, click_state, focused_input, textures);
         }
     }
 }
