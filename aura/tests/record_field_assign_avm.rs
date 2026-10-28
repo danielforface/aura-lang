@@ -290,3 +290,22 @@ cell main() ->:
         assert!(result.gate_error.as_deref().unwrap_or("").contains("not run"));
     }
 }
+
+
+#[test]
+fn avm_rejects_nonliteral_omitted_default_without_executing_it() {
+    let source=r#"
+type Point = record { x: u32 = 1 + 2, y: u32 = 13 }
+cell main() ->:
+    val p: Point = Point { y: 19 }
+    yield p.x
+"#;
+    let mut vm=Avm::new(AvmConfig {
+        enable_z3_gate:false,..Default::default()
+    });
+    let err=vm.exec_entry_cell(source,"main")
+        .expect_err("unqualified default expression must not execute silently");
+    assert!(err.to_string().contains("unqualified") &&
+            err.to_string().contains("default"),
+        "AVM omitted default must fail closed: {err}");
+}
