@@ -547,7 +547,7 @@ pub struct DiagnosticPixel {
 }
 
 #[cfg(feature = "lumina-diagnostics")]
-#[derive(Clone,Copy,Debug,PartialEq)]
+#[derive(Clone,Debug,PartialEq)]
 pub struct DiagnosticTextVisual {
     pub scroll_x: f32,
     pub measured_caret: f32,
