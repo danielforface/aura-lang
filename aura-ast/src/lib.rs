@@ -282,12 +282,15 @@ pub struct AssignStmt {
     pub expr: Expr,
 }
 
-/// Single-level Record field update is not a bare local assignment.
+/// Functional assignment to a concrete Record field path. The first
+/// component remains 'field' for flat source compatibility; 'nested' holds
+/// deeper child fields in lexical order (e.g. o.p.x: field=p, nested=[x]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldAssignStmt {
     pub span: Span,
     pub target: Ident,
     pub field: Ident,
+    pub nested: Vec<Ident>,
     pub expr: Expr,
 }
 
