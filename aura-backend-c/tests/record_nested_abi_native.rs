@@ -346,7 +346,12 @@ fn nested_field_assignment_negative_mutability_and_type_guards() {
         ("val mut o: Outer = Outer {}\n    o.p.nope = 19\n    yield o.p.x","unknown field"),
     ] {
         let source=format!(
-            "type Point = record {{ x: u32 = 7, y: u32 = 13 }}\n             type Outer = record {{ p: Point = Point {{}}, tag: u32 = 99 }}\n             cell main() ->:\n    {body}\n"
+            concat!(
+                "type Point = record {{ x: u32 = 7, y: u32 = 13 }}\n",
+                "type Outer = record {{ p: Point = Point {{}}, tag: u32 = 99 }}\n",
+                "cell main() ->:\n",
+                "    {}\n"
+            ), body
         );
         let ast=aura_parse::parse_source(&source)
             .expect("path syntax must parse even when invalid semantically");
