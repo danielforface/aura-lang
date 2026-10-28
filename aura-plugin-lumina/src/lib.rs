@@ -469,6 +469,64 @@ pub struct DiagnosticTextVisual {
 }
 
 #[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagnosticShaping {
+    pub visual_source_starts: Vec<usize>,
+    pub visual_run_rtl: Vec<bool>,
+    pub glyph_ids: Vec<u16>,
+    pub logical_cluster_bytes: Vec<usize>,
+    pub glyph_advances: Vec<f32>,
+    pub glyph_offsets: Vec<(f32,f32)>,
+    pub width: f32,
+    /// There is no GPU atlas indexed by OpenType glyph-ID yet.
+    pub native_paintable: bool,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+impl AuraLuminaPlugin {
+    /// Opt-in diagnostic shaping using the same user-supplied TTF path and
+    /// bounded file rules as the renderer. Does NOT alter legacy GPU drawing.
+    pub fn diagnostic_shape_external_font(
+        &self, path: &str, text: &str, size: i32, direction: &str,
+    ) -> Option<DiagnosticShaping> {
+        if self.window.borrow().as_ref().is_none() { return None; }
+        font_atlas::font_key(path,size)?;
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() || meta.len()==0 ||
+           meta.len()>text_shaping::MAX_SHAPE_FONT_BYTES as u64 {return None;}
+        let bytes = std::fs::read(path).ok()?;
+        let dir=text_shaping::ParagraphDirection::parse(Some(direction))?;
+        let result=text_shaping::shape_text(text,&bytes,size as f32,dir)?;
+        let mut starts=Vec::new();
+        let mut rtl=Vec::new();
+        let mut ids=Vec::new();
+        let mut clusters=Vec::new();
+        let mut advances=Vec::new();
+        let mut offsets=Vec::new();
+        for run in &result.visual_runs {
+            starts.push(run.source_bytes.start);
+            rtl.push(run.rtl);
+            for glyph in &run.glyphs {
+                ids.push(glyph.glyph_id);
+                clusters.push(glyph.cluster_byte);
+                advances.push(glyph.advance_x);
+                offsets.push((glyph.offset_x,glyph.offset_y));
+            }
+        }
+        Some(DiagnosticShaping {
+            visual_source_starts:starts,
+            visual_run_rtl:rtl,
+            glyph_ids:ids,
+            logical_cluster_bytes:clusters,
+            glyph_advances:advances,
+            glyph_offsets:offsets,
+            width:result.width,
+            native_paintable:result.native_paintable,
+        })
+    }
+}
+
+#[cfg(feature = "lumina-diagnostics")]
 impl AuraLuminaPlugin {
     /// Read exact latest frame's default-font logical text geometry.
     pub fn diagnostic_text_visual(&self,on_change:u64,content_left:f32,content_width:f32)
