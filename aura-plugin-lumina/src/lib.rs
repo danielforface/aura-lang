@@ -116,13 +116,6 @@ struct FocusedTextInput {
 }
 
 #[cfg(feature = "raylib")]
-#[derive(Default)]
-struct ClickState {
-    clicked_cb: Option<u64>,
-    hit_text_input: bool,
-}
-
-#[cfg(feature = "raylib")]
 struct RoundedRectShader {
     shader: Shader,
     loc_rect: i32,
@@ -288,34 +281,34 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
+            // Resolve a single topmost visible control before paint, using the
+            // same arranged bounds and ancestor clips as native drawing.
+            let click_cb = if clicked {
+                match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
+                    Some(layout::HitTarget::Button(id)) => {
+                        win.focused_input = None;
+                        Some(id)
+                    }
+                    Some(layout::HitTarget::TextInput { on_change, on_submit, value }) => {
+                        let caret = value.chars().count();
+                        win.focused_input = Some(FocusedTextInput {
+                            on_change, on_submit, buffer: value, caret,
+                        });
+                        None
+                    }
+                    None => { win.focused_input = None; None }
+                }
+            } else { None };
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
             d.clear_background(app_bg);
 
-            let mut click_state = ClickState::default();
             render_node(
-                &mut d,
-                tree,
-                &planned_layout,
-                clicked,
-                mouse,
-                now,
-                sdf,
-                win.click_anim,
-                &mut click_state,
-                &mut win.focused_input,
-                &win.textures,
+                &mut d, tree, &planned_layout, now, sdf,
+                win.click_anim, &win.focused_input, &win.textures,
             );
-
-            let click_cb = click_state.clicked_cb;
-
             fb.clicked_callback_id = click_cb;
-
-            // Blur on click outside any text input.
-            if clicked && !click_state.hit_text_input {
-                win.focused_input = None;
-            }
 
             // Apply keyboard edits for the currently focused input and emit events.
             if let Some(fi) = &mut win.focused_input {
@@ -530,11 +523,6 @@ fn parse_callback_id(s: Option<&str>) -> Option<u64> {
 }
 
 #[cfg(feature = "raylib")]
-fn point_in_rect(p: Vector2, r: Rectangle) -> bool {
-    p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-}
-
-#[cfg(feature = "raylib")]
 fn ensure_textures_loaded(
     rl: &mut RaylibHandle,
     thread: &RaylibThread,
@@ -558,26 +546,19 @@ fn ensure_textures_loaded(
 }
 
 #[cfg(feature = "raylib")]
-#[allow(clippy::too_many_arguments)]
 fn render_children(
     d: &mut RaylibDrawHandle,
     node: &UiNode,
     layout: &layout::LayoutNode,
-    mouse_clicked: bool,
-    mouse: Vector2,
     now: f64,
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
-    click_state: &mut ClickState,
-    focused_input: &mut Option<FocusedTextInput>,
+    focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
 ) {
-    for (child, prepared) in node.children.iter().zip(layout.children.iter()) {
+    for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(
-                d, child, prepared, mouse_clicked, mouse, now, sdf,
-                click_anim, click_state, focused_input, textures,
-            );
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures);
         }
     }
 }
@@ -587,13 +568,31 @@ fn render_node(
     d: &mut RaylibDrawHandle,
     node: &UiNode,
     layout: &layout::LayoutNode,
-    mouse_clicked: bool,
-    mouse: Vector2,
     now: f64,
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
-    click_state: &mut ClickState,
-    focused_input: &mut Option<FocusedTextInput>,
+    focused_input: &Option<FocusedTextInput>,
+    textures: &HashMap<String, Texture2D>,
+) {
+    // Each node gets an independent scissor; it is dropped before children
+    // draw. Avoid nested raylib scissors (EndScissorMode is not a push/pop).
+    let Some((x, y, width, height)) = layout.clip.scissor() else { return };
+    {
+        let mut clipped = d.begin_scissor_mode(x, y, width, height);
+        paint_node(&mut clipped, node, layout, now, sdf, click_anim, focused_input, textures);
+    }
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures);
+}
+
+#[cfg(feature = "raylib")]
+fn paint_node<D: RaylibDraw>(
+    d: &mut D,
+    node: &UiNode,
+    layout: &layout::LayoutNode,
+    now: f64,
+    sdf: &mut RoundedRectShader,
+    click_anim: Option<(u64, f64)>,
+    focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
@@ -628,13 +627,8 @@ fn render_node(
                 if bg.a > 0 { d.draw_rectangle_rec(rect, bg); }
                 if border_w > 0.0 { d.draw_rectangle_lines_ex(rect, border_w, border); }
             }
-            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
-                click_anim, click_state, focused_input, textures);
         }
-        "App" | "VStack" | "HStack" => {
-            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
-                click_anim, click_state, focused_input, textures);
-        }
+        "App" | "VStack" | "HStack" => {}
         "Text" => {
             let size = prop_i32(node, "size").unwrap_or(20);
             let color = parse_color(prop_string(node, "color").or_else(|| prop_string(node, "fg")));
@@ -719,16 +713,12 @@ fn render_node(
             let border = parse_color(prop_string(node, "border").or(Some("#30363D")));
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
-            // Determine identity via callbacks.
+            // The focus decision was already made by pure hit testing.
             let on_change = parse_callback_id(prop_string(node, "on_change"));
-            let on_submit = parse_callback_id(prop_string(node, "on_submit"));
-
-            let mut is_focused = false;
-            if let (Some(fi), Some(cb)) = (focused_input.as_ref(), on_change) {
-                if fi.on_change == cb {
-                    is_focused = true;
-                }
-            }
+            let is_focused = match (focused_input.as_ref(), on_change) {
+                (Some(fi), Some(cb)) => fi.on_change == cb,
+                _ => false,
+            };
 
             // Background.
             if radius > 0.0 {
@@ -750,25 +740,6 @@ fn render_node(
             } else {
                 d.draw_rectangle_rec(rect, bg);
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
-            }
-
-            // Click-to-focus.
-            if mouse_clicked && point_in_rect(mouse, rect) {
-                click_state.hit_text_input = true;
-                if let Some(cb) = on_change {
-                    let value = prop_string(node, "value")
-                        .or_else(|| prop_string(node, "text"))
-                        .unwrap_or("")
-                        .to_string();
-                    let caret = value.chars().count();
-                    *focused_input = Some(FocusedTextInput {
-                        on_change: cb,
-                        on_submit,
-                        buffer: value,
-                        caret,
-                    });
-                    is_focused = true;
-                }
             }
 
             // Display value (controlled input).
@@ -880,16 +851,7 @@ fn render_node(
             let ty = rect.y + (rect.height - ts as f32) / 2.0;
             d.draw_text(label, tx as i32, ty as i32, ts, fg);
 
-            if mouse_clicked && point_in_rect(mouse, rect) {
-                click_state.clicked_cb = click_state
-                    .clicked_cb
-                    .or_else(|| parse_callback_id(prop_string(node, "on_click")));
-            }
         }
-        _ => {
-            // Preserve unknown wrapper traversal, but use prepared child bounds.
-            render_children(d, node, layout, mouse_clicked, mouse, now, sdf,
-                click_anim, click_state, focused_input, textures);
-        }
+        _ => {}
     }
 }
