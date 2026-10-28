@@ -678,6 +678,26 @@ impl AuraLuminaPlugin {
         Some((prepared.cells.len(),glyph_ids,prepared.shaped.width))
     }
 
+    /// Actual one-frame GPU upload evidence for a two-face atlas.
+    /// Reports (rasterized pair count, [(origin_font_index, real GID)], width).
+    pub fn diagnostic_shaped_gpu_fallback(
+        &self,primary:&str,fallback:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<(usize,u16)>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",primary);
+        node.set_prop("fallback_font_path",fallback);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyphs=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|(g.font_index,g.glyph_id)))
+            .collect();
+        Some((prepared.cells.len(),glyphs,prepared.shaped.width))
+    }
+
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
     /// hashes even if the raw number of red pixels is similar. Xvfb only.
