@@ -817,10 +817,11 @@ fn render_children(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
         }
     }
 }
@@ -836,15 +837,26 @@ fn render_node(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
 ) {
-    // Each node gets an independent scissor; it is dropped before children
-    // draw. Avoid nested raylib scissors (EndScissorMode is not a push/pop).
+    // Independent scissor scopes. TextInput draws its frame under inherited
+    // clipping, then its text under its inner bounds, never nesting scissors.
     let Some((x, y, width, height)) = layout.clip.scissor() else { return };
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
-        paint_node(&mut clipped, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
+        paint_node(&mut clipped, node, layout, now, sdf, click_anim,
+            focused_input, textures, input_sessions, text_views, false);
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions);
+    if node.kind=="TextInput" {
+        // TextInput content clip: glyphs/selection/caret stay inside padding.
+        let inside=layout.clip.intersect(text_viewport::content_bounds(layout.bounds));
+        if let Some((x,y,w,h))=inside.scissor() {
+            let mut clipped=d.begin_scissor_mode(x,y,w,h);
+            paint_node(&mut clipped,node,layout,now,sdf,click_anim,
+                focused_input,textures,input_sessions,text_views,true);
+        }
+    }
+    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views);
 }
 
 #[cfg(feature = "raylib")]
@@ -858,6 +870,8 @@ fn paint_node<D: RaylibDraw>(
     focused_input: &Option<FocusedTextInput>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
+    text_only: bool,
 ) {
     // Paint consumes the already arranged (including absolute overrides) bounds.
     // No geometry measurement or placement occurs during draw recursion.
@@ -984,7 +998,8 @@ fn paint_node<D: RaylibDraw>(
                 _ => false,
             };
 
-            // Background.
+            // Frame/background separate from text clipping.
+            if !text_only {
             if radius > 0.0 {
                 let min_dim = rect.width.min(rect.height).max(1.0);
                 let rect_u = [rect.x, rect.y, rect.width, rect.height];
@@ -1006,6 +1021,8 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
             }
 
+            return;
+            }
             // Display retained drafts for nonfocused inputs until the host
             // changes their authoritative value. Avoid the old visual reset
             // to stale controlled props on Tab/blur.
@@ -1022,43 +1039,31 @@ fn paint_node<D: RaylibDraw>(
             let display = if value.is_empty() { placeholder } else { value };
             let display_color = if value.is_empty() { placeholder_c } else { fg };
 
-            let ts = prop_i32(node, "size").unwrap_or(18);
-            let pad_x = 12.0_f32;
+            let ts = prop_i32(node, "size").unwrap_or(18).max(10);
             let pad_y = (rect.height - ts as f32) / 2.0;
-            // Approximate (not font-shaped) selection highlight for grapheme
-            // ranges. The text is drawn on top; X11 pixel sampling covers
-            // solid overlays separately from layout semantics.
+            let content=text_viewport::content_bounds(b);
+            let visual=on_change.and_then(|cb|text_views.get(&cb));
+            let text_x=visual.map(|v|v.origin(content)).unwrap_or(content.x);
+            // Native MeasureText widths shared by selection and caret;
+            // scissor prevents long text from escaping the input widget.
             if is_focused {
-                if let Some(fi)=focused_input.as_ref() {
-                    if let Some((a,b))=fi.session.selection() {
-                        let cell=(ts as f32*0.6).max(1.0);
-                        let x0=rect.x+pad_x+(a as f32)*cell;
-                        let x1=(rect.x+pad_x+(b as f32)*cell)
-                            .min(rect.x+rect.width-2.0);
-                        if x1>x0 {
-                            d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
-                                x1-x0,(rect.height-8.0).max(0.0)),
-                                Color::new(59,130,246,100));
-                        }
-                    }
+                if let Some((x0,x1))=visual.and_then(|v|v.selection_screen(content)) {
+                    d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
+                        x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
                 }
             }
+            d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
 
-            d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
-
-            // This MVP caret tracks the edited UAX29 grapheme index and
-            // uses the same rough font-width estimate as button text. Exact
-            // glyph metrics, graphemes and bidi shaping remain unqualified.
+            // Exact default-font pixel measurements, not an average cell;
+            // separate BiDi/IME/font fallback certification is still needed.
             if is_focused {
-                if let Some(fi) = focused_input.as_ref() {
-                    let before = fi.session.caret.min(text_input::grapheme_count(&fi.session.buffer));
-                    let est_w = (before as f32) * (ts as f32 * 0.6);
-                    let cx = (rect.x + pad_x + est_w + 1.0)
-                        .min(rect.x + rect.width - 2.0);
-                    let cy0 = rect.y + 10.0;
-                    let cy1 = rect.y + rect.height - 10.0;
-                    if cy1 > cy0 {
-                        d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+                if let Some(v)=visual {
+                    let cx=v.caret_screen(content);
+                    let cy0=rect.y+10.0;
+                    let cy1=rect.y+rect.height-10.0;
+                    if cy1>cy0 {
+                        d.draw_line(cx.floor() as i32,cy0 as i32,
+                            cx.floor() as i32,cy1 as i32,Color::RAYWHITE);
                     }
                 }
             }
