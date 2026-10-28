@@ -22,10 +22,34 @@ impl Bounds {
                width: size(width), height: size(height) }
     }
 
+    pub(crate) fn is_empty(self) -> bool { self.width <= 0.0 || self.height <= 0.0 }
+
+    pub(crate) fn intersect(self, other: Self) -> Self {
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let right = (self.x + self.width).min(other.x + other.width);
+        let bottom = (self.y + self.height).min(other.y + other.height);
+        Self::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
+    }
+
+    /// Logical-pixel raster scissor; not a DPI/framebuffer conversion.
+    pub(crate) fn scissor(self) -> Option<(i32, i32, i32, i32)> {
+        if self.is_empty() { return None; }
+        let x = self.x.floor() as i32;
+        let y = self.y.floor() as i32;
+        let x1 = (self.x + self.width).ceil() as i32;
+        let y1 = (self.y + self.height).ceil() as i32;
+        let w = (i64::from(x1) - i64::from(x)).clamp(0, i32::MAX as i64) as i32;
+        let h = (i64::from(y1) - i64::from(y)).clamp(0, i32::MAX as i64) as i32;
+        if w == 0 || h == 0 { None } else { Some((x,y,w,h)) }
+    }
+
     pub(crate) fn contains(self, x: f32, y: f32) -> bool {
+        // Half-open bounds match pixel/scissor regions; right/bottom edges
+        // belong to the adjacent widget or outside the viewport.
         self.width > 0.0 && self.height > 0.0
-            && x >= self.x && x <= self.x + self.width
-            && y >= self.y && y <= self.y + self.height
+            && x >= self.x && x < self.x + self.width
+            && y >= self.y && y < self.y + self.height
     }
 }
 
@@ -35,6 +59,7 @@ impl Bounds {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutNode {
     pub bounds: Bounds,
+    pub clip: Bounds,
     pub children: Vec<Option<LayoutNode>>,
 }
 
@@ -158,6 +183,11 @@ fn with_abs(node: &UiNode, mut b: Bounds) -> Bounds {
     b
 }
 
+fn clip_children(node: &UiNode) -> bool {
+    matches!(node.kind.as_str(), "App" | "Box" | "Grid" | "VStack" | "HStack")
+        && (prop(node, "overflow") == Some("hidden") || prop(node, "clip") == Some("true"))
+}
+
 fn content_rect(b: Bounds, pad: (f32, f32, f32, f32)) -> Bounds {
     let (t, r, bottom, l) = pad;
     Bounds::new(b.x + l, b.y + t, (b.width - l - r).max(0.0),
@@ -166,10 +196,18 @@ fn content_rect(b: Bounds, pad: (f32, f32, f32, f32)) -> Bounds {
 
 pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
     let measurements = measure_tree(node);
-    arrange_measured(node, &measurements, incoming)
+    arrange_measured(node, &measurements, incoming, incoming)
 }
-fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) -> LayoutNode {
+fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds, clip: Bounds) -> LayoutNode {
     let bounds = with_abs(node, incoming);
+    let child_clip = if clip_children(node) {
+        clip.intersect(match node.kind.as_str() {
+            "Box" | "Grid" => Bounds::new(bounds.x, bounds.y,
+                positive(node, "width", bounds.width),
+                positive(node, "height", bounds.height)),
+            _ => bounds,
+        })
+    } else { clip };
     let mut children: Vec<Option<LayoutNode>> = (0..node.children.len()).map(|_| None).collect();
     match node.kind.as_str() {
         "Box" => {
@@ -178,9 +216,9 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 positive(node, "height", bounds.height).max(1.0));
             if let Some(child) = node.children.first() {
                 let content = content_rect(rect, padding(node));
-                children[0] = Some(arrange_measured(child, &measured.children[0], content));
+                children[0] = Some(arrange_measured(child, &measured.children[0], content, child_clip));
             }
-            LayoutNode { bounds: rect, children }
+            LayoutNode { bounds: rect, clip, children }
         }
         "Grid" => {
             let rect = Bounds::new(bounds.x, bounds.y,
@@ -203,9 +241,9 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 let y = content.y + row as f32 * (ch + gy);
                 let w = (cw * cs as f32 + gx * (cs - 1) as f32).min((content.x + content.width - x).max(0.0));
                 let h = (ch * rs as f32 + gy * (rs - 1) as f32).min((content.y + content.height - y).max(0.0));
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, w, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, w, h), child_clip));
             }
-            LayoutNode { bounds: rect, children }
+            LayoutNode { bounds: rect, clip, children }
         }
         "VStack" => {
             let p = spacing(node, "padding");
@@ -217,10 +255,10 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
                 let (w, h) = measured.children[i].size;
                 let x = if centered && w > 0.0 { content.x + (content.width - w)/2.0 } else { content.x };
                 let width = if w > 0.0 { w } else { content.width };
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, width, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, width, h), child_clip));
                 y += h + gap;
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "HStack" => {
             let p = spacing(node, "padding");
@@ -229,33 +267,62 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
             let mut x = content.x;
             for (i, child) in node.children.iter().enumerate() {
                 let (w, h) = measured.children[i].size;
-                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, content.y, w, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, content.y, w, h), child_clip));
                 x += w + gap;
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "App" => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds, child_clip));
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
         "Button" | "TextInput" => {
             let (w,h) = measured.size;
-            LayoutNode { bounds: Bounds::new(bounds.x, bounds.y, w, h), children }
+            LayoutNode { bounds: Bounds::new(bounds.x, bounds.y, w, h), clip, children }
         }
         "Image" | "Rect" => {
             LayoutNode { bounds: Bounds::new(bounds.x, bounds.y,
                 positive(node, "width", bounds.width).max(1.0),
-                positive(node, "height", bounds.height).max(1.0)), children }
+                positive(node, "height", bounds.height).max(1.0)), clip, children }
         }
-        "Text" => LayoutNode { bounds, children },
+        "Text" => LayoutNode { bounds, clip, children },
         _ => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds, child_clip));
             }
-            LayoutNode { bounds, children }
+            LayoutNode { bounds, clip, children }
         }
+    }
+}
+
+/// Only actionable controls compete for pointer hits; last-painted wins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HitTarget {
+    Button(u64),
+    TextInput { on_change: u64, on_submit: Option<u64>, value: String },
+}
+fn callback(node: &UiNode, key: &str) -> Option<u64> {
+    prop(node, key)?.strip_prefix("cb:")?.parse::<u64>().ok()
+}
+/// Pure clip-aware, reversed-paint-order hit resolution.
+pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
+    if !layout.clip.contains(x, y) { return None; }
+    for (child, planned) in node.children.iter().zip(layout.children.iter()).rev() {
+        if let Some(planned) = planned {
+            if let Some(hit) = hit_test(child, planned, x, y) { return Some(hit); }
+        }
+    }
+    if !layout.bounds.contains(x, y) { return None; }
+    match node.kind.as_str() {
+        "Button" => callback(node, "on_click").map(HitTarget::Button),
+        "TextInput" => callback(node, "on_change").map(|on_change| HitTarget::TextInput {
+            on_change,
+            on_submit: callback(node, "on_submit"),
+            value: prop(node, "value").or_else(|| prop(node, "text")).unwrap_or("").to_string(),
+        }),
+        _ => None,
     }
 }
 
@@ -382,6 +449,132 @@ mod tests {
         assert_eq!(measurements.size.0,158.0);
         let planned = arrange(&node, b(0.0,0.0,400.0,800.0));
         assert_eq!(planned.children.len(),1);
+    }
+
+    #[test]
+    fn clip_intersection_and_scissor_rounding() {
+        assert_eq!(b(0.0,0.0,100.0,80.0).intersect(b(-20.0,10.0,35.0,20.0)),
+            b(0.0,10.0,15.0,20.0));
+        assert!(b(0.0,0.0,50.0,40.0).intersect(b(60.0,0.0,5.0,4.0)).is_empty());
+        assert_eq!(b(0.25,1.25,4.5,3.25).scissor(), Some((0,1,5,4)));
+        assert_eq!(b(0.0,0.0,0.0,4.0).scissor(), None);
+    }
+
+    #[test]
+    fn viewport_cutoff_of_absolute_controls_without_explicit_overflow() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","90"),("y","10"),("width","40"),("height","30"),
+            ("on_click","cb:7")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,100.0,100.0));
+        assert_eq!(plan.child(0).clip,b(0.0,0.0,100.0,100.0));
+        assert_eq!(hit_test(&root,&plan,95.0,20.0),Some(HitTarget::Button(7)));
+        assert_eq!(hit_test(&root,&plan,105.0,20.0),None);
+    }
+
+    #[test]
+    fn overflow_hidden_clips_deep_descendants_while_visible_does_not() {
+        let root=|overflow|n("App",&[],vec![
+            n("Box",&[("width","100"),("height","50"),("overflow",overflow)],vec![
+                n("VStack",&[],vec![n("Button",&[
+                    ("x","120"),("y","5"),("width","30"),("height","30"),
+                    ("on_click","cb:12")],vec![])])
+            ])
+        ]);
+        let hidden=root("hidden");
+        let h=arrange(&hidden,b(0.0,0.0,200.0,120.0));
+        assert_eq!(h.child(0).child(0).child(0).clip,b(0.0,0.0,100.0,50.0));
+        assert_eq!(hit_test(&hidden,&h,125.0,10.0),None);
+        let visible=root("visible");
+        let v=arrange(&visible,b(0.0,0.0,200.0,120.0));
+        assert_eq!(hit_test(&visible,&v,125.0,10.0),Some(HitTarget::Button(12)));
+    }
+
+    #[test]
+    fn topmost_actionable_control_wins_overlapping_siblings() {
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","80"),
+                ("height","50"),("on_click","cb:1")],vec![]),
+            n("Button",&[("x","20"),("y","20"),("width","80"),
+                ("height","50"),("on_click","cb:2")],vec![])
+        ]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(hit_test(&root,&plan,40.0,40.0),Some(HitTarget::Button(2)));
+        assert_eq!(hit_test(&root,&plan,150.0,40.0),None);
+    }
+
+    #[test]
+    fn text_input_hit_retains_source_value_and_both_callbacks() {
+        let root=n("App",&[],vec![n("TextInput",&[
+            ("value","hello"),("on_change","cb:34"),("on_submit","cb:35"),
+            ("width","90"),("height","40")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(hit_test(&root,&plan,30.0,20.0),Some(HitTarget::TextInput{
+            on_change:34,on_submit:Some(35),value:"hello".to_owned()
+        }));
+    }
+
+    #[test]
+    fn grid_skipped_and_box_extra_children_cannot_be_hit() {
+        let root=n("App",&[],vec![
+            n("Box",&[("width","120"),("height","100")],vec![
+                n("Rect",&[],vec![]),
+                n("Button",&[("on_click","cb:7")],vec![])
+            ]),
+            n("Grid",&[("x","140"),("cols","1"),("rows","1")],vec![
+                n("Button",&[("col","99"),("on_click","cb:8")],vec![])
+            ])
+        ]);
+        let plan=arrange(&root,b(0.0,0.0,600.0,300.0));
+        assert_eq!(hit_test(&root,&plan,5.0,5.0),None);
+        assert_eq!(hit_test(&root,&plan,150.0,20.0),None);
+    }
+
+    #[test]
+    fn zero_declared_clip_area_cannot_leave_hittable_one_pixel_box() {
+        let root=n("App",&[],vec![n("Box",&[
+            ("width","0"),("height","0"),("overflow","hidden")
+        ],vec![n("Button",&[
+            ("width","60"),("height","30"),("on_click","cb:17")
+        ],vec![])])]);
+        let plan=arrange(&root,b(0.0,0.0,120.0,80.0));
+        assert_eq!(hit_test(&root,&plan,0.2,0.2),None);
+    }
+
+    #[test]
+    fn half_open_edges_never_dispatch_to_right_or_bottom_viewport_border() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","0"),("y","0"),("width","100"),("height","50"),
+            ("on_click","cb:50")],vec![])]);
+        let plan=arrange(&root,b(0.0,0.0,100.0,50.0));
+        assert_eq!(hit_test(&root,&plan,99.999,49.999),Some(HitTarget::Button(50)));
+        assert_eq!(hit_test(&root,&plan,100.0,25.0),None);
+        assert_eq!(hit_test(&root,&plan,25.0,50.0),None);
+        assert_eq!(hit_test(&root,&plan,f32::NAN,25.0),None);
+    }
+
+    #[test]
+    fn clip_true_alias_and_invalid_callback_are_safe() {
+        let root=n("App",&[],vec![n("Box",&[
+          ("clip","true"),("width","60"),("height","50")],vec![
+          n("Button",&[("x","55"),("y","5"),("width","30"),
+             ("height","30"),("on_click","cb:bad")],vec![])
+        ])]);
+        let plan=arrange(&root,b(0.0,0.0,200.0,100.0));
+        assert_eq!(plan.child(0).child(0).clip,b(0.0,0.0,60.0,50.0));
+        assert_eq!(hit_test(&root,&plan,56.0,12.0),None);
+        assert_eq!(hit_test(&root,&plan,70.0,12.0),None);
+    }
+
+    #[test]
+    fn deterministic_hits_across_viewport_resizes_and_negative_offsets() {
+        let root=n("App",&[],vec![n("Button",&[
+            ("x","-15"),("y","5"),("width","45"),("height","25"),
+            ("on_click","cb:9")],vec![])]);
+        for w in [15.0,100.0,300.0] {
+            let plan=arrange(&root,b(0.0,0.0,w,50.0));
+            assert_eq!(hit_test(&root,&plan,5.0,10.0),Some(HitTarget::Button(9)));
+            assert_eq!(hit_test(&root,&plan,w+1.0,10.0),None);
+        }
     }
 
     #[test]
