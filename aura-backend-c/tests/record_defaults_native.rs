@@ -533,3 +533,32 @@ cell alias_signed() ->:
             String::from_utf8_lossy(&run.stderr),artifacts.module_c);
     }
 }
+
+#[test]
+fn unusable_monomorphic_type_aliases_fail_at_declaration_even_if_unused() {
+    for (label, declarations) in [
+        ("self cycle", "type Loop = Loop\n"),
+        ("two-alias cycle", "type First = Second\ntype Second = First\n"),
+        ("three-alias cycle", "type A = B\ntype B = C\ntype C = A\n"),
+        ("missing direct target", "type Phantom = MissingTarget\n"),
+        ("missing chained target", "type A = B\ntype B = MissingTarget\n"),
+    ] {
+        let source = format!("{declarations}cell main() ->:\n    yield 7\n");
+        let ast = aura_parse::parse_source(&source)
+            .unwrap_or_else(|e| panic!("{label}: source must parse: {e}"));
+        let err = Checker::new().check_program(&ast)
+            .expect_err("invalid unused monomorphic TypeAlias must fail before execution");
+        assert!(err.message.contains("TypeAlias") &&
+            (err.message.contains("cyclic") || err.message.contains("unknown")),
+            "{label}: expected an explicit cyclic/unknown TypeAlias diagnostic: {err}");
+    }
+}
+
+#[test]
+fn legitimate_monomorphic_type_alias_chains_remain_valid_in_core() {
+    let source = "type Byte = u8\ntype AlsoByte = Byte\n\
+        type Tiny = record { n: AlsoByte = 255 }\n\
+        cell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n";
+    let ast = aura_parse::parse_source(source).expect("positive alias parses");
+    Checker::new().check_program(&ast).expect("valid primitive alias chain must remain legal");
+}

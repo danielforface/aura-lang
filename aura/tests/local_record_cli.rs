@@ -374,3 +374,22 @@ fn public_cli_accepts_valid_typed_integer_local_record_check_and_c_build() {
             "public CLI {:?} must preserve valid typed Record scalar value: {output}",args);
     }
 }
+
+#[test]
+fn public_cli_refuses_unused_unknown_and_cyclic_monomorphic_aliases() {
+    for (label,declarations) in [
+        ("cyclic", "type First = Second\ntype Second = First\n"),
+        ("unknown", "type Bad = MissingTarget\n"),
+    ] {
+        let source=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let fixture=SourceFile::new(&source);
+        let output=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",
+            String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+        assert!(!output.status.success(),
+            "{label}: public check accepted invalid unused TypeAlias: {diagnostic}");
+        assert!(diagnostic.contains("TypeAlias") &&
+            (diagnostic.contains("cyclic") || diagnostic.contains("unknown")),
+            "{label}: public diagnostic must describe alias error: {diagnostic}");
+    }
+}

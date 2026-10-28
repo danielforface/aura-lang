@@ -791,3 +791,23 @@ fn raw_avm_type_alias_resolution_does_not_leak_between_source_loads() {
     assert!(error.to_string().contains("range") || error.to_string().contains("mismatch"),
         "source-specific alias state required: {error}");
 }
+
+#[test]
+fn raw_avm_rejects_unused_cyclic_or_unknown_monomorphic_aliases() {
+    for (label,declarations) in [
+        ("direct cycle", "type Loop = Loop\n"),
+        ("two aliases", "type First = Second\ntype Second = First\n"),
+        ("transitive cycle", "type First = Second\ntype Second = Third\ntype Third = First\n"),
+        ("unknown target", "type Phantom = MissingTarget\n"),
+        ("unknown after chain", "type First = Second\ntype Second = MissingTarget\n"),
+    ] {
+        let source=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(&source,"main")
+            .expect_err("invalid unused alias must fail during source registration");
+        let diagnostic=err.to_string();
+        assert!(diagnostic.contains("TypeAlias") &&
+            (diagnostic.contains("cyclic") || diagnostic.contains("unknown")),
+            "{label}: expected alias cycle/unknown diagnostic: {diagnostic}");
+    }
+}
