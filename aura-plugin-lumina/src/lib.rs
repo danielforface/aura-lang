@@ -7,7 +7,7 @@ mod viewport;
 mod layout;
 
 #[cfg(feature = "raylib")]
-use viewport::RootViewport;
+use viewport::FrameMetrics;
 
 use aura_nexus::{
     AuraPlugin,
@@ -48,6 +48,10 @@ uniform float softness;   // px AA width
 uniform vec4 fillColor;   // rgba 0..1
 uniform vec4 borderColor; // rgba 0..1
 uniform float borderWidth; // px
+// Fragment coordinates are physical GL pixels with a bottom-left origin.
+// Rectangle/layout coordinates are logical Raylib pixels with a top-left origin.
+uniform vec2 framebufferScale;
+uniform float framebufferHeight;
 
 float sdRoundRect(vec2 p, vec2 b, float r) {
     // p is centered coords; b is half-size.
@@ -56,7 +60,8 @@ float sdRoundRect(vec2 p, vec2 b, float r) {
 }
 
 void main() {
-    vec2 p = gl_FragCoord.xy;
+    vec2 p = vec2(gl_FragCoord.x / framebufferScale.x,
+                  (framebufferHeight - gl_FragCoord.y) / framebufferScale.y);
     vec2 pos = rect.xy;
     vec2 size = rect.zw;
     vec2 halfSize = size * 0.5;
@@ -125,6 +130,8 @@ struct RoundedRectShader {
     loc_fill: i32,
     loc_border: i32,
     loc_border_width: i32,
+    loc_framebuffer_scale: i32,
+    loc_framebuffer_height: i32,
 }
 
 #[cfg(feature = "raylib")]
@@ -153,6 +160,68 @@ pub struct AuraLuminaPlugin;
 impl AuraLuminaPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+/// Opt-in native diagnostic info. This is not enabled for production builds.
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiagnosticMetrics {
+    pub logical_width: i32,
+    pub logical_height: i32,
+    pub render_width: i32,
+    pub render_height: i32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiagnosticPixel {
+    pub r: u8, pub g: u8, pub b: u8, pub a: u8,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+impl AuraLuminaPlugin {
+    /// Real native window resize. Runs only in opt-in Xvfb/device tests.
+    pub fn diagnostic_resize_window(&self, width: i32, height: i32) -> bool {
+        if width <= 0 || height <= 0 { return false; }
+        let mut guard = self.window.borrow_mut();
+        if let Some(w) = guard.as_mut() {
+            w.rl.set_window_size(width, height);
+            true
+        } else { false }
+    }
+
+    /// Samples physical render size independently of logical window geometry.
+    pub fn diagnostic_frame_metrics(&self) -> Option<DiagnosticMetrics> {
+        let guard = self.window.borrow();
+        let w = guard.as_ref()?;
+        let m = FrameMetrics::from_window(
+            w.rl.get_screen_width(), w.rl.get_screen_height(),
+            w.rl.get_render_width(), w.rl.get_render_height());
+        Some(DiagnosticMetrics {
+            logical_width: m.logical.width as i32,
+            logical_height: m.logical.height as i32,
+            render_width: m.render_width, render_height: m.render_height,
+            scale_x: m.scale_x, scale_y: m.scale_y,
+        })
+    }
+
+    /// Read back the GPU screen buffer. Use stable solid-color interiors and
+    /// repeated frames for virtual X11 because buffer swap timing is platform
+    /// dependent. No absolute pixel parity outside that environment is implied.
+    pub fn diagnostic_capture_pixel(&self, logical_x: f32, logical_y: f32) -> Option<DiagnosticPixel> {
+        let guard = self.window.borrow();
+        let w = guard.as_ref()?;
+        let m = FrameMetrics::from_window(
+            w.rl.get_screen_width(), w.rl.get_screen_height(),
+            w.rl.get_render_width(), w.rl.get_render_height());
+        let (px,py) = m.logical_to_framebuffer(logical_x,logical_y)?;
+        let mut image = w.rl.load_image_from_screen(&w.thread);
+        if px >= image.width() || py >= image.height() { return None; }
+        let c = image.get_color(px,py);
+        Some(DiagnosticPixel { r:c.r,g:c.g,b:c.b,a:c.a })
     }
 }
 
@@ -217,6 +286,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     loc_fill: shader.get_shader_location("fillColor"),
                     loc_border: shader.get_shader_location("borderColor"),
                     loc_border_width: shader.get_shader_location("borderWidth"),
+                    loc_framebuffer_scale: shader.get_shader_location("framebufferScale"),
+                    loc_framebuffer_height: shader.get_shader_location("framebufferHeight"),
                     shader,
                 };
                 *win_ref = Some(LuminaWindow {
@@ -274,9 +345,22 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
             let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
 
-            // Layout coordinates are logical window pixels, not physical framebuffer DPI pixels.
-            // Sample every frame so the root bounds follow user-driven window resize.
-            let viewport = RootViewport::from_window_size(rl.get_screen_width(), rl.get_screen_height());
+            // Geometry & pointer coordinates stay LOGICAL. The shader alone
+            // transforms gl_FragCoord physical bottom-left pixels to logical
+            // top-left coordinates. Raylib's scissor mode performs its own DPI
+            // transform: do NOT scale scissor rectangles again here.
+            let frame = FrameMetrics::from_window(
+                rl.get_screen_width(), rl.get_screen_height(),
+                rl.get_render_width(), rl.get_render_height(),
+            );
+            let viewport = frame.logical;
+            let valid_frame = frame.scale_x > 0.0 && frame.scale_y > 0.0;
+            if valid_frame {
+                sdf.shader.set_shader_value(
+                    sdf.loc_framebuffer_scale, [frame.scale_x, frame.scale_y]);
+                sdf.shader.set_shader_value(
+                    sdf.loc_framebuffer_height, frame.render_height as f32);
+            }
             // Construct all geometry before beginning the paint pass. Headless
             // tests exercise this exact measure/arrange model without Raylib.
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
@@ -305,10 +389,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
             d.clear_background(app_bg);
 
-            render_node(
-                &mut d, tree, &planned_layout, now, sdf,
-                win.click_anim, &win.focused_input, &win.textures,
-            );
+            if valid_frame {
+                render_node(
+                    &mut d, tree, &planned_layout, now, sdf,
+                    win.click_anim, &win.focused_input, &win.textures,
+                );
+            }
             fb.clicked_callback_id = click_cb;
 
             // Apply keyboard edits for the currently focused input and emit events.

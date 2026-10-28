@@ -6,6 +6,8 @@ edition = "2021"
 [features]
 default = []
 raylib = ["dep:raylib"]
+# Explicit opt-in for local Xvfb/CI diagnostics; not enabled in release builds.
+lumina-diagnostics = ["raylib"]
 
 [dependencies]
 aura-nexus = { path = "../aura-nexus" }
