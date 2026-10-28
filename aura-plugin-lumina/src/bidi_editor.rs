@@ -3,7 +3,6 @@
 //! affinity for cursor painting/navigation. Never estimate GSUB ligature
 //! interior caret positions by dividing glyph advances.
 use crate::text_shaping::{ShapedText,ShapedRun};
-use std::cmp::Ordering;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub(crate) struct Stop {
@@ -61,6 +60,12 @@ pub(crate) fn navigate(shaped:&ShapedText,grapheme:usize,affinity:Option<usize>,
     let (at,_)=current(&all,grapheme,affinity)?;
     let next=if right{at.checked_add(1)?}else{at.checked_sub(1)?};
     all.get(next).copied()
+}
+
+/// Physical Home/End without changing the immutable logical string.
+pub(crate) fn edge(shaped:&ShapedText,rightmost:bool)->Option<Stop>{
+    let all=stops(shaped)?;
+    if rightmost{all.last().copied()}else{all.first().copied()}
 }
 
 /// Nearest real visual caret stop, with no fabricated ligature or missing
