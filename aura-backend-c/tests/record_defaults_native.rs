@@ -342,3 +342,34 @@ cell make_signed() ->:
             String::from_utf8_lossy(&run.stderr), artifacts.module_c);
     }
 }
+
+#[test]
+fn native_record_narrowing_cannot_use_an_out_of_range_ir_constant() {
+    // The public Checker would reject this value. The backend is an
+    // independent trust boundary and must not accept edited but structurally
+    // valid SSA that tries to smuggle a truncating U32 into an u8 Record.
+    let source = r#"
+type Tiny = record { n: u8 }
+cell make_tiny() ->:
+    val n = 255
+    yield Tiny { n: n }
+"#;
+    let ast=aura_parse::parse_source(source).expect("positive fixture parses");
+    Checker::new().check_program(&ast).expect("baseline typechecks");
+    let mut ir=lower_program(&ast).expect("baseline lowers");
+    let function=ir.functions.get_mut("make_tiny").expect("source function exists");
+    let constant=function.blocks.iter_mut()
+        .flat_map(|b| b.insts.iter_mut())
+        .find_map(|inst| match &mut inst.kind {
+            aura_ir::InstKind::BindStrand {
+                expr: aura_ir::RValue::ConstU32(n), ..
+            } if *n == 255 => Some(n),
+            _ => None,
+        }).expect("find U32 constant backing inferred local");
+    *constant=300;
+    validate_module(&ir).expect("SSA remains structurally valid");
+    let err=emit_module(&ir,None).err()
+        .expect("C emitter must refuse an unproven narrowing despite SSA validity");
+    assert!(err.message.contains("Record") && err.message.contains("no proven in-range constant"),
+        "expected exact unsafe-narrowing diagnostic, got {err}");
+}
