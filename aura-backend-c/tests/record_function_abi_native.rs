@@ -34,6 +34,12 @@ cell named_make_point() ->:
     yield make_point(y: 13, x: 7)
 cell named_record_call() ->:
     yield project_x(p: make_point(y: 13, x: 7))
+cell sum_point(p: Point, increment: u32) ->:
+    yield p.x + increment
+cell named_record_and_scalar() ->:
+    yield sum_point(increment: 5, p: make_point(y: 13, x: 7))
+cell mixed_positional_named() ->:
+    yield sum_point(make_point(y: 13, x: 7), increment: 5)
 "#;
 
 struct Scratch(PathBuf);
@@ -104,6 +110,12 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
                 "nested named Record call must bind to declared parameter names");
         }
     }
+    for cell in ["named_record_and_scalar", "mixed_positional_named"] {
+        let result = run_oracle_entry(&ir, cell, &[], OracleConfig::default())
+            .expect("Oracle must preserve named and positional C ABI slot order");
+        assert_eq!(result.return_value, Some(OracleValue::U32(12)),
+            "{cell}: Point x=7 plus increment 5");
+    }
     let output = emit_module(&ir, None).expect("nominal Record function ABI should emit native C");
     assert!(output.module_c.contains("aura_record_506f696e74"),
         "qualified nominal Point type required, not Tensor fallback");
@@ -124,6 +136,9 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         "uint32_t round_trip(uint32_t, uint32_t);\n",
         "aura_record_506f696e74 named_make_point(void);\n",
         "uint32_t named_record_call(void);\n",
+        "uint32_t sum_point(aura_record_506f696e74, uint32_t);\n",
+        "uint32_t named_record_and_scalar(void);\n",
+        "uint32_t mixed_positional_named(void);\n",
         "int main(void) {\n",
         "  aura_record_506f696e74 p = make_point(31u, 37u);\n",
         "  return (p.aura_f_78 == 31u && p.aura_f_79 == 37u",
@@ -138,7 +153,9 @@ fn source_record_return_and_parameter_are_qualified_by_ir_oracle_and_native() {
         " && round_trip(19u, 23u) == 19u",
         " && named_make_point().aura_f_78 == 7u",
         " && named_make_point().aura_f_79 == 13u",
-        " && named_record_call() == 7u) ? 0 : 1;\n",
+        " && named_record_call() == 7u",
+        " && named_record_and_scalar() == 12u",
+        " && mixed_positional_named() == 12u) ? 0 : 1;\n",
         "}\n"
     )).unwrap();
     for opt in ["-O0", "-O2"] {
