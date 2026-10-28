@@ -1050,7 +1050,7 @@ fn emit_function(
                 out.push_str("  return;\n");
             }
             Terminator::Br(t) => {
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *t);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *t);
                 out.push_str("  goto ");
                 out.push_str(&bb_label(*t));
                 out.push_str(";\n");
@@ -1067,12 +1067,12 @@ fn emit_function(
                 out.push_str("  if (");
                 out.push_str(&cn);
                 out.push_str(") {\n");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *then_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *then_bb);
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*then_bb));
                 out.push_str(";\n");
                 out.push_str("  } else {\n");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *else_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *else_bb);
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*else_bb));
                 out.push_str(";\n");
@@ -1094,14 +1094,14 @@ fn emit_function(
 
                 for (k, bb2) in cases {
                     out.push_str(&format!("    case {}u: ", k));
-                    emit_phi_assigns(out, &phi_inj, &values, b.id, *bb2);
+                    emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *bb2);
                     out.push_str("goto ");
                     out.push_str(&bb_label(*bb2));
                     out.push_str(";\n");
                 }
 
                 out.push_str("    default: ");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *default_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *default_bb);
                 out.push_str("goto ");
                 out.push_str(&bb_label(*default_bb));
                 out.push_str(";\n");
@@ -1473,15 +1473,18 @@ fn emit_phi_assigns(
     out: &mut String,
     phi_inj: &HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>>,
     values: &HashMap<ValueId, (CType, String)>,
+    records: &HashMap<ValueId, (String, String)>,
     pred: BlockId,
     target: BlockId,
 ) {
     if let Some(assigns) = phi_inj.get(&(pred, target)) {
         for (dest, incoming) in assigns {
             let dn = format!("v{}", dest.0);
-            let sn = values
-                .get(incoming)
-                .map(|(_, n)| n.clone())
+            // Phi predecessor edges may carry named Record formals as
+            // well as local vN values. A fallback vN for a formal parameter
+            // would reference an undeclared variable, breaking native ABI.
+            let sn = values.get(incoming).map(|(_, n)| n.clone())
+                .or_else(|| records.get(incoming).map(|(_, n)| n.clone()))
                 .unwrap_or_else(|| format!("v{}", incoming.0));
             out.push_str("    ");
             out.push_str(&dn);
