@@ -79,6 +79,16 @@ fn native_tab_shift_tab_order_wrap_and_skip_hidden_disabled_inputs() {
     assert!(a.iter().chain(b.iter()).chain(a2.iter()).chain(b2.iter())
         .all(|e| ![999,303,404].contains(&e.callback_id)),
         "disabled, clipped and offscreen fields must not emit input callbacks");
+    // Mouse and keyboard must agree: a disabled TextInput must not become
+    // editable when clicked, even after another field was focused.
+    xdo(&["mousemove","--window",id,"40","95"]);
+    frames(&plugin,&tree,&mut ctx,3);
+    xdo(&["mousedown","1"]);
+    frames(&plugin,&tree,&mut ctx,4);
+    xdo(&["mouseup","1"]);
+    frames(&plugin,&tree,&mut ctx,2);
+    let blocked=press(&plugin,&tree,&mut ctx,"p",false);
+    assert!(blocked.is_empty(),"disabled field accepted real pointer+keyboard: {blocked:?}");
     drop(plugin);
-    eprintln!("LUMINA_TAB_XTEST: forward/reverse wrap, disabled+clip+offscreen skip PASS");
+    eprintln!("LUMINA_TAB_XTEST: forward/reverse, disabled pointer/Tab, clip+offscreen skip PASS");
 }
