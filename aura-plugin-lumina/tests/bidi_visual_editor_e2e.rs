@@ -107,6 +107,32 @@ fn true_x11_mixed_direction_select_all_is_split_and_shaded_in_framebuffer(){
  let collapse=visual(&p);
  assert!(collapse.logical_selection.is_none(),"physical Right collapses selection");
  assert!(collapse.caret_visible);
+
+ // Nontrivial source [2,8): selected RTL and LTR fragments are physically
+ // disjoint with an unselected middle. We must leave its GPU pixels intact.
+ key(&p,&t,&mut c,"Home",false,false);
+ for _ in 0..28 {
+    if visual(&p).caret_grapheme==Some(8){break;}
+    key(&p,&t,&mut c,"Right",false,false);
+ }
+ assert_eq!(visual(&p).caret_grapheme,Some(8),
+    "physical stepping must reach a middle LTR source boundary");
+ for _ in 0..28 {
+    if visual(&p).caret_grapheme==Some(2){break;}
+    key(&p,&t,&mut c,"Right",false,true);
+ }
+ let partial=visual(&p);
+ eprintln!("BIDI-X11 noncontiguous physical selection={partial:?}");
+ assert_eq!(partial.logical_selection,Some((2,8)),
+    "physical Shift+Right should preserve logical anchor and UAX9 affinity");
+ let gap=partial.selection_screens.windows(2)
+    .find(|spans|spans[1].0>spans[0].1+2.0)
+    .expect("two selected visual fragments with an unselected middle");
+ let gap_center=(gap[0].1+gap[1].0)*0.5;
+ let untouched=p.diagnostic_capture_pixel(gap_center,35.0).unwrap();
+ // The pixel is in the unselected gap, above text glyphs.
+ assert_eq!((untouched.r,untouched.g,untouched.b),(13,17,23),
+    "unselected middle must remain native input background, never filled by enclosing selection");
  drop(p);
 }
 #[test]
