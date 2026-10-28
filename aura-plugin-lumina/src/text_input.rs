@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn unicode_scalars_never_split_utf8_and_do_not_confuse_bytes_with_caret() {
-        let r=edit("aשלום🙂z",6,vec![EditCommand::Left,EditCommand::Backspace,
+        let r=edit("aשלום🙂z",7,vec![EditCommand::Left,EditCommand::Backspace,
             EditCommand::Insert("界".into())]);
         assert_eq!(r.0,"aשלום界z");
         assert_eq!(r.1,6);
