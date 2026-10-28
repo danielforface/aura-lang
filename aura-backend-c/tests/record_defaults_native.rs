@@ -474,3 +474,62 @@ cell typed_update() ->:
             String::from_utf8_lossy(&executed.stderr),artifacts.module_c);
     }
 }
+
+#[test]
+fn monomorphic_integer_alias_record_defaults_and_fields_match_oracle_and_native() {
+    let source=r#"
+type Byte = u8
+type Again = Byte
+type Small = i8
+type Tiny = record { n: Again = 255 }
+type Signed = record { n: Small }
+cell alias_default() ->:
+    val t: Tiny = Tiny {}
+    yield t.n
+cell alias_explicit() ->:
+    val n: Again = 255
+    val t: Tiny = Tiny { n: n }
+    yield t.n
+cell alias_signed() ->:
+    val n: Small = 127
+    val t: Signed = Signed { n: n }
+    yield t.n
+"#;
+    let parsed=aura_parse::parse_source(source).expect("well formed alias source");
+    Checker::new().check_program(&parsed).expect("Core resolves integer aliases");
+    let ir=lower_program(&parsed).expect("alias source lowers to qualified IR");
+    validate_module(&ir).expect("Record alias SSA must validate");
+    for (cell,n) in [("alias_default",255),("alias_explicit",255),("alias_signed",127)] {
+        let result=run_oracle_entry(&ir,cell,&[],OracleConfig::default())
+            .expect("IR oracle must execute aliased field and default");
+        assert!(result.ok && result.stderr.is_empty(), "{cell}: {result:?}");
+        assert_eq!(result.return_value,Some(OracleValue::U32(n)),
+            "{cell}: alias source should resolve to exact scalar value");
+    }
+    let artifacts=emit_module(&ir,None).expect("aliased concrete Record fields emit to C");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "uint32_t alias_default(void);\n",
+        "uint32_t alias_explicit(void);\n",
+        "uint32_t alias_signed(void);\n",
+        "int main(void) {\n",
+        "  return (alias_default()==255 && alias_explicit()==255",
+        " && alias_signed()==127) ? 0 : 1;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("aliased_record_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("strict clang available");
+        assert!(built.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        let run=Command::new(&exe).output().expect("native C executable");
+        assert!(run.status.success(), "{opt}: {}\n{}",
+            String::from_utf8_lossy(&run.stderr),artifacts.module_c);
+    }
+}
