@@ -187,6 +187,69 @@ fn qualified_record_fields(
     Ok(result)
 }
 
+
+fn qualified_record_abi_type(
+    ty: &Type,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+) -> Result<Option<String>, CBackendError> {
+    match ty {
+        Type::Record { name, fields } => {
+            let layout = layouts.get(name).ok_or_else(|| CBackendError {
+                message: format!("unqualified Record function ABI missing layout for '{name}'"),
+            })?;
+            if layout != fields {
+                return Err(CBackendError {
+                    message: format!("unqualified Record function ABI layout mismatch for '{name}'"),
+                });
+            }
+            qualified_record_fields(layouts, name)?;
+            Ok(Some(name.clone()))
+        }
+        Type::Opaque(name) if layouts.contains_key(name) => {
+            qualified_record_fields(layouts, name)?;
+            Ok(Some(name.clone()))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn emit_function_signature(
+    out: &mut String,
+    f: &FunctionIR,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    name: &str,
+) -> Result<(), CBackendError> {
+    let returns_value = f.blocks.iter().any(|b| matches!(b.term, Terminator::Return(Some(_))));
+    if returns_value {
+        if let Some(record) = qualified_record_abi_type(&f.ret, layouts)? {
+            out.push_str(&record_type_symbol(&record));
+        } else {
+            out.push_str(map_ctype_decl(function_return_ctype(f)));
+        }
+    } else {
+        out.push_str("void");
+    }
+    out.push(' ');
+    out.push_str(&c_ident(name));
+    out.push('(');
+    if f.params.is_empty() {
+        out.push_str("void");
+    } else {
+        for (i, p) in f.params.iter().enumerate() {
+            if i > 0 { out.push_str(", "); }
+            if let Some(record) = qualified_record_abi_type(&p.ty, layouts)? {
+                out.push_str(&record_type_symbol(&record));
+            } else {
+                out.push_str(map_type(&p.ty));
+            }
+            out.push(' ');
+            out.push_str(&c_ident(&p.name));
+        }
+    }
+    out.push(')');
+    Ok(())
+}
+
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
@@ -208,6 +271,15 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         }
     }
 
+    // Declare all functions before emitting bodies: calls may target a later
+    // source cell, including a function with a nominal struct return.
+    for (name, f) in &module.functions {
+        let symbol = if name == "main" { "aura_main" } else { name.as_str() };
+        emit_function_signature(&mut out, f, &module.record_layouts, symbol)?;
+        out.push_str(";\n");
+    }
+    out.push('\n');
+
     // Determine function return types by terminator shape (prototype).
     let mut ret_map: HashMap<String, CType> = HashMap::new();
     for (name, f) in &module.functions {
@@ -219,7 +291,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts)?;
+        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions)?;
         out.push('\n');
     }
 
@@ -227,7 +299,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts)?;
+        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -305,36 +377,10 @@ fn emit_function(
     f: &FunctionIR,
     ret_map: &HashMap<String, CType>,
     record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    functions: &BTreeMap<String, FunctionIR>,
 ) -> Result<(), CBackendError> {
-    // Record arguments/returns are deliberately outside this first local
-    // scalar Record implementation: never expose prototype Tensor ABI.
-    for ty in f.params.iter().map(|p| &p.ty).chain(std::iter::once(&f.ret)) {
-        match ty {
-            Type::Record { .. } => return Err(CBackendError {
-                message: format!("unqualified C Record function ABI in '{}': {:?}", f.name, ty),
-            }),
-            Type::Opaque(name) if record_layouts.contains_key(name) => return Err(CBackendError {
-                message: format!("unqualified C Record opaque function ABI in '{}': {}", f.name, name),
-            }),
-            _ => {}
-        }
-    }
-    let ret = function_return_ctype(f);
-    out.push_str(map_ctype_decl(ret));
-    out.push(' ');
-
-    out.push_str(&c_ident(&f.name));
-    out.push('(');
-    for (i, p) in f.params.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        let cty = map_type(&p.ty);
-        out.push_str(cty);
-        out.push(' ');
-        out.push_str(&c_ident(&p.name));
-    }
-    out.push_str(") {\n");
+    emit_function_signature(out, f, record_layouts, &f.name)?;
+    out.push_str(" {\n");
 
     // Value table: ValueId -> (ctype, generated C name)
     let mut values: HashMap<ValueId, (CType, String)> = HashMap::new();
@@ -350,9 +396,13 @@ fn emit_function(
     let mut string_literals: HashMap<ValueId, String> = HashMap::new();
 
     for p in &f.params {
-        let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
-        named_values.insert(p.name.clone(), binding.clone());
-        values.insert(p.value, binding);
+        if let Some(record) = qualified_record_abi_type(&p.ty, record_layouts)? {
+            records.insert(p.value, (record, c_ident(&p.name)));
+        } else {
+            let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
+            named_values.insert(p.name.clone(), binding.clone());
+            values.insert(p.value, binding);
+        }
     }
 
     // Static SSA type prepass for supported value-producing instructions.
@@ -437,7 +487,7 @@ fn emit_function(
     // updates, and join-block Phi nodes. Never infer it as Tensor from width
     // or initializer shape. Fixed-point inference handles predecessor blocks
     // appearing after a join in the serialized IR.
-    let mut known_record_types: HashMap<ValueId, String> = HashMap::new();
+    let mut known_record_types: HashMap<ValueId, String> = records.iter().map(|(id, (name, _))| (*id, name.clone())).collect();
     for _ in 0..max_rounds {
         let mut progressed = false;
         for block in &f.blocks {
@@ -871,20 +921,76 @@ fn emit_function(
                 }
 
                 InstKind::Call { callee, args } => {
-                    if args.iter().any(|arg| records.contains_key(arg)) {
+                    if let Some(target) = functions.get(callee) {
+                        if target.params.len() != args.len() {
+                            return Err(CBackendError { message: format!(
+                                "Record ABI call '{}' has wrong arity: expected {}, got {}",
+                                callee, target.params.len(), args.len(),
+                            ) });
+                        }
+                        for (i, (arg, expected)) in args.iter().zip(target.params.iter()).enumerate() {
+                            let expected_record = qualified_record_abi_type(&expected.ty, record_layouts)?;
+                            match expected_record {
+                                Some(name) => match records.get(arg) {
+                                    Some((actual, _)) if actual == &name => {}
+                                    _ => return Err(CBackendError { message: format!(
+                                        "Record ABI call '{}' arg {} expects nominal '{}', got {:?}",
+                                        callee, i, name, records.get(arg).map(|r| &r.0),
+                                    ) }),
+                                },
+                                None => {
+                                    if records.contains_key(arg) {
+                                        return Err(CBackendError { message: format!(
+                                            "Record ABI call '{}' arg {} passes Record to scalar parameter",
+                                            callee, i,
+                                        ) });
+                                    }
+                                    if let Some((actual, _)) = values.get(arg) {
+                                        let required = map_type_to_ctype(&expected.ty);
+                                        if *actual != required {
+                                            return Err(CBackendError { message: format!(
+                                                "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}",
+                                                callee, i, actual, required,
+                                            ) });
+                                        }
+                                    } else {
+                                        return Err(CBackendError { message: format!(
+                                            "Record ABI call '{}' arg {} has unemitted scalar v{}",
+                                            callee, i, arg.0,
+                                        ) });
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(record) = qualified_record_abi_type(&target.ret, record_layouts)? {
+                            let arg_names = args.iter().map(|a| {
+                                records.get(a).map(|(_, n)| n.clone())
+                                    .or_else(|| values.get(a).map(|(_, n)| n.clone()))
+                                    .expect("all Record ABI call args checked")
+                            }).collect::<Vec<_>>();
+                            if let Some(dest) = inst.dest {
+                                if records.contains_key(&dest) || values.contains_key(&dest) {
+                                    return Err(CBackendError { message: format!(
+                                        "Record ABI call '{}' duplicates destination v{}", callee, dest.0,
+                                    ) });
+                                }
+                                let local = format!("v{}", dest.0);
+                                out.push_str(&format!("  {} {} = {}({});\n",
+                                    record_type_symbol(&record), local, c_ident(callee), arg_names.join(", ")));
+                                records.insert(dest, (record, local));
+                            } else {
+                                out.push_str(&format!("  {}({});\n", c_ident(callee), arg_names.join(", ")));
+                            }
+                            continue;
+                        }
+                    } else if args.iter().any(|arg| records.contains_key(arg)) {
                         return Err(CBackendError { message: format!(
-                            "unqualified C Record argument in call '{}'", callee
+                            "unqualified C Record argument in external/builtin call '{}'", callee
                         ) });
                     }
                     emit_call(
-                        out,
-                        inst.dest,
-                        callee,
-                        args,
-                        &mut values,
-                        ret_map,
-                        &string_literals,
-                        &named_values,
+                        out, inst.dest, callee, args, &mut values, ret_map,
+                        &string_literals, &named_values,
                     );
                 }
                 InstKind::ComputeKernel { callee, args } => {
@@ -901,15 +1007,31 @@ fn emit_function(
         // Terminator
         match &b.term {
             Terminator::Return(Some(v)) => {
-                // An SSA value that was valid in the IR but never emitted as a
-                // C value is an unsupported instruction path, not a default
-                // Tensor zero. Returning a fabricated value is miscompilation.
-                let (_ct, name) = values.get(v).ok_or_else(|| CBackendError {
-                    message: format!(
-                        "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
-                        v.0, f.name, b.id.0, b.span,
-                    ),
-                })?;
+                let expected_record = qualified_record_abi_type(&f.ret, record_layouts)?;
+                let name = if let Some(expected) = expected_record {
+                    let (actual, c_name) = records.get(v).ok_or_else(|| CBackendError {
+                        message: format!("Record ABI return in '{}' is not emitted Record v{}", f.name, v.0),
+                    })?;
+                    if actual != &expected {
+                        return Err(CBackendError { message: format!(
+                            "Record ABI return in '{}' expects nominal '{}', got '{}'", f.name, expected, actual,
+                        ) });
+                    }
+                    c_name
+                } else {
+                    if records.contains_key(v) {
+                        return Err(CBackendError { message: format!(
+                            "Record ABI return in '{}' passes Record to non-Record result", f.name,
+                        ) });
+                    }
+                    let (_ct, c_name) = values.get(v).ok_or_else(|| CBackendError {
+                        message: format!(
+                            "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
+                            v.0, f.name, b.id.0, b.span,
+                        ),
+                    })?;
+                    c_name
+                };
                 out.push_str("  return ");
                 out.push_str(name);
                 out.push_str(";\n");
