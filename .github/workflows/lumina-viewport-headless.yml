@@ -22,13 +22,8 @@ jobs:
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
-      - name: Rust test and *temporary lockfile bootstrap* (restore --locked before final CI)
-        run: |
-          cargo test -p aura-plugin-lumina --no-default-features || true
-          echo 'LUMINA_LOCK_DIFF_BEGIN'
-          git diff -- Cargo.lock
-          echo 'LUMINA_LOCK_DIFF_END'
-          cargo test -p aura-plugin-lumina --no-default-features
+      - name: Rust test (no GUI, no Z3, no persistent cache)
+        run: cargo test --locked -p aura-plugin-lumina --no-default-features
 
   raylib-feature-compile:
     runs-on: ubuntu-latest
