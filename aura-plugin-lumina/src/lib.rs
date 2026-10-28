@@ -442,7 +442,16 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         switch_input(win, None);Some(id)
                     }
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
-                        switch_input(win,Some((on_change,on_submit,value)));None
+                        if focus_order.iter().any(|candidate|matches!(candidate,
+                            layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
+                            switch_input(win,Some((on_change,on_submit,value)));
+                        } else {
+                            // Duplicate callback IDs are ambiguous: never
+                            // grant mouse focus to a field that cannot own a
+                            // unique session identity.
+                            switch_input(win,None);
+                        }
+                        None
                     }
                     None => {switch_input(win,None);None}
                 }
