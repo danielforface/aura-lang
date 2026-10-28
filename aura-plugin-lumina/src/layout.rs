@@ -241,7 +241,7 @@ fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) ->
             LayoutNode { bounds, children }
         }
         "Button" | "TextInput" => {
-            let (w,h) = measure(node);
+            let (w,h) = measured.size;
             LayoutNode { bounds: Bounds::new(bounds.x, bounds.y, w, h), children }
         }
         "Image" | "Rect" => {
