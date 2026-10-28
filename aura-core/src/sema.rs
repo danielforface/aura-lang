@@ -1249,48 +1249,95 @@ impl Checker {
                 span: a.target.span,
             });
         }
-        // Only concrete non-generic nominal Records have a qualified local
-        // functional SSA update contract. A field may contain another concrete
-        // nominal Record by value; its exact name is checked below.
-        let Type::Named(rec_name) = base_type(&target_ty) else {
+        let Type::Named(mut record_name) = base_type(&target_ty).clone() else {
             return Err(SemanticError {
-                message: format!("field assignment target '{}' must be a concrete Record", a.target.node),
+                message: format!(
+                    "field assignment target '{}' must be a concrete Record",
+                    a.target.node
+                ),
                 span: a.target.span,
             });
         };
-        let Some(def) = self.record_defs.get(rec_name) else {
-            return Err(SemanticError {
-                message: format!("field assignment target '{}' is not a known Record", rec_name),
-                span: a.target.span,
-            });
-        };
-        if !def.params.is_empty() {
-            return Err(SemanticError {
-                message: format!("generic Record '{}' field assignment is unqualified", rec_name),
-                span: a.span,
-            });
+
+        let path = std::iter::once(&a.field)
+            .chain(a.nested.iter())
+            .collect::<Vec<_>>();
+        // A mutable root is rebound exactly once with a functional SSA
+        // update; intermediate Record fields need not be independently
+        // mutable, but every traversed type must be concrete and nominal.
+        for (index, component) in path.iter().enumerate() {
+            let Some(def) = self.record_defs.get(&record_name) else {
+                return Err(SemanticError {
+                    message: format!(
+                        "nested field assignment path requires concrete Record '{}'",
+                        record_name
+                    ),
+                    span: component.span,
+                });
+            };
+            if !def.params.is_empty() {
+                return Err(SemanticError {
+                    message: format!(
+                        "generic Record '{}' field assignment is unqualified",
+                        record_name
+                    ),
+                    span: component.span,
+                });
+            }
+            let Some(field) = def.fields.iter()
+                .find(|f| f.name.node == component.node) else {
+                return Err(SemanticError {
+                    message: format!(
+                        "unknown field '{}' for record '{}'",
+                        component.node, record_name
+                    ),
+                    span: component.span,
+                });
+            };
+            let expected = self.resolve_type_ref(&field.ty)?;
+            if index + 1 != path.len() {
+                let Type::Named(child_name) = expected else {
+                    return Err(SemanticError {
+                        message: format!(
+                            "nested field assignment path through '{}.{}' requires a concrete Record",
+                            record_name, component.node
+                        ),
+                        span: component.span,
+                    });
+                };
+                if !self.record_defs.get(&child_name)
+                    .is_some_and(|child| child.params.is_empty())
+                {
+                    return Err(SemanticError {
+                        message: format!(
+                            "nested field assignment path through '{}.{}' requires a concrete Record",
+                            record_name, component.node
+                        ),
+                        span: component.span,
+                    });
+                }
+                record_name = child_name;
+                continue;
+            }
+
+            let scalar = matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
+                Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                Type::I64 | Type::F32 | Type::F64);
+            let nominal_child = matches!(&expected, Type::Named(name)
+                if self.record_defs.get(name).is_some_and(|inner| inner.params.is_empty()));
+            if !scalar && !nominal_child {
+                return Err(SemanticError {
+                    message: format!(
+                        "unqualified non-scalar Record field assignment '{}.{}'",
+                        a.target.node, component.node
+                    ),
+                    span: component.span,
+                });
+            }
+            let actual = self.infer_expr(&a.expr)?;
+            return self.check_assignable(&expected, &actual, &a.expr);
         }
-        let Some(field) = def.fields.iter().find(|f| f.name.node == a.field.node) else {
-            return Err(SemanticError {
-                message: format!("unknown field '{}' for record '{}'", a.field.node, rec_name),
-                span: a.field.span,
-            });
-        };
-        let expected = self.resolve_type_ref(&field.ty)?;
-        let scalar = matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
-            Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
-            Type::I64 | Type::F32 | Type::F64);
-        let nominal_nested = matches!(&expected, Type::Named(name)
-            if self.record_defs.get(name).is_some_and(|inner| inner.params.is_empty()));
-        if !scalar && !nominal_nested {
-            return Err(SemanticError {
-                message: format!("unqualified non-scalar Record field assignment '{}.{}'",
-                    a.target.node, a.field.node),
-                span: a.field.span,
-            });
-        }
-        let actual = self.infer_expr(&a.expr)?;
-        self.check_assignable(&expected, &actual, &a.expr)
+        unreachable!("FieldAssign always has at least one field");
     }
 
     fn check_assign(&mut self, assign: &AssignStmt) -> Result<(), SemanticError> {
