@@ -332,3 +332,22 @@ fn public_checker_refuses_proven_local_narrowing_and_unsigned_negative_record() 
             "{label}: expected numeric Record diagnostic: {text}");
     }
 }
+
+#[test]
+fn public_aura_check_refuses_typed_integer_local_range_laundering() {
+    for (label, source) in [
+        ("typed literal u8", "type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = 300\n    yield Tiny { n: n }\n"),
+        ("typed source copy u8", "type Tiny = record { n: u8 }\ncell main() ->:\n    val raw = 300\n    val n: u8 = raw\n    yield Tiny { n: n }\n"),
+        ("typed literal i8", "type Signed = record { n: i8 }\ncell main() ->:\n    val n: i8 = 128\n    yield Signed { n: n }\n"),
+        ("mutable typed local", "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    n = 300\n    yield Tiny { n: n }\n"),
+    ] {
+        let fixture=SourceFile::new(source);
+        let res=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",String::from_utf8_lossy(&res.stdout),
+            String::from_utf8_lossy(&res.stderr));
+        assert!(!res.status.success(),
+            "{label}: real CLI accepted unsafe typed local narrowing: {diagnostic}");
+        assert!(diagnostic.contains("out of range"),
+            "{label}: expected numeric range failure: {diagnostic}");
+    }
+}

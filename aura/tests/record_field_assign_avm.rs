@@ -626,3 +626,20 @@ fn raw_avm_refuses_unrepresentable_local_and_negative_unsigned_record_values() {
             "{label}: expected explicit Record runtime typing refusal: {err}");
     }
 }
+
+#[test]
+fn raw_avm_must_validate_typed_integer_locals_even_if_never_used() {
+    for (label, source) in [
+        ("unused u8", "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val n: u8 = 300\n    yield 7\n"),
+        ("typed u8 copy", "type Tiny = record { n: u8 }\ncell main() ->:\n    val raw = 300\n    val n: u8 = raw\n    yield 7\n"),
+        ("unused i8", "type Tiny = record { n: i8 = 7 }\ncell main() ->:\n    val n: i8 = 128\n    yield 7\n"),
+        ("unsigned negative", "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val n: u8 = -1\n    yield 7\n"),
+    ] {
+        let mut avm=Avm::new(AvmConfig { enable_z3_gate:false,..Default::default() });
+        let err=avm.exec_entry_cell(source,"main")
+            .expect_err("raw AVM must reject invalid typed locals before success");
+        let message=err.to_string();
+        assert!(message.contains("typed") || message.contains("range"),
+            "{label}: expected narrow-local range diagnostic: {message}");
+    }
+}

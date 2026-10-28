@@ -373,3 +373,38 @@ cell make_tiny() ->:
     assert!(err.message.contains("Record") && err.message.contains("no proven in-range constant"),
         "expected exact unsafe-narrowing diagnostic, got {err}");
 }
+
+#[test]
+fn typed_numeric_local_cannot_launder_out_of_range_value_into_record() {
+    for (label, source) in [
+        ("typed u8 literal", "type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = 300\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("typed i8 literal", "type Tiny = record { n: i8 }\ncell main() ->:\n    val n: i8 = 128\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("typed u8 from local", "type Tiny = record { n: u8 }\ncell main() ->:\n    val raw = 300\n    val n: u8 = raw\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("typed i8 from local", "type Tiny = record { n: i8 }\ncell main() ->:\n    val raw = 128\n    val n: i8 = raw\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("typed alias to u8", "type Byte = u8\ntype Tiny = record { n: u8 }\ncell main() ->:\n    val n: Byte = 300\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("typed u8 negative", "type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = -1\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+        ("unused typed u8", "type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val unused: u8 = 300\n    yield Tiny {}\n"),
+        ("mutable typed u8 reassign", "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    n = 300\n    val t: Tiny = Tiny { n: n }\n    yield t.n\n"),
+    ] {
+        let parsed=aura_parse::parse_source(source)
+            .unwrap_or_else(|e| panic!("{label}: syntax must parse: {e}"));
+        let error=Checker::new().check_program(&parsed)
+            .expect_err("typed narrow local must not erase numeric range proof");
+        assert!(error.message.contains("out of range") || error.message.contains("negative"),
+            "{label}: must diagnose nonrepresentable local value, got {error}");
+        assert!(error.span.len()>0, "{label}: retain source location");
+    }
+}
+#[test]
+fn typed_local_valid_numeric_limits_remain_checker_legal() {
+    for (label, src) in [
+        ("u8 exact max", "type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = 255\n    yield Tiny { n: n }\n"),
+        ("i8 exact max", "type Signed = record { n: i8 }\ncell main() ->:\n    val n: i8 = 127\n    yield Signed { n: n }\n"),
+        ("typed copy", "type Tiny = record { n: u8 }\ncell main() ->:\n    val raw = 255\n    val n: u8 = raw\n    yield Tiny { n: n }\n"),
+    ] {
+        let parsed=aura_parse::parse_source(src)
+            .unwrap_or_else(|e| panic!("{label}: syntax must parse: {e}"));
+        Checker::new().check_program(&parsed)
+            .unwrap_or_else(|e| panic!("{label}: representable typed local must remain valid: {e}"));
+    }
+}
