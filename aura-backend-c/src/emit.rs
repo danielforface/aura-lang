@@ -802,16 +802,30 @@ fn emit_function(
                                 "unqualified C Record '{}' duplicate field '{}'", record_name, field
                             ) });
                         }
-                        let (actual, cname) = values.get(value).ok_or_else(|| CBackendError {
-                            message: format!("unqualified C Record '{}' field '{}' unemitted SSA v{}",
-                                record_name, field, value.0),
-                        })?;
-                        if actual != expected {
-                            return Err(CBackendError { message: format!(
-                                "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?}",
-                                record_name, field, actual, expected
-                            ) });
-                        }
+                        let cname = match expected {
+                            RecordFieldCType::Scalar(ty) => match values.get(value) {
+                                Some((actual, cname)) if actual == ty => cname.clone(),
+                                Some((actual, _)) => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?}",
+                                    record_name, field, actual, ty,
+                                ) }),
+                                None => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' unemitted SSA v{} or nominal Record supplied to scalar field",
+                                    record_name, field, value.0,
+                                ) }),
+                            },
+                            RecordFieldCType::Nominal(name) => match records.get(value) {
+                                Some((actual, cname)) if actual == name => cname.clone(),
+                                Some((actual, _)) => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' nominal mismatch '{}' != '{}'",
+                                    record_name, field, actual, name,
+                                ) }),
+                                None => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' requires nominal '{}' at SSA v{}",
+                                    record_name, field, name, value.0,
+                                ) }),
+                            },
+                        };
                         initializers.push(format!(".{} = {}", record_field_symbol(field), cname));
                     }
                     let cname = format!("v{}", dest.0);
@@ -836,8 +850,15 @@ fn emit_function(
                         ) })?;
                     let dest_name = format!("v{}", dest.0);
                     out.push_str(&format!("  {} {} = {}.{};\n",
-                        map_ctype_decl(*ty), dest_name, cname, record_field_symbol(field_name)));
-                    values.insert(dest, (*ty, dest_name));
+                        ty.declaration(), dest_name, cname, record_field_symbol(field_name)));
+                    match ty {
+                        RecordFieldCType::Scalar(ct) => {
+                            values.insert(dest, (*ct, dest_name));
+                        }
+                        RecordFieldCType::Nominal(name) => {
+                            records.insert(dest, (name.clone(), dest_name));
+                        }
+                    }
                 }
                 InstKind::SetField { base, field_name, value } => {
                     // This IR instruction is a functional update: the Oracle
@@ -866,18 +887,30 @@ fn emit_function(
                         .ok_or_else(|| CBackendError { message: format!(
                             "unqualified C Record '{}' unknown SetField '{}'", record, field_name,
                         ) })?;
-                    let (actual, rhs) = values.get(value).cloned().ok_or_else(|| CBackendError {
-                        message: format!(
-                            "unqualified C Record '{}' SetField '{}' unavailable value SSA v{}",
-                            record, field_name, value.0,
-                        ),
-                    })?;
-                    if actual != *expected {
-                        return Err(CBackendError { message: format!(
-                            "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?}",
-                            record, field_name, actual, expected,
-                        ) });
-                    }
+                    let rhs = match expected {
+                        RecordFieldCType::Scalar(ty) => match values.get(value) {
+                            Some((actual, name)) if actual == ty => name.clone(),
+                            Some((actual, _)) => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?}",
+                                record, field_name, actual, ty,
+                            ) }),
+                            None => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' unavailable scalar SSA v{}",
+                                record, field_name, value.0,
+                            ) }),
+                        },
+                        RecordFieldCType::Nominal(expected_name) => match records.get(value) {
+                            Some((actual, name)) if actual == expected_name => name.clone(),
+                            Some((actual, _)) => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' nominal mismatch '{}' != '{}'",
+                                record, field_name, actual, expected_name,
+                            ) }),
+                            None => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' missing nominal '{}' at SSA v{}",
+                                record, field_name, expected_name, value.0,
+                            ) }),
+                        },
+                    };
                     let updated_name = format!("v{}", dest.0);
                     out.push_str(&format!(
                         "  {} {} = {};\n",
