@@ -553,6 +553,9 @@ pub struct DiagnosticTextVisual {
     pub measured_caret: f32,
     pub caret_screen_x: f32,
     pub selection_screen: Option<(f32,f32)>,
+    pub selection_screens: Vec<(f32,f32)>,
+    pub caret_visible: bool,
+    pub caret_affinity: Option<usize>,
     pub content_left: f32,
     pub content_right: f32,
 }
@@ -629,6 +632,11 @@ impl AuraLuminaPlugin {
             scroll_x:v.scroll,measured_caret:v.caret,
             caret_screen_x:v.caret_screen(c),
             selection_screen:v.selection_screen(c),
+            selection_screens:v.selection_screens(c),
+            caret_visible:v.caret_valid,
+            caret_affinity:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change)
+                .and_then(|fi|fi.visual_affinity),
             content_left:c.x,content_right:c.x+c.width,
         })
     }
