@@ -326,9 +326,91 @@ pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Op
     }
 }
 
+/// DOM/source order, not paint z-order. Only actionable TextInput widgets
+/// with nonempty physical-visible clipped bounds participate; Grid/Box skipped
+/// children have no layout slots and cannot become keyboard focus targets.
+pub(crate) fn focus_order(node: &UiNode, plan: &LayoutNode) -> Vec<HitTarget> {
+    fn collect(node: &UiNode, plan: &LayoutNode, out: &mut Vec<HitTarget>) {
+        if plan.bounds.intersect(plan.clip).is_empty() { return; }
+        if node.kind == "TextInput"
+            && prop(node, "disabled") != Some("true")
+        {
+            if let Some(on_change) = callback(node, "on_change") {
+                out.push(HitTarget::TextInput {
+                    on_change,
+                    on_submit: callback(node, "on_submit"),
+                    value: prop(node, "value").or_else(|| prop(node, "text"))
+                        .unwrap_or("").to_owned(),
+                });
+            }
+        }
+        for (child, planned) in node.children.iter().zip(plan.children.iter()) {
+            if let Some(planned) = planned {
+                collect(child, planned, out);
+            }
+        }
+    }
+    let mut order = Vec::new();
+    collect(node, plan, &mut order);
+    order
+}
+
+/// Wrap on both ends; from no focus pick first (Tab) or last (Shift+Tab).
+/// Input callback ids uniquely identify focus targets in this scoped MVP.
+pub(crate) fn next_focus(
+    order: &[HitTarget], current: Option<u64>, reverse: bool
+) -> Option<HitTarget> {
+    if order.is_empty() { return None; }
+    let pos = current.and_then(|id| order.iter().position(|x|
+        matches!(x, HitTarget::TextInput { on_change, .. } if *on_change == id)));
+    let next = match pos {
+        Some(i) if reverse => (i + order.len() - 1) % order.len(),
+        Some(i) => (i + 1) % order.len(),
+        None if reverse => order.len() - 1,
+        None => 0,
+    };
+    Some(order[next].clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_sequence_in_source_order_and_reverse_wrap_from_blur() {
+        let tree=n("App",&[],vec![
+            n("TextInput",&[("x","10"),("y","10"),("on_change","cb:1"),("value","א")],vec![]),
+            n("Box",&[("x","10"),("y","100")],vec![
+                n("TextInput",&[("on_change","cb:2"),("value","b")],vec![])]),
+            n("TextInput",&[("x","5"),("y","180"),("on_change","cb:3"),("value","c")],vec![]),
+        ]);
+        let plan=arrange(&tree,Bounds::new(0.0,0.0,800.0,600.0));
+        let order=focus_order(&tree,&plan);
+        assert_eq!(order.len(),3);
+        assert!(matches!(next_focus(&order,None,false),Some(HitTarget::TextInput{on_change:1,..})));
+        assert!(matches!(next_focus(&order,Some(1),false),Some(HitTarget::TextInput{on_change:2,..})));
+        assert!(matches!(next_focus(&order,Some(3),false),Some(HitTarget::TextInput{on_change:1,..})));
+        assert!(matches!(next_focus(&order,None,true),Some(HitTarget::TextInput{on_change:3,..})));
+        assert!(matches!(next_focus(&order,Some(1),true),Some(HitTarget::TextInput{on_change:3,..})));
+    }
+
+    #[test]
+    fn focus_excludes_hidden_overflow_skipped_grid_disabled_and_offscreen() {
+        let tree=n("App",&[],vec![
+            n("TextInput",&[("x","10"),("y","10"),("on_change","cb:1")],vec![]),
+            n("TextInput",&[("x","10"),("y","70"),("on_change","cb:2"),("disabled","true")],vec![]),
+            n("TextInput",&[("x","999"),("y","800"),("on_change","cb:3")],vec![]),
+            n("Box",&[("x","200"),("y","100"),("width","50"),("height","50"),("overflow","hidden")],vec![
+                n("TextInput",&[("x","300"),("y","120"),("width","50"),("height","30"),("on_change","cb:4")],vec![])]),
+            n("Grid",&[("cols","1"),("rows","1"),("x","10"),("y","120")],vec![
+                n("TextInput",&[("col","5"),("on_change","cb:5")],vec![])]),
+        ]);
+        let plan=arrange(&tree,Bounds::new(0.0,0.0,640.0,400.0));
+        let order=focus_order(&tree,&plan);
+        assert_eq!(order.len(),1);
+        assert!(matches!(&order[0],HitTarget::TextInput{on_change:1,..}));
+        assert_eq!(next_focus(&[],None,false),None);
+    }
 
     fn n(kind: &str, props: &[(&str, &str)], children: Vec<UiNode>) -> UiNode {
         let mut node = UiNode::new(kind);
