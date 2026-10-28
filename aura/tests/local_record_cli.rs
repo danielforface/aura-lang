@@ -244,3 +244,24 @@ cell main() ->:
         "public nested assignment native build failed: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_aura_check_rejects_record_integer_narrowing_before_native_build() {
+    for (source,label) in [
+        ("type Tiny = record { n: u8 = 300 }\ncell main() ->:\n    yield 7\n", "unused u8 default"),
+        ("type Tiny = record { n: i8 = 200 }\ncell main() ->:\n    yield 7\n", "unused i8 default"),
+        ("type Tiny = record { n: u8 }\ncell main() ->:\n    val t: Tiny = Tiny { n: 256 }\n    yield 7\n", "explicit u8 initializer"),
+        ("type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = 300\n    yield t.n\n", "mutable u8 field assignment"),
+    ] {
+        let fixture=SourceFile::new(source);
+        let check=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr));
+        assert!(!check.status.success(),
+            "{label}: public checker must reject narrowing before codegen: {diagnostic}");
+        assert!(diagnostic.contains("out of range"),
+            "{label}: preserve exact width diagnostic: {diagnostic}");
+    }
+}
