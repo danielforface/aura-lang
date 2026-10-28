@@ -28,3 +28,9 @@
 
 ## Next safe action
 Review Raylib compile job logs; repair any actual compile regression only in `aura-plugin-lumina/`. Open a Draft PR targeting `plan/lumina-full-platform-qualification-v2`; keep the source-root fix isolated. A subsequent independently claimed and reviewed sub-slice can extract pure measure/arrange geometry and add deterministic clipping/overflow/interaction tests. Do not mark DPI, full Q13, desktop OS or mobile/web qualification complete.
+
+## LANE: LUMINA — LAYOUT-002 experiment addendum (2026-10-28)
+
+The isolated `qual/ui-layout-prepass-headless` branch provides a **real production callsite separation**: the Raylib frame first builds a renderer-independent `LayoutNode` tree via pure `measure_tree` and `arrange_measured`, and only then calls `begin_drawing`. Painting traverses that precomputed layout without invoking `measure_node`; Button and TextInput hit rects use the arranged rect. It preserves Box single-child semantics and Grid out-of-range child slots; nested stack intrinsic measurement now includes children instead of defaulting to zero. This changes MVP nested sizing intentionally and needs visual regression tests before stable UI claims.
+
+**Evidence:** source-contract test RED [Actions 40679761908](https://github.com/danielforface/aura-lang/actions/runs/40679761908), initial headless+Linux Raylib compile GREEN [40680092045](https://github.com/danielforface/aura-lang/actions/runs/40680092045); bottom-up measured cache/test at `f3c01140` is additional candidate pending CI. Headless tests include padding, Grid span/clamping, viewport resize, click geometry, invalid geometry, idempotence and nested sizes. **Not validated:** live window draw, clipping/overlap hit priority, real DPI/scaling, locale/font shaping/RTL, accessibility, screenreader, touch/IME, multiple windows, GPU memory resource ownership, OS/Web/Mobile E2E. Q13 is still unapproved proposed roadmap and no certification.
