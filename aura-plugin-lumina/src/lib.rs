@@ -15,6 +15,9 @@ mod text_revision;
 #[cfg(any(feature = "raylib", test))]
 mod text_viewport;
 
+#[cfg(any(feature = "raylib", test))]
+mod font_atlas;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
@@ -110,6 +113,7 @@ struct LuminaWindow {
     // Keep the window handle LAST; dropping it first caused a SIGSEGV at
     // shutdown in the actual Xvfb Raylib smoke, not in headless unit tests.
     textures: HashMap<String, Texture2D>,
+    fonts: HashMap<String,LoadedUnicodeFont>,
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
@@ -240,6 +244,87 @@ fn reconcile_input_sessions(
 /// Measure text with the *same* Raylib default-font width used by
 /// draw_text, before BeginDrawing. Only a few UAX29 grapheme prefixes per
 /// visible input, not an O(n²) full prefix map per frame.
+#[cfg(feature = "raylib")]
+struct LoadedUnicodeFont {
+    font: Font,
+    glyphs: String,
+}
+
+/// Build only fonts explicitly requested on visible/arranged Text/TextInput.
+/// Glyphs are dynamically enlarged before drawing; never draw missing
+/// codepoints through a partial custom atlas without checking coverage.
+/// Font GPU textures live before RaylibHandle in LuminaWindow drop order.
+#[cfg(feature = "raylib")]
+fn ensure_fonts_loaded(
+    rl:&mut RaylibHandle,thread:&RaylibThread,
+    fonts:&mut HashMap<String,LoadedUnicodeFont>,
+    tree:&UiNode,plan:&layout::LayoutNode,
+    focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
+) {
+    let mut requested:HashMap<String,(String,i32,Vec<String>)>=HashMap::new();
+    fn gather(node:&UiNode,plan:&layout::LayoutNode,
+        focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
+        result:&mut HashMap<String,(String,i32,Vec<String>)>) {
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="Text" || node.kind=="TextInput" {
+            if let Some(path)=prop_string(node,"font_path") {
+                let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text" {20}else{18}).max(10);
+                if let Some(key)=font_atlas::font_key(path,size) {
+                    let value=if node.kind=="Text" {
+                        prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
+                    } else {
+                        let cb=parse_callback_id(prop_string(node,"on_change"));
+                        focus.as_ref().filter(|fi|Some(fi.on_change)==cb)
+                            .or_else(||cb.and_then(|id|sessions.get(&id)))
+                            .map(|fi|fi.session.buffer.as_str())
+                            .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                            .unwrap_or("")
+                    };
+                    if !result.contains_key(&key) && result.len()>=font_atlas::MAX_FONTS {
+                        // Fail closed on cache capacity instead of unbounded GPU atlases.
+                    } else {
+                        let req=result.entry(key).or_insert_with(||(path.to_owned(),size,Vec::new()));
+                        req.2.push(value.to_owned());
+                        if node.kind=="TextInput" {
+                            req.2.push(prop_string(node,"placeholder").unwrap_or("").to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children) {
+            if let Some(planned)=slot {gather(child,planned,focus,sessions,result);}
+        }
+    }
+    gather(tree,plan,focus,sessions,&mut requested);
+    fonts.retain(|key,_|requested.contains_key(key));
+    for (key,(path,size,values)) in requested {
+        let existing=fonts.get(&key).map(|v|v.glyphs.as_str()).unwrap_or("");
+        let texts:Vec<&str>=values.iter().map(String::as_str).collect();
+        let Some(wanted)=font_atlas::glyph_request(existing,&texts) else {
+            // A massive distinct charset cannot be incompletely displayed.
+            fonts.remove(&key);continue;
+        };
+        if fonts.get(&key).is_some_and(|entry|entry.glyphs==wanted) {continue;}
+        // No O(n) upload if already covered; only grow/rebuild when needed.
+        if let Ok(font)=rl.load_font_ex(thread,&path,size,Some(wanted.as_str())) {
+            fonts.insert(key,LoadedUnicodeFont{font,glyphs:wanted});
+        } else {
+            fonts.remove(&key); // fall back to old default font honestly
+        }
+    }
+}
+
+#[cfg(feature = "raylib")]
+fn selected_unicode_font<'a>(
+    fonts:&'a HashMap<String,LoadedUnicodeFont>,
+    node:&UiNode,size:i32,text:&str,
+)->Option<&'a Font> {
+    let key=font_atlas::font_key(prop_string(node,"font_path")?,size)?;
+    let loaded=fonts.get(&key)?;
+    if font_atlas::covers(&loaded.glyphs,text){Some(&loaded.font)}else{None}
+}
+
 #[cfg(feature = "raylib")]
 fn measure_input_visuals(
     rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
@@ -503,6 +588,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
+                    fonts: HashMap::new(),
                 });
             }
 
