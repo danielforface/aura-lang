@@ -12,6 +12,9 @@ mod text_input;
 #[cfg(any(feature = "raylib", test))]
 mod text_revision;
 
+#[cfg(any(feature = "raylib", test))]
+mod text_viewport;
+
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
 
@@ -126,6 +129,7 @@ struct FocusedTextInput {
     on_submit: Option<u64>,
     revision: text_revision::RevisionTracker,
     session: text_input::EditSession,
+    scroll_x: f32,
 }
 
 #[cfg(feature = "raylib")]
@@ -141,6 +145,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             on_change, on_submit,
             revision: text_revision::RevisionTracker::new(&source_value, revision),
             session: text_input::EditSession::new(source_value.clone()),
+            scroll_x: 0.0,
         });
         if entry.revision.observe(&source_value,revision)
             == text_revision::Decision::Rebase
@@ -229,6 +234,65 @@ fn reconcile_input_sessions(
             refresh(entry,prop,*submit,*rev);
         } else {win.focused_input=None;}
     }
+}
+
+/// Measure text with the *same* Raylib default-font width used by
+/// draw_text, before BeginDrawing. Only a few UAX29 grapheme prefixes per
+/// visible input, not an O(n²) full prefix map per frame.
+#[cfg(feature = "raylib")]
+fn measure_input_visuals(
+    rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
+    focus_order: &[layout::HitTarget],
+    focused: &mut Option<FocusedTextInput>,
+    sessions: &mut HashMap<u64,FocusedTextInput>,
+) -> HashMap<u64,text_viewport::Visual> {
+    let allowed: std::collections::HashSet<u64> = focus_order.iter().filter_map(|x|match x {
+        layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+        _=>None,
+    }).collect();
+    fn collect(
+        rl:&RaylibHandle,node:&UiNode,plan:&layout::LayoutNode,
+        allowed:&std::collections::HashSet<u64>,
+        focused:&mut Option<FocusedTextInput>,
+        sessions:&mut HashMap<u64,FocusedTextInput>,
+        result:&mut HashMap<u64,text_viewport::Visual>,
+    ) {
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="TextInput" {
+            if let Some(cb)=parse_callback_id(prop_string(node,"on_change")).filter(|id|allowed.contains(id)) {
+                let active=focused.as_ref().is_some_and(|fi|fi.on_change==cb);
+                let entry=if active {focused.as_mut()}else{sessions.get_mut(&cb)};
+                let value=entry.as_ref().map(|fi|fi.session.buffer.as_str())
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                    .unwrap_or("");
+                let size=prop_i32(node,"size").unwrap_or(18).max(10);
+                let width=rl.measure_text(value,size).max(0) as f32;
+                let caret=if active {
+                    entry.as_ref().map(|fi|rl.measure_text(
+                        text_viewport::grapheme_prefix(value,fi.session.caret),size).max(0) as f32)
+                }else{None}.unwrap_or(0.0);
+                let selection=if active {
+                    entry.as_ref().and_then(|fi|fi.session.selection())
+                        .map(|(a,b)|(
+                            rl.measure_text(text_viewport::grapheme_prefix(value,a),size).max(0) as f32,
+                            rl.measure_text(text_viewport::grapheme_prefix(value,b),size).max(0) as f32))
+                }else{None};
+                let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
+                let content=text_viewport::content_bounds(plan.bounds);
+                let v=text_viewport::plan(content.width,width,caret,selection,previous,active);
+                if let Some(entry)=entry {entry.scroll_x=v.scroll;}
+                result.insert(cb,v);
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children){
+            if let Some(child_plan)=slot {
+                collect(rl,child,child_plan,allowed,focused,sessions,result);
+            }
+        }
+    }
+    let mut result=HashMap::new();
+    collect(rl,tree,plan,&allowed,focused,sessions,&mut result);
+    result
 }
 
 #[cfg(feature = "raylib")]
@@ -558,6 +622,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            let text_views=measure_input_visuals(
+                &win.rl,tree,&planned_layout,&focus_order,
+                &mut win.focused_input,&mut win.input_sessions);
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -568,6 +635,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
+                    &text_views,
                 );
             }
             fb.clicked_callback_id = click_cb;
