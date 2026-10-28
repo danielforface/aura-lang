@@ -23,7 +23,7 @@ cell branch_from_call(flag: bool) ->:
     else:
         p.x = 23
     yield p.x
-cell maybe_update_param(flag: bool, p: Point) ->:
+cell maybe_update_param(flag: bool, p: mut Point) ->:
     if flag:
         p.x = 19
     yield p.x
