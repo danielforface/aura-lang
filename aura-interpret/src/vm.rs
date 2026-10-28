@@ -1810,7 +1810,7 @@ impl Avm {
                 let value = self.eval_expr(&a.expr)?;
                 let path = std::iter::once(&a.field)
                     .chain(a.nested.iter()).collect::<Vec<_>>();
-                let updated = Self::replace_record_field_path(before, &path, value)?;
+                let updated = self.replace_record_field_path(before, &path, value)?;
                 self.env.insert(a.target.node.clone(), updated);
                 Ok(AvmValue::Unit)
             }
@@ -2115,7 +2115,52 @@ impl Avm {
         outcome
     }
 
+    // This raw-source AVM runs without the static Checker. It must still
+    // reject ill-typed functional assignments, instead of silently placing
+    // a Bool inside a u32 field or bitcasting a structurally similar Record.
+    fn check_record_field_value(
+        &self,
+        ty: &aura_ast::TypeRef,
+        value: &AvmValue,
+    ) -> miette::Result<()> {
+        let expected = ty.name.node.as_str();
+        if !ty.args.is_empty() {
+            return Err(miette::miette!(
+                "AVM: unqualified generic Record field type '{}'", expected));
+        }
+        let matched = match expected {
+            "bool" => matches!(value, AvmValue::Bool(_)),
+            "char" => matches!(value, AvmValue::Char(_)),
+            "u8" => matches!(value, AvmValue::Int(n) if (0..=u8::MAX as i64).contains(n)),
+            "u16" => matches!(value, AvmValue::Int(n) if (0..=u16::MAX as i64).contains(n)),
+            "u32" | "Int" => matches!(value, AvmValue::Int(n) if (0..=u32::MAX as i64).contains(n)),
+            "u64" => matches!(value, AvmValue::Int(n) if *n >= 0),
+            "i8" => matches!(value, AvmValue::Int(n) if (i8::MIN as i64..=i8::MAX as i64).contains(n)),
+            "i16" => matches!(value, AvmValue::Int(n) if (i16::MIN as i64..=i16::MAX as i64).contains(n)),
+            "i32" => matches!(value, AvmValue::Int(n) if (i32::MIN as i64..=i32::MAX as i64).contains(n)),
+            "i64" => matches!(value, AvmValue::Int(_)),
+            "f32" | "f64" => matches!(value, AvmValue::Float(_)),
+            other => {
+                let concrete = self.source_record_schemas.get(other)
+                    .is_some_and(|d| d.params.is_empty());
+                if !concrete {
+                    return Err(miette::miette!(
+                        "AVM: unqualified non-scalar Record field type '{}'",other));
+                }
+                matches!(value, AvmValue::Record { name, .. } if name == other)
+            }
+        };
+        if !matched {
+            return Err(miette::miette!(
+                "AVM: Record field type mismatch (nominal '{}' expected)",
+                expected
+            ));
+        }
+        Ok(())
+    }
+
     fn replace_record_field_path(
+        &self,
         before: AvmValue,
         path: &[&aura_ast::Ident],
         value: AvmValue,
@@ -2124,16 +2169,25 @@ impl Avm {
             return Err(miette::miette!(
                 "AVM: nested field assignment path requires a concrete Record"));
         };
+        let schema = self.source_record_schemas.get(&name)
+            .filter(|def| def.params.is_empty())
+            .ok_or_else(|| miette::miette!(
+                "AVM: unqualified nominal Record field assignment '{}'", name))?;
         let Some((field, tail)) = path.split_first() else {
             return Err(miette::miette!("AVM: empty Record field assignment path"));
         };
+        let field_schema = schema.fields.iter().find(|f| f.name.node == field.node)
+            .ok_or_else(|| miette::miette!(
+                "AVM: unknown Record field '{}' in '{}'", field.node,name))?;
         let previous = fields.get(&field.node).cloned()
             .ok_or_else(|| miette::miette!(
-                "AVM: unknown Record field '{}'", field.node))?;
+                "AVM: uninitialized Record field '{}' in '{}'",field.node,name))?;
         let next = if tail.is_empty() {
+            self.check_record_field_value(&field_schema.ty,&value)?;
             value
         } else {
-            Self::replace_record_field_path(previous, tail, value)?
+            self.check_record_field_value(&field_schema.ty,&previous)?;
+            self.replace_record_field_path(previous, tail, value)?
         };
         fields.insert(field.node.clone(), next);
         Ok(AvmValue::Record { name, fields })
