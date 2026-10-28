@@ -5,6 +5,8 @@
 use std::collections::BTreeSet;
 pub(crate) const MAX_FONTS:usize=8;
 pub(crate) const MAX_CODEPOINTS:usize=1024;
+pub(crate) const MAX_TEXT_SCAN_BYTES:usize=256*1024;
+pub(crate) const MAX_FONT_FILE_BYTES:u64=16*1024*1024;
 pub(crate) const BASE_ASCII:&str=" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 pub(crate) fn font_key(path:&str,size:i32)->Option<String> {
     if path.is_empty() || path.len()>512 || path.contains('\0') ||
@@ -17,6 +19,7 @@ pub(crate) fn glyph_request(existing:&str,texts:&[&str])->Option<String> {
     let mut set:BTreeSet<char>=existing.chars().chain(BASE_ASCII.chars()).collect();
     if set.len()>MAX_CODEPOINTS {return None;}
     for txt in texts {
+        if txt.len()>MAX_TEXT_SCAN_BYTES {return None;}
         for c in txt.chars() {
             if c.is_control() {continue;}
             set.insert(c);
@@ -59,6 +62,12 @@ mod tests {
  #[test]fn huge_distinct_unicode_payload_refuses_incomplete_font_atlas(){
     let payload:String=(0..1030).filter_map(|i|char::from_u32(0x600+i)).collect();
     assert!(glyph_request("",&[&payload]).is_none());
+ }
+ #[test]fn huge_repeated_input_is_rejected_even_when_distinct_chars_are_few(){
+    assert!(glyph_request("",&[&"א".repeat(MAX_TEXT_SCAN_BYTES+1)]).is_none());
+ }
+ #[test]fn file_limit_is_16_mib(){
+    assert!(MAX_FONT_FILE_BYTES>=1024*1024 && MAX_FONT_FILE_BYTES<=16*1024*1024);
  }
  #[test]fn incomplete_atlas_is_never_reported_as_covering_unknown_character(){
     let a=glyph_request("",&["שלום"]).unwrap();
