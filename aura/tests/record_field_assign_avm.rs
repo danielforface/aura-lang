@@ -459,3 +459,49 @@ cell main() ->:
             "expected {diagnostic:?}, got {e}");
     }
 }
+
+
+#[test]
+fn avm_direct_record_constructor_rejects_missing_unknown_duplicate_and_wrong_field_types() {
+    let prelude="type Point = record { x: u32, y: u32 }\n";
+    for (body,needle) in [
+        ("Point { x: 7 }","missing required"),
+        ("Point { x: 7, y: 13, z: 19 }","unknown field"),
+        ("Point { x: 7, x: 19, y: 13 }","duplicate"),
+        ("Point { x: true, y: 13 }","type mismatch"),
+        ("Bogus { x: 7 }","unknown Record"),
+    ] {
+        let source=format!(
+            "{prelude}cell main() ->:\n    val p = {body}\n    yield p\n"
+        );
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let err=vm.exec_entry_cell(&source,"main")
+            .expect_err("no-Z3 AVM must refuse malformed Record construction");
+        assert!(err.to_string().contains(needle),
+            "malformed constructor {body}: expected {needle:?}, got {err}");
+    }
+}
+
+#[test]
+fn avm_nested_record_constructor_refuses_structural_nominal_bitcasts_and_raw_overflow() {
+    for (source,needle) in [
+        (
+            "type Point = record { x: u32, y: u32 }\n             type Twin = record { x: u32, y: u32 }\n             type Outer = record { p: Point, tag: u32 }\n             cell main() ->:\n    val o = Outer { p: Twin { x: 7, y: 13 }, tag: 99 }\n    yield o.p.x\n",
+            "type mismatch",
+        ),
+        (
+            "type Tiny = record { n: u8 }\n             cell main() ->:\n    val t = Tiny { n: 300 }\n    yield t.n\n",
+            "type mismatch",
+        ),
+    ] {
+        let mut vm=Avm::new(AvmConfig {
+            enable_z3_gate:false,..Default::default()
+        });
+        let err=vm.exec_entry_cell(source,"main")
+            .expect_err("raw AVM Record construction must validate nominal child and integer range");
+        assert!(err.to_string().contains(needle),
+            "expected {needle:?} from Record constructor: {err}");
+    }
+}
