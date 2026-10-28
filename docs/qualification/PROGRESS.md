@@ -1,5 +1,7 @@
 # Aura Qualification — Live Progress
 
+> **LATEST CONTINUITY (2026-10-28):** The opening metadata below is historical. Current implementation is Q03-001 on `qual/Q03-001-native-record-scalar`, Draft [PR #57](https://github.com/danielforface/aura-lang/pull/57), code SHA `8656f2dd482f7940b6931142136cf5d04e7af051` at planning branch point. Proposed [MASTER_ROADMAP_V2.md](MASTER_ROADMAP_V2.md) extends the future program with Q12–Q18; do not redirect existing Q03 implementation or claim the proposal approved. Read newest appended progress/handoff, then refresh live GitHub CI.
+
 **Updated:** 2026-10-25  
 **Baseline source:** `main@e8f1c35a4a56adbde983dce38bba59a8c4eee105`  
 **Working branch:** `qual/Q01-007-typed-trust-origins` (stacked on #25 → #23 → #21 → #19 → #17 → #15 → #13 → #11 → #9; all Draft/unmerged)  
@@ -28,6 +30,13 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Q09 | Packages and reproducible releases | NOT_STARTED | PENDING |
 | Q10 | CLI tests, IDE and UX | NOT_STARTED | PENDING |
 | Q11 | External qualification and stable decision | NOT_STARTED | PENDING |
+| Q12 | Typed UI framework and application semantics | NOT_STARTED | V2 proposal only |
+| Q13 | Adaptive design, text, RTL and accessibility | NOT_STARTED | V2 proposal only |
+| Q14 | Production desktop Windows/macOS/Linux | NOT_STARTED | V2 proposal only |
+| Q15 | First-class Web/browser apps | NOT_STARTED | V2 proposal only |
+| Q16 | Android and iOS real apps | NOT_STARTED | V2 proposal only |
+| Q17 | Developer UX and UI ecosystem | NOT_STARTED | V2 proposal only |
+| Q18 | Cross-platform assurance and qualification | NOT_STARTED | V2 proposal only |
 
 ## Active Q00 task tracker
 
@@ -759,3 +768,10 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 
 - Previous `3e2f603d` all four jobs passed on [Push 40670245746](https://github.com/danielforface/aura-lang/actions/runs/40670245746) and [PR 40670256742](https://github.com/danielforface/aura-lang/actions/runs/40670256742). Source test-only `69a723ba` `Outer.p:Point=Point{}` plus overridden child/tag with exact Oracle+linked Clang O0/O2 [RED Push 40672387032](https://github.com/danielforface/aura-lang/actions/runs/40672387032), rejected by Checker as `unqualified nonliteral Record default 'Outer.p'`. Core `0c116e60` recursive nominal source default qualifier; compile-only invalid Rust pattern fixed `14ce9251` then [Push 40672653926](https://github.com/danielforface/aura-lang/actions/runs/40672653926) Native success.
 - AVM no-Z3 same-source differential test `ccca1278` [RED Push 40672779024](https://github.com/danielforface/aura-lang/actions/runs/40672779024) `unqualified nonliteral Outer.p`; `3dbe7c3f` source schema registry and bounded checked nominal literal default evaluation [Push 40672983895](https://github.com/danielforface/aura-lang/actions/runs/40672983895) three fast independent jobs success. `eee16c11` adds native 4 fail-closed cases (wrong nominal, dynamic, cyclic, missing field), AVM 2 fail-closed cases, actual public no-Z3 Aura check/C build nested default. [Push 40673102166](https://github.com/danielforface/aura-lang/actions/runs/40673102166) + [PR 40673110979](https://github.com/danielforface/aura-lang/actions/runs/40673110979) **three fast jobs passed on both**, mandatory fourth LSP/Z3 compiling at observation. No full newest-head GREEN claim. Qualified only concrete acyclic nongeneric nominal Record literal default trees with static numeric/bool leaves, not arbitrary expressions, dependent defaults, generics, extern/LLVM parity/SMT. Q03 OPEN, PR #57 Draft/unmerged, Issue #51 OPEN, Master/release ledger frozen.
+
+
+## 2026-10-28 — full-platform Lumina roadmap supersession proposal (EV-170)
+
+- Maintainer explicitly requests eventual complete modern easy-to-author Aura applications across Desktop (Windows/macOS/Linux), Web and Android/iOS, competitive in developer UX/quality without removing any systems-language/verification/safety capabilities. New proposed `MASTER_ROADMAP_V2.md` preserves all 88 original Q00–Q11 requirements and original R0–R8 trains and adds 102 separately qualified Q12–Q18 requirements and future R9–R15. Immutable Master V1 untouched. Supersession is **PROPOSED / IN REVIEW**, requires maintainer-reviewed PR, is **NOT APPROVED/RELEASED**. All new gates NOT_STARTED; no UI implementations/tests claimed.
+- **Existing work continues unchanged:** active Q03-001 `qual/Q03-001-native-record-scalar`, [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57), last verified source SHA `8656f2dd482f7940b6931142136cf5d04e7af051`; nested Record default support is scoped. Last [Push 40673102166](https://github.com/danielforface/aura-lang/actions/runs/40673102166) / [PR 40673110979](https://github.com/danielforface/aura-lang/actions/runs/40673110979) three fast gates SUCCESS, fourth full LSP/Z3 pending at last observation; refresh before claims. All stacked PRs Draft/unmerged, Issue #51 OPEN, no release. No compiler/runtime tests run for planning proposal.
+- Separate docs branch `plan/lumina-full-platform-qualification-v2` rooted at Q03 head; after plan review, return to latest Q03 handoff safe action rather than starting Q12 by default. V1 and RELEASE_LEDGER unchanged. See EV-170 and appended handoff.
