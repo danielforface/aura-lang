@@ -218,7 +218,7 @@ impl AuraLuminaPlugin {
             w.rl.get_screen_width(), w.rl.get_screen_height(),
             w.rl.get_render_width(), w.rl.get_render_height());
         let (px,py) = m.logical_to_framebuffer(logical_x,logical_y)?;
-        let image = w.rl.load_image_from_screen(&w.thread);
+        let mut image = w.rl.load_image_from_screen(&w.thread);
         if px >= image.width() || py >= image.height() { return None; }
         let c = image.get_color(px,py);
         Some(DiagnosticPixel { r:c.r,g:c.g,b:c.b,a:c.a })
