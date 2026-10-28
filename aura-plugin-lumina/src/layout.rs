@@ -84,12 +84,30 @@ fn grid_dims(node: &UiNode) -> (usize, usize) {
     (cols, rows)
 }
 
+/// One bottom-up measurement record per source node; paint never measures.
+#[derive(Clone, Debug)]
+struct MeasuredNode {
+    size: (f32, f32),
+    children: Vec<MeasuredNode>,
+}
+
+fn measure_tree(node: &UiNode) -> MeasuredNode {
+    let children: Vec<_> = node.children.iter().map(measure_tree).collect();
+    let size = intrinsic(node, &children);
+    MeasuredNode { size, children }
+}
+
+#[cfg(test)]
+fn measure(node: &UiNode) -> (f32, f32) {
+    measure_tree(node).size
+}
+
 /// Intrinsic estimate only. Exact text/font shaping is not claimed.
-pub(crate) fn measure(node: &UiNode) -> (f32, f32) {
+fn intrinsic(node: &UiNode, children: &[MeasuredNode]) -> (f32, f32) {
     match node.kind.as_str() {
         "Box" => {
             let (t, r, b, l) = padding(node);
-            let (cw, ch) = node.children.first().map(measure).unwrap_or((0.0, 0.0));
+            let (cw, ch) = children.first().map(|m| m.size).unwrap_or((0.0, 0.0));
             (positive(node, "width", cw + l + r), positive(node, "height", ch + t + b))
         }
         "Grid" => {
@@ -98,7 +116,7 @@ pub(crate) fn measure(node: &UiNode) -> (f32, f32) {
             let gap = spacing(node, "gap");
             let gx = int(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
             let gy = int(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
-            let (cw, ch) = node.children.iter().map(measure).fold((0.0_f32, 0.0_f32),
+            let (cw, ch) = children.iter().map(|m| m.size).fold((0.0_f32, 0.0_f32),
                 |(w, h), (x, y)| (w.max(x), h.max(y)));
             (positive(node, "width", cols as f32 * cw + (cols - 1) as f32 * gx + l + r),
              positive(node, "height", rows as f32 * ch + (rows - 1) as f32 * gy + t + b))
@@ -106,7 +124,7 @@ pub(crate) fn measure(node: &UiNode) -> (f32, f32) {
         "VStack" => {
             let p = spacing(node, "padding");
             let gap = int(node, "spacing").unwrap_or(0).max(0) as f32;
-            let sizes: Vec<_> = node.children.iter().map(measure).collect();
+            let sizes: Vec<_> = children.iter().map(|m| m.size).collect();
             let w = sizes.iter().fold(0.0_f32, |a, b| a.max(b.0));
             let h: f32 = sizes.iter().map(|s| s.1).sum();
             (positive(node, "width", w + p * 2.0),
@@ -115,7 +133,7 @@ pub(crate) fn measure(node: &UiNode) -> (f32, f32) {
         "HStack" => {
             let p = spacing(node, "padding");
             let gap = int(node, "spacing").unwrap_or(0).max(0) as f32;
-            let sizes: Vec<_> = node.children.iter().map(measure).collect();
+            let sizes: Vec<_> = children.iter().map(|m| m.size).collect();
             let w: f32 = sizes.iter().map(|s| s.0).sum();
             let h = sizes.iter().fold(0.0_f32, |a, b| a.max(b.1));
             (positive(node, "width", w + p * 2.0 + gap * sizes.len().saturating_sub(1) as f32),
@@ -147,6 +165,10 @@ fn content_rect(b: Bounds, pad: (f32, f32, f32, f32)) -> Bounds {
 }
 
 pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
+    let measurements = measure_tree(node);
+    arrange_measured(node, &measurements, incoming)
+}
+fn arrange_measured(node: &UiNode, measured: &MeasuredNode, incoming: Bounds) -> LayoutNode {
     let bounds = with_abs(node, incoming);
     let mut children: Vec<Option<LayoutNode>> = (0..node.children.len()).map(|_| None).collect();
     match node.kind.as_str() {
@@ -156,7 +178,7 @@ pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
                 positive(node, "height", bounds.height).max(1.0));
             if let Some(child) = node.children.first() {
                 let content = content_rect(rect, padding(node));
-                children[0] = Some(arrange(child, content));
+                children[0] = Some(arrange_measured(child, &measured.children[0], content));
             }
             LayoutNode { bounds: rect, children }
         }
@@ -181,7 +203,7 @@ pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
                 let y = content.y + row as f32 * (ch + gy);
                 let w = (cw * cs as f32 + gx * (cs - 1) as f32).min((content.x + content.width - x).max(0.0));
                 let h = (ch * rs as f32 + gy * (rs - 1) as f32).min((content.y + content.height - y).max(0.0));
-                children[i] = Some(arrange(child, Bounds::new(x, y, w, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, w, h)));
             }
             LayoutNode { bounds: rect, children }
         }
@@ -192,10 +214,10 @@ pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
             let centered = prop(node, "alignment") == Some("center");
             let mut y = content.y;
             for (i, child) in node.children.iter().enumerate() {
-                let (w, h) = measure(child);
+                let (w, h) = measured.children[i].size;
                 let x = if centered && w > 0.0 { content.x + (content.width - w)/2.0 } else { content.x };
                 let width = if w > 0.0 { w } else { content.width };
-                children[i] = Some(arrange(child, Bounds::new(x, y, width, h)));
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, y, width, h)));
                 y += h + gap;
             }
             LayoutNode { bounds, children }
@@ -206,15 +228,15 @@ pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
             let content = content_rect(bounds, (p,p,p,p));
             let mut x = content.x;
             for (i, child) in node.children.iter().enumerate() {
-                let (w, h) = measure(child);
-                children[i] = Some(arrange(child, Bounds::new(x, content.y, w, h)));
+                let (w, h) = measured.children[i].size;
+                children[i] = Some(arrange_measured(child, &measured.children[i], Bounds::new(x, content.y, w, h)));
                 x += w + gap;
             }
             LayoutNode { bounds, children }
         }
         "App" => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange(child, bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
             }
             LayoutNode { bounds, children }
         }
@@ -230,7 +252,7 @@ pub(crate) fn arrange(node: &UiNode, incoming: Bounds) -> LayoutNode {
         "Text" => LayoutNode { bounds, children },
         _ => {
             for (i, child) in node.children.iter().enumerate() {
-                children[i] = Some(arrange(child, bounds));
+                children[i] = Some(arrange_measured(child, &measured.children[i], bounds));
             }
             LayoutNode { bounds, children }
         }
@@ -344,6 +366,22 @@ mod tests {
         assert_eq!(plan.children.len(),1);
         assert!(plan.child(0).bounds.height > 0.0);
         assert_eq!(plan.child(0).bounds.width,100.0);
+    }
+
+    #[test]
+    fn each_node_has_exactly_one_bottom_up_measurement_record() {
+        let mut node = n("Button", &[("width","30")], vec![]);
+        for _ in 0..64 {
+            node = n("VStack", &[("padding","1")], vec![node]);
+        }
+        fn count(m: &MeasuredNode) -> usize {
+            1 + m.children.iter().map(count).sum::<usize>()
+        }
+        let measurements = measure_tree(&node);
+        assert_eq!(count(&measurements),65);
+        assert_eq!(measurements.size.0,158.0);
+        let planned = arrange(&node, b(0.0,0.0,400.0,800.0));
+        assert_eq!(planned.children.len(),1);
     }
 
     #[test]
