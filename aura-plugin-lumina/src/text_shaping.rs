@@ -352,4 +352,41 @@ mod tests {
         assert!(shape_text("abc",b"",24.0,ParagraphDirection::Auto).is_none());
         assert!(shape_text("abc",b"bad",f32::NAN,ParagraphDirection::Auto).is_none());
     }
+
+    #[test] fn real_serif_to_sans_hebrew_and_arabic_fallback_owns_actual_glyph_ids(){
+        let p="/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf";
+        let f="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(p).is_file()||!std::path::Path::new(f).is_file(){return;}
+        let serif=std::fs::read(p).unwrap();
+        let sans=std::fs::read(f).unwrap();
+        for (text,needle) in [("Hello שלום","שלום"),("ABC سلام","سلام")] {
+            assert!(shape_text(text,&serif,28.0,ParagraphDirection::Auto).is_none(),
+                "primary alone must fail missing cmap without .notdef substitution");
+            let shaped=shape_text_with_fonts(text,&[&serif,&sans],28.0,
+                ParagraphDirection::Auto).expect("whole grapheme secondary font");
+            let fallback_start=text.find(needle).unwrap();
+            let g:Vec<_>=shaped.visual_runs.iter().flat_map(|r|r.glyphs.iter()).collect();
+            assert!(g.iter().any(|g|g.font_index==0&&g.cluster_byte<fallback_start));
+            assert!(g.iter().any(|g|g.font_index==1&&g.cluster_byte>=fallback_start));
+            assert!(g.iter().all(|g|g.glyph_id!=0&&text.is_char_boundary(g.cluster_byte)));
+            assert!(shaped.width>10.0);
+        }
+    }
+    #[test] fn fallback_is_bounded_complete_cluster_and_bidi_non_destructive(){
+        let p="/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf";
+        let f="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(p).is_file()||!std::path::Path::new(f).is_file(){return;}
+        let a=std::fs::read(p).unwrap();let b=std::fs::read(f).unwrap();
+        assert!(shape_text_with_fonts("שלום",&[&a,&b],26.0,ParagraphDirection::Auto).is_some());
+        assert!(shape_text_with_fonts("שלום",&[&a],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,&b,&b],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,b"no font"],26.0,ParagraphDirection::Auto).is_none());
+        assert!(shape_text_with_fonts("שלום",&[&a,&b],f32::NAN,ParagraphDirection::Auto).is_none());
+        // The same source UTF-8 grapheme boundaries must survive fallback.
+        let t="Aשָׁלום";
+        let res=shape_text_with_fonts(t,&[&a,&b],26.0,ParagraphDirection::Auto).unwrap();
+        assert_eq!(res.bidi.grapheme_boundaries.last(),Some(&t.len()));
+        assert!(res.visual_runs.iter().flat_map(|r|r.glyphs.iter()).all(|g|
+            g.cluster_byte<t.len()&&t.is_char_boundary(g.cluster_byte)));
+    }
 }
