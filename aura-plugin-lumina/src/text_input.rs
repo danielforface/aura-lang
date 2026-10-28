@@ -251,7 +251,7 @@ mod tests {
     fn selection_delete_is_one_undo_step_and_control_chars_are_noop() {
         let mut s=EditSession::new("abc".into());
         s.apply(SessionAction::SelectAll);
-        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("\\n".into()))));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("\n".into()))));
         assert_eq!(s.buffer,"abc");
         assert!(s.apply(SessionAction::Edit(EditCommand::Delete)));
         assert_eq!(s.buffer,"");
