@@ -1963,6 +1963,27 @@ impl Avm {
                 _ => {}
             }
         }
+        // Like Core's declaration pass, raw AVM source qualification must not
+        // depend on constructing an instance. Reject unused malformed schemas
+        // before executing any top-level statement or entry cell.
+        for stmt in &program.stmts {
+            let Stmt::RecordDef(record) = stmt else { continue };
+            let mut seen=HashSet::new();
+            for field in &record.fields {
+                if !seen.insert(field.name.node.as_str()) {
+                    return Err(miette::miette!(
+                        "AVM: duplicate Record declaration field '{}.{}'",
+                        record.name.node,field.name.node));
+                }
+                // Instantiated generic type defaults have not been qualified
+                // by this concrete nominal Record execution slice.
+                if !record.params.is_empty() { continue; }
+                let Some(default)=&field.default else { continue };
+                self.qualify_source_record_default(
+                    &field.ty.name.node,default,
+                    &mut vec![record.name.node.clone()])?;
+            }
+        }
         Ok(())
     }
 
