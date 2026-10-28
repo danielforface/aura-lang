@@ -159,3 +159,80 @@ fn structurally_identical_twin_cannot_be_embedded_in_point_typed_nested_record()
         && err.message.contains("Twin") && err.message.contains("Point"),
         "specific nested nominal diagnostic required: {err}");
 }
+
+
+const NESTED_DEFAULT_SOURCE: &str = r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell make_default() ->:
+    yield Outer {}
+cell override_child() ->:
+    yield Outer { p: Point { x: 19, y: 23 } }
+cell override_tag() ->:
+    yield Outer { tag: 44 }
+cell project_default() ->:
+    val o: Outer = Outer {}
+    yield o.p.x
+"#;
+
+#[test]
+fn nested_nominal_record_default_and_overrides_are_real_c_abi_values() {
+    let ast=aura_parse::parse_source(NESTED_DEFAULT_SOURCE)
+        .expect("nested source default must parse");
+    Checker::new().check_program(&ast)
+        .expect("nested nominal literal default must be qualified");
+    let ir=lower_program(&ast).expect("nested defaults lower to full SSA");
+    validate_module(&ir).expect("nested default SSA valid");
+    for (entry,expected) in [
+        ("make_default",outer(7,13)),
+        ("override_child",outer(19,23)),
+        ("override_tag",OracleValue::Record {
+            name:"Outer".into(),
+            fields:HashMap::from([
+                ("p".into(),point(7,13)),
+                ("tag".into(),OracleValue::U32(44)),
+            ]),
+        }),
+        ("project_default",OracleValue::U32(7)),
+    ] {
+        let result=run_oracle_entry(&ir,entry,&[],OracleConfig::default())
+            .expect("Oracle nested source defaults");
+        assert!(result.ok && result.stderr.is_empty(),"{entry}");
+        assert_eq!(result.return_value,Some(expected),"{entry}");
+    }
+    let c=emit_module(&ir,None).expect("nested nominal default must emit C");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"),c.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"),&c.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+        "typedef struct { aura_record_506f696e74 aura_f_70; uint32_t aura_f_746167; } aura_record_4f75746572;\n",
+        "aura_record_4f75746572 make_default(void);\n",
+        "aura_record_4f75746572 override_child(void);\n",
+        "aura_record_4f75746572 override_tag(void);\n",
+        "uint32_t project_default(void);\n",
+        "int main(void) {\n",
+        "  aura_record_4f75746572 a=make_default(),b=override_child(),c=override_tag();\n",
+        "  return (a.aura_f_70.aura_f_78==7u&&a.aura_f_70.aura_f_79==13u",
+        "&&a.aura_f_746167==99u",
+        "&&b.aura_f_70.aura_f_78==19u&&b.aura_f_70.aura_f_79==23u",
+        "&&b.aura_f_746167==99u",
+        "&&c.aura_f_70.aura_f_78==7u&&c.aura_f_70.aura_f_79==13u",
+        "&&c.aura_f_746167==44u&&project_default()==7u)?0:1;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("nested_defaults_{}",&opt[1..]));
+        let compiled=Command::new("clang")
+            .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("clang available");
+        assert!(compiled.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&compiled.stderr),c.module_c);
+        let ran=Command::new(&exe).output().unwrap();
+        assert!(ran.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&ran.stderr),c.module_c);
+    }
+}
