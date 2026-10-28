@@ -226,6 +226,10 @@ fn fmt_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             out.push_str(&s.target.node);
             out.push('.');
             out.push_str(&s.field.node);
+            for component in &s.nested {
+                out.push('.');
+                out.push_str(&component.node);
+            }
             out.push_str(" = ");
             fmt_expr(out, &s.expr, Prec::Lowest);
             out.push('\n');
