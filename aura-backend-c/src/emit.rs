@@ -989,7 +989,7 @@ fn emit_function(
                         ) });
                     }
                     emit_call(
-                        out, inst.dest, callee, args, &mut values, ret_map,
+                        out, inst.dest, callee, args, &mut values, &records, ret_map,
                         &string_literals, &named_values,
                     );
                 }
@@ -1224,6 +1224,7 @@ fn emit_call(
     callee: &str,
     args: &[ValueId],
     values: &mut HashMap<ValueId, (CType, String)>,
+    records: &HashMap<ValueId, (String, String)>,
     ret_map: &HashMap<String, CType>,
     string_literals: &HashMap<ValueId, String>,
     named_values: &HashMap<String, (CType, String)>,
@@ -1257,7 +1258,12 @@ fn emit_call(
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&values.get(a).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("v{}", a.0)));
+            // Record formal parameters use their C identifier (e.g. p),
+            // not a fabricated SSA temporary. Preserve the nominal C ABI.
+            let emitted = values.get(a).map(|(_, n)| n.clone())
+                .or_else(|| records.get(a).map(|(_, n)| n.clone()))
+                .unwrap_or_else(|| format!("v{}", a.0));
+            out.push_str(&emitted);
         }
         out.push_str(");\n");
 
@@ -1272,7 +1278,12 @@ fn emit_call(
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&values.get(a).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("v{}", a.0)));
+            // Record formal parameters use their C identifier (e.g. p),
+            // not a fabricated SSA temporary. Preserve the nominal C ABI.
+            let emitted = values.get(a).map(|(_, n)| n.clone())
+                .or_else(|| records.get(a).map(|(_, n)| n.clone()))
+                .unwrap_or_else(|| format!("v{}", a.0));
+            out.push_str(&emitted);
         }
         out.push_str(");\n");
     }
