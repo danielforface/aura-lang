@@ -73,3 +73,34 @@ fn real_x11_draft_across_focus_switch_ctrl_selection_undo_redo_and_authority_reb
  drop(p);
  eprintln!("LUMINA_SESSION_XTEST: two-field persistence, ctrl+a/z/y and authoritative rebase PASS");
 }
+
+#[test]
+fn actual_x11_duplicate_callback_ids_never_share_a_draft_or_receive_pointer_focus(){
+ let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+ let t=node("App",&[("bg","#181818")],vec![
+  node("TextInput",&[("x","20"),("y","20"),("width","160"),("height","44"),
+   ("on_change","cb:71"),("value","FIRST")],vec![]),
+  node("TextInput",&[("x","20"),("y","85"),("width","160"),("height","44"),
+   ("on_change","cb:71"),("value","SECOND")],vec![]),
+  node("TextInput",&[("x","20"),("y","150"),("width","160"),("height","44"),
+   ("on_change","cb:72"),("value","C")],vec![])
+ ]);
+ frames(&p,&t,&mut c,4);p.diagnostic_resize_window(640,400);frames(&p,&t,&mut c,4);
+ let w=xdo(&["search","--name","Aura Lumina Sentinel"]);
+ let id=w.lines().next().unwrap();
+ xdo(&["windowfocus","--sync",id]);
+ key(&p,&t,&mut c,"Tab",false);
+ assert!(eq(&key(&p,&t,&mut c,"q",false),72,"Cq"),
+    "Tab should only focus the uniquely identified field");
+ xdo(&["mousemove","--window",id,"40","40"]);
+ frames(&p,&t,&mut c,3);
+ xdo(&["mousedown","1"]);frames(&p,&t,&mut c,4);
+ xdo(&["mouseup","1"]);frames(&p,&t,&mut c,2);
+ assert!(key(&p,&t,&mut c,"z",false).is_empty(),
+    "ambiguous mouse target must fail closed, not silently edit cb71");
+ key(&p,&t,&mut c,"Tab",false);
+ assert!(eq(&key(&p,&t,&mut c,"x",false),72,"Cqx"),
+    "unique draft should survive refocus after blocked ambiguous click");
+ drop(p);
+ eprintln!("LUMINA_SESSION_XTEST: duplicate callback fail-closed on Tab and real pointer PASS");
+}
