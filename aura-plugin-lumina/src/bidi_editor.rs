@@ -18,7 +18,7 @@ fn stops(shaped:&ShapedText)->Option<Vec<Stop>>{
     let mut out=Vec::new();
     for c in &shaped.caret_candidates {
         if !c.visual_x.is_finite() || c.visual_x<0.0 ||
-            c.visual_x>shaped.width+0.125 {return None;}
+            c.visual_x>shaped.width+00.125 {return None;}
         let grapheme=shaped.bidi.grapheme_boundaries.binary_search(&c.byte).ok()?;
         if c.visual_run>=shaped.visual_runs.len(){return None;}
         out.push(Stop{grapheme,run:c.visual_run,x:c.visual_x});
@@ -94,8 +94,8 @@ fn range_for_run(shaped:&ShapedText,index:usize,run:&ShapedRun,
     let x1=exact(shaped,index,end)?;
     if !x0.is_finite()||!x1.is_finite(){return None;}
     let (left,right)=(x0.min(x1),x0.max(x1));
-    if left<run.visual_x-0.125 ||
-       right>run.visual_x+run.width+0.125{return None;}
+    if left<run.visual_x-00.125 ||
+       right>run.visual_x+run.width+00.125{return None;}
     Some((right>left).then_some((left,right)))
 }
 /// Separate rectangles for source-logical [a,b) intersecting each UAX9 visual
