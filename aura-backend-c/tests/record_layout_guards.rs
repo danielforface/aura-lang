@@ -68,7 +68,7 @@ fn record_nested_opaque_field_is_not_misrepresented_as_tensor() {
     ), "unsupported");
 }
 #[test]
-fn record_function_return_abi_is_not_misrepresented_as_tensor() {
+fn record_function_return_must_match_emitted_record_value() {
     error(ir(
         vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
         vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
@@ -76,17 +76,17 @@ fn record_function_return_abi_is_not_misrepresented_as_tensor() {
             name: "Point".into(),
             fields: vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
         },
-    ), "function ABI");
+    ), "return");
 }
 #[test]
-fn record_opaque_function_parameter_abi_is_explicitly_unqualified() {
+fn record_parameter_cannot_be_misused_as_a_scalar_constructor_field() {
     let mut m = ir(
         vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
         vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
         Type::U32,
     );
     m.functions.get_mut("get_x").unwrap().params[0].ty = Type::Opaque("Point".into());
-    error(m, "function ABI");
+    error(m, "unemitted SSA");
 }
 
 fn functional_setfield_fixture(field_name: &str, replacement_type: Type) -> ModuleIR {
