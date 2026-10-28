@@ -478,6 +478,38 @@ impl AuraLuminaPlugin {
         })
     }
 
+    /// Returns explicit loaded-atlas metrics only when glyphs were fully
+    /// requested; this does not prove visual bidi/shaping.
+    pub fn diagnostic_font_coverage(&self,path:&str,size:i32,text:&str)->Option<f32> {
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let key=font_atlas::font_key(path,size)?;
+        let loaded=win.fonts.get(&key)?;
+        if !font_atlas::covers(&loaded.glyphs,text) {return None;}
+        Some(loaded.font.measure_text(text,size as f32,0.0).x)
+    }
+
+    /// One GPU readback over a bounded logical rectangle, counting only
+    /// distinctly red text pixels. Never expose the raw screenshot pixels.
+    pub fn diagnostic_red_pixels_in_rect(&self,x:i32,y:i32,width:i32,height:i32)->Option<usize> {
+        if width<=0||height<=0||width>640||height>480{return None;}
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),win.rl.get_screen_height(),
+            win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut count=0;
+        for iy in y..y.saturating_add(height) {
+            for ix in x..x.saturating_add(width) {
+                let (px,py)=m.logical_to_framebuffer(ix as f32,iy as f32)?;
+                if px>=image.width()||py>=image.height(){return None;}
+                let c=image.get_color(px,py);
+                if c.r>160 && c.g<155 && c.b<155 {count+=1;}
+            }
+        }
+        Some(count)
+    }
+
     /// Real native window resize. Runs only in opt-in Xvfb/device tests.
     pub fn diagnostic_resize_window(&self, width: i32, height: i32) -> bool {
         if width <= 0 || height <= 0 { return false; }
