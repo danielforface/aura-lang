@@ -14,3 +14,6 @@ aura-nexus = { path = "../aura-nexus" }
 raylib = { version = "5.5.1", optional = true }
 # UAX #29 extended grapheme clusters for safe TextInput cursor/editing.
 unicode-segmentation = "=1.12.0"
+# Real UAX #9 analysis and OpenType shaping; no GPU glyph-ID atlas yet.
+unicode-bidi = "=0.3.18"
+rustybuzz = "=0.20.1"
