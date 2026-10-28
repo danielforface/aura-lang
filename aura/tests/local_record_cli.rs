@@ -147,3 +147,26 @@ cell main() ->:
         "public CLI nested nominal Record native C build fails: stdout={} stderr={}",
         String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
 }
+
+
+#[test]
+fn public_no_z3_aura_omitted_scalar_record_defaults_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+cell build_point() ->:
+    yield Point { x: 19 }
+cell main() ->:
+    val p: Point = build_point()
+    yield p.y
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura defaults check: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no Z3 verification must not be represented as a formal proof");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public Aura default-valued Record C build: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}
