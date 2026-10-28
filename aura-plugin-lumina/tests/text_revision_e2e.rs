@@ -80,3 +80,56 @@ fn real_x11_delayed_intermediate_echo_stale_version_and_new_external_authority()
  drop(p);
  eprintln!("LUMINA_REV_XTEST: late echo, unknown, stale, newer authority, two fields and malformed revision PASS");
 }
+
+fn control_key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInputEvent>{
+ xdo(&["keydown","Control_L"]);frames(p,t,c,2);
+ let e=key(p,t,c,k);
+ xdo(&["keyup","Control_L"]);frames(p,t,c,2);
+ e
+}
+
+#[test]
+fn real_x11_new_revision_equal_to_current_draft_resets_undo_history(){
+ let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+ let mut t=node("App",&[],vec![node("TextInput",&[
+  ("x","20"),("y","20"),("width","200"),("height","44"),
+  ("value","A"),("value_revision","1"),("on_change","cb:77")],vec![])]);
+ frames(&p,&t,&mut c,4);p.diagnostic_resize_window(640,400);frames(&p,&t,&mut c,3);
+ let win=xdo(&["search","--name","Aura Lumina Sentinel"]);
+ xdo(&["windowfocus","--sync",win.lines().next().unwrap()]);
+ key(&p,&t,&mut c,"Tab");
+ assert!(has(&key(&p,&t,&mut c,"q"),77,"Aq"));
+ // Exact same text is now formally authoritative due STRICTLY NEW epoch.
+ t.children[0].set_prop("value","Aq");
+ t.children[0].set_prop("value_revision","2");
+ frames(&p,&t,&mut c,3);
+ assert!(control_key(&p,&t,&mut c,"z").is_empty(),
+  "new authoritative revision must invalidate pre-revision undo");
+ assert!(has(&key(&p,&t,&mut c,"x"),77,"Aqx"));
+ drop(p);
+ eprintln!("LUMINA_REV_XTEST: equal-text new epoch clears prior undo history PASS");
+}
+
+#[test]
+fn offscreen_duplicate_callback_cannot_shadow_visible_revision_prop(){
+ let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+ let mut t=node("App",&[],vec![
+    node("TextInput",&[("x","20"),("y","20"),("width","200"),("height","44"),
+      ("value","A"),("value_revision","3"),("on_change","cb:77")],vec![]),
+    node("TextInput",&[("x","900"),("y","900"),("width","200"),("height","44"),
+      ("value","HIDDEN"),("value_revision","bad"),("on_change","cb:77")],vec![])
+ ]);
+ frames(&p,&t,&mut c,4);p.diagnostic_resize_window(640,400);frames(&p,&t,&mut c,4);
+ let win=xdo(&["search","--name","Aura Lumina Sentinel"]);
+ xdo(&["windowfocus","--sync",win.lines().next().unwrap()]);
+ key(&p,&t,&mut c,"Tab");
+ assert!(has(&key(&p,&t,&mut c,"q"),77,"Aq"),
+  "offscreen duplicate callback's invalid revision must not poison visible target");
+ // Real new authority with visible revision 4 should replace local draft.
+ t.children[0].set_prop("value","REMOTE");
+ t.children[0].set_prop("value_revision","4");
+ frames(&p,&t,&mut c,3);
+ assert!(has(&key(&p,&t,&mut c,"z"),77,"REMOTEz"));
+ drop(p);
+ eprintln!("LUMINA_REV_XTEST: offscreen duplicate cannot shadow visible revision PASS");
+}
