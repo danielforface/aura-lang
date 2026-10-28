@@ -15,12 +15,15 @@ pub(crate) struct Stop {
 fn stops(shaped:&ShapedText)->Option<Vec<Stop>>{
     if !shaped.caret_map_complete || !shaped.width.is_finite() ||
         shaped.width<0.0 {return None;}
+    let boundary_count=shaped.bidi.grapheme_boundaries.len();
+    let mut seen=vec![false;boundary_count];
     let mut out=Vec::new();
     for c in &shaped.caret_candidates {
         if !c.visual_x.is_finite() || c.visual_x<0.0 ||
             c.visual_x>shaped.width+00.125 {return None;}
         let grapheme=shaped.bidi.grapheme_boundaries.binary_search(&c.byte).ok()?;
         if c.visual_run>=shaped.visual_runs.len(){return None;}
+        seen[grapheme]=true;
         out.push(Stop{grapheme,run:c.visual_run,x:c.visual_x});
     }
     if out.len()>2*(shaped.bidi.grapheme_boundaries.len())+2048 {return None;}
@@ -28,8 +31,9 @@ fn stops(shaped:&ShapedText)->Option<Vec<Stop>>{
         .then(a.run.cmp(&b.run))
         .then(a.grapheme.cmp(&b.grapheme)));
     out.dedup_by(|a,b|a.grapheme==b.grapheme&&a.run==b.run&&a.x==b.x);
-    if !shaped.bidi.grapheme_boundaries.iter().enumerate()
-        .all(|(i,_)|out.iter().any(|v|v.grapheme==i)){return None;}
+    // Validate completeness in O(graphemes), not quadratic O(graphemes*stops):
+    // an 8KiB one-line input otherwise risks UI stalls at every mouse move.
+    if seen.iter().any(|v|!*v){return None;}
     Some(out)
 }
 fn current<'a>(all:&'a[Stop],grapheme:usize,affinity:Option<usize>)->Option<(usize,&'a Stop)>{
@@ -144,8 +148,10 @@ mod tests{
         let parts=selection_fragments(&s,0,end).unwrap();
         assert!(parts.len()>=3,"UAX9 split selection by visual runs");
         assert!(parts.iter().all(|(a,b)|b>a));
-        let gaps=selection_fragments(&s,2,9).unwrap();
+        let gaps=selection_fragments(&s,2,8).unwrap();
         assert!(gaps.len()>=2,"logical selection straddles reordered runs");
+        assert!(gaps.windows(2).any(|w|w[1].0>w[0].1+1.0),
+            "true BiDi selection must leave the unselected visual middle untouched: {gaps:?}");
     }
     #[test]fn rejects_incomplete_cluster_and_nonfinite_hit(){
         if !std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf").exists(){return;}
