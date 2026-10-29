@@ -828,3 +828,33 @@ cell main() ->:
     assert_eq!(out.value,AvmValue::Int(255));
     assert!(!out.verified,"raw AVM is not formal proof");
 }
+
+#[test]
+fn raw_avm_rejects_invalid_unused_refined_alias_declarations() {
+    for (label,decl) in [
+        ("u8 too wide", "type Bad = u8[0..300]\n"),
+        ("i8 too wide", "type Bad = i8[0..128]\n"),
+        ("bool range", "type Bad = bool[0..1]\n"),
+        ("float range", "type Bad = f32[0..1]\n"),
+        ("u8 impossible lower", "type Bad = u8[256..300]\n"),
+        ("nested widening", "type Small = u8[10..20]\ntype Wide = Small[10..21]\n"),
+    ] {
+        let src=format!("{decl}cell main() ->:\n    yield 7\n");
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(&src,"main")
+            .expect_err("raw noZ3 AVM cannot execute source with invalid unused refined alias");
+        assert!(err.to_string().contains("range") || err.to_string().contains("refin"),
+            "{label}: expected refinement range diagnostic: {err}");
+    }
+}
+
+#[test]
+fn raw_avm_accepts_valid_unused_nested_refined_alias_declarations_without_proof() {
+    let src="type Small = u8[10..20]\ntype Narrow = Small[12..18]\n\
+        cell main() ->:\n    yield 7\n";
+    let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    let out=vm.exec_entry_cell(src,"main")
+        .expect("valid unused source range declaration should not prevent execution");
+    assert_eq!(out.value,AvmValue::Int(7));
+    assert!(!out.verified,"raw AVM is not SMT proof");
+}

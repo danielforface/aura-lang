@@ -408,3 +408,23 @@ fn public_cli_accepts_forward_declared_integer_alias_record_source() {
             "public Aura {:?} must resolve a valid forward mono alias: {output}",args);
     }
 }
+
+#[test]
+fn public_check_rejects_invalid_unused_refined_integer_aliases() {
+    for (label,decl) in [
+        ("u8 width", "type Bad = u8[0..300]\n"),
+        ("bool base", "type Bad = bool[0..1]\n"),
+        ("nested width", "type Small = u8[10..20]\ntype Bad = Small[10..21]\n"),
+    ] {
+        let src=format!("{decl}cell main() ->:\n    yield 7\n");
+        let fixture=SourceFile::new(&src);
+        let result=fixture.run(&["check"]);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: real aura check accepted invalid unused refined alias: {output}");
+        assert!(output.contains("range") || output.contains("refin"),
+            "{label}: expected type-range diagnostic from public CLI: {output}");
+    }
+}

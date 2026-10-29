@@ -623,3 +623,32 @@ fn forward_declared_mono_integer_aliases_cannot_launder_out_of_range_values() {
     assert!(err.message.contains("out of range"),
         "must preserve precise resolved u8 range refusal, got {err}");
 }
+
+#[test]
+fn refined_monomorphic_alias_declarations_require_representable_base_bounds() {
+    for (label, declarations) in [
+        ("u8 impossible upper", "type Bad = u8[0..300]\n"),
+        ("i8 impossible upper", "type Bad = i8[0..128]\n"),
+        ("bool is nonnumeric", "type Bad = bool[0..1]\n"),
+        ("float is noninteger", "type Bad = f32[0..1]\n"),
+        ("u8 invalid lower", "type Bad = u8[256..300]\n"),
+        ("alias widening", "type Small = u8[10..20]\ntype Wide = Small[10..21]\n"),
+    ] {
+        let src=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let parsed=aura_parse::parse_source(&src)
+            .unwrap_or_else(|e| panic!("{label}: refined alias source must parse: {e}"));
+        let err=Checker::new().check_program(&parsed)
+            .expect_err("ill-formed unused refined alias must be rejected at declaration");
+        assert!(err.message.contains("range") || err.message.contains("refin"),
+            "{label}: expected precise refinement range error: {err}");
+    }
+}
+
+#[test]
+fn nested_representable_refined_mono_alias_declarations_remain_legal() {
+    let src="type Small = u8[10..20]\ntype Narrow = Small[12..18]\n\
+        cell main() ->:\n    yield 7\n";
+    let parsed=aura_parse::parse_source(src).expect("legal nested refinement parses");
+    Checker::new().check_program(&parsed)
+        .expect("representable nested alias refinement must remain valid unused");
+}
