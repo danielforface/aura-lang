@@ -2903,7 +2903,44 @@ impl Checker {
                     span: range.span,
                 });
             }
-
+            // A refinement must be representable by its *resolved* base.
+            // In particular u8[0..300], bool[0..1] and widening an
+            // existing alias u8[10..20] into [10..21] cannot become valid
+            // source declarations just because the alias is unused.
+            // This bounded source domain is nonnegative; signed negatives
+            // require separate signed-literal IR/runtime qualification.
+            let domain = match &base {
+                Type::U8 => Some((0, u8::MAX as u64)),
+                Type::U16 => Some((0, u16::MAX as u64)),
+                Type::U32 => Some((0, u32::MAX as u64)),
+                Type::U64 | Type::U128 | Type::USize => Some((0, u64::MAX)),
+                Type::I8 => Some((0, i8::MAX as u64)),
+                Type::I16 => Some((0, i16::MAX as u64)),
+                Type::I32 => Some((0, i32::MAX as u64)),
+                Type::I64 | Type::I128 | Type::ISize =>
+                    Some((0, i64::MAX as u64)),
+                Type::ConstrainedRange { base: inner, lo: base_lo, hi: base_hi }
+                    if base_type(inner).is_integer() => Some((*base_lo, *base_hi)),
+                _ => None,
+            };
+            let Some((base_lo, base_hi)) = domain else {
+                return Err(SemanticError {
+                    message: format!(
+                        "refinement range requires a qualified integer base, got {}",
+                        base.display()
+                    ),
+                    span: range.span,
+                });
+            };
+            if lo < base_lo || hi > base_hi {
+                return Err(SemanticError {
+                    message: format!(
+                        "refinement range [{lo}..{hi}] out of base range [{base_lo}..{base_hi}] for {}",
+                        base.display()
+                    ),
+                    span: range.span,
+                });
+            }
             Ok(Type::ConstrainedRange {
                 base: Box::new(base),
                 lo,
