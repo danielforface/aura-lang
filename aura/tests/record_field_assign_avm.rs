@@ -858,3 +858,38 @@ fn raw_avm_accepts_valid_unused_nested_refined_alias_declarations_without_proof(
     assert_eq!(out.value,AvmValue::Int(7));
     assert!(!out.verified,"raw AVM is not SMT proof");
 }
+
+#[test]
+fn raw_avm_refined_alias_values_must_obey_source_interval_in_locals_and_calls() {
+    for (label, source) in [
+        ("local high", "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 21\n    yield 7\n"),
+        ("local low", "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 9\n    yield 7\n"),
+        ("mutation", "type Window = u8[10..20]\ncell main() ->:\n    val mut n: Window = 10\n    n = 21\n    yield n\n"),
+        ("nested", "type Window = u8[10..20]\ntype Narrow = Window[12..18]\ncell main() ->:\n    val n: Narrow = 19\n    yield n\n"),
+        ("parameter", "type Window = u8[10..20]\ncell identity(n: Window) ->:\n    yield n\ncell main() ->:\n    yield identity(21)\n"),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(source,"main")
+            .expect_err("raw AVM must reject refined alias out-of-interval value");
+        let txt=err.to_string();
+        assert!(txt.contains("range") || txt.contains("refin"),
+            "{label}: expected explicit source interval refusal: {txt}");
+    }
+}
+
+#[test]
+fn raw_avm_refined_alias_local_mutation_and_user_call_valid_boundaries() {
+    for (label,source,value) in [
+        ("local lower", "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 10\n    yield n\n",10),
+        ("local upper", "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 20\n    yield n\n",20),
+        ("mutation", "type Window = u8[10..20]\ncell main() ->:\n    val mut n: Window = 10\n    n = 20\n    yield n\n",20),
+        ("nested", "type Window = u8[10..20]\ntype Narrow = Window[12..18]\ncell main() ->:\n    val n: Narrow = 18\n    yield n\n",18),
+        ("parameter", "type Window = u8[10..20]\ncell identity(n: Window) ->:\n    yield n\ncell main() ->:\n    yield identity(20)\n",20),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let out=vm.exec_entry_cell(source,"main")
+            .unwrap_or_else(|e|panic!("{label}: valid refined alias boundary: {e}"));
+        assert_eq!(out.value, AvmValue::Int(value),"{label}");
+        assert!(!out.verified,"AVM execution does not certify Z3 proof");
+    }
+}

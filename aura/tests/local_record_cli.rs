@@ -428,3 +428,25 @@ fn public_check_rejects_invalid_unused_refined_integer_aliases() {
             "{label}: expected type-range diagnostic from public CLI: {output}");
     }
 }
+
+#[test]
+fn public_cli_checks_refined_alias_local_values_not_only_declarations() {
+    for (label,value) in [("below",9),("above",21)] {
+        let src=format!(
+            "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = {value}\n    yield n\n"
+        );
+        let fixture=SourceFile::new(&src);
+        let result=fixture.run(&["check"]);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: public checker accepted out-of-range refined local: {output}");
+        assert!(output.contains("range") || output.contains("refin"),
+            "{label}: require precise range diagnostic: {output}");
+    }
+    let valid="type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 20\n    yield n\n";
+    let fixture=SourceFile::new(valid);
+    let result=fixture.run(&["check"]);
+    assert!(result.status.success(),"legal refined local must pass public check: {}",
+        String::from_utf8_lossy(&result.stderr));
+}

@@ -652,3 +652,41 @@ fn nested_representable_refined_mono_alias_declarations_remain_legal() {
     Checker::new().check_program(&parsed)
         .expect("representable nested alias refinement must remain valid unused");
 }
+
+#[test]
+fn refined_alias_integer_local_write_contract_cannot_be_bypassed_in_checker() {
+    for (label, body) in [
+        ("declaration upper", "    val n: Window = 21\n    yield n\n"),
+        ("declaration lower", "    val n: Window = 9\n    yield n\n"),
+        ("mutable upper", "    val mut n: Window = 10\n    n = 21\n    yield n\n"),
+        ("mutable lower", "    val mut n: Window = 20\n    n = 9\n    yield n\n"),
+        ("nested alias upper", "    val n: Narrow = 19\n    yield n\n"),
+    ] {
+        let src=format!(
+            "type Window = u8[10..20]\ntype Narrow = Window[12..18]\ncell main() ->:\n{body}"
+        );
+        let parsed=aura_parse::parse_source(&src).expect("typed numeric source parses");
+        let err=Checker::new().check_program(&parsed)
+            .expect_err("refined alias annotated local must reject source proven outside range");
+        assert!(err.message.contains("range") || err.message.contains("refin"),
+            "{label}: expected explicit range failure, got {err}");
+    }
+}
+
+#[test]
+fn refined_alias_local_boundary_values_remain_source_legal() {
+    for (label,body) in [
+        ("lower", "    val n: Window = 10\n    yield n\n"),
+        ("upper", "    val n: Window = 20\n    yield n\n"),
+        ("mutable in range", "    val mut n: Window = 10\n    n = 20\n    yield n\n"),
+        ("nested lower", "    val n: Narrow = 12\n    yield n\n"),
+        ("nested upper", "    val n: Narrow = 18\n    yield n\n"),
+    ] {
+        let src=format!(
+            "type Window = u8[10..20]\ntype Narrow = Window[12..18]\ncell main() ->:\n{body}"
+        );
+        let parsed=aura_parse::parse_source(&src).expect("valid boundary parses");
+        Checker::new().check_program(&parsed)
+            .unwrap_or_else(|err|panic!("{label}: valid source range boundary: {err}"));
+    }
+}
