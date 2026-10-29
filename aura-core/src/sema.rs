@@ -1439,7 +1439,9 @@ impl Checker {
 
             let scalar = matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
                 Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
-                Type::I64 | Type::F32 | Type::F64);
+                Type::I64 | Type::F32 | Type::F64)
+                || matches!(&expected, Type::ConstrainedRange { base, .. }
+                    if base_type(base).is_integer());
             let nominal_child = matches!(&expected, Type::Named(name)
                 if self.record_defs.get(name).is_some_and(|inner| inner.params.is_empty()));
             if !scalar && !nominal_child {
@@ -1454,6 +1456,7 @@ impl Checker {
             self.check_record_integer_literal_width(&expected, &a.expr)?;
             let actual = self.infer_expr(&a.expr)?;
             self.check_record_integer_inferred_range(&expected, &actual, &a.expr)?;
+            self.check_known_refined_integer_bounds(&expected, &actual, &a.expr)?;
             return self.check_assignable(&expected, &actual, &a.expr);
         }
         unreachable!("FieldAssign always has at least one field");
@@ -1855,6 +1858,8 @@ impl Checker {
                     Type::Bool | Type::U8 | Type::U16 | Type::U32 |
                     Type::U64 | Type::I8 | Type::I16 | Type::I32 |
                     Type::I64 | Type::F32 | Type::F64 | Type::Char)
+                    && !matches!(required, Type::ConstrainedRange { base, .. }
+                        if base_type(base).is_integer())
                 {
                     return Err(SemanticError {
                         message: "unqualified non-scalar Record default".to_string(),
@@ -1863,6 +1868,7 @@ impl Checker {
                 }
                 self.check_record_integer_literal_width(required, value)?;
                 let actual = self.infer_expr(value)?;
+                self.check_known_refined_integer_bounds(required, &actual, value)?;
                 self.check_assignable(required, &actual, value)
             }
             ExprKind::RecordLit { name, fields } => {
@@ -2206,6 +2212,7 @@ impl Checker {
                     self.check_record_integer_literal_width(&expected_ty, v)?;
                     let actual_ty = self.infer_expr(v)?;
                     self.check_record_integer_inferred_range(&expected_ty, &actual_ty, v)?;
+                    self.check_known_refined_integer_bounds(&expected_ty, &actual_ty, v)?;
 
                     // If a record field is initialized from a resource identifier, move it.
                     // This prevents creating implicit aliases to mutable resources.
