@@ -56,7 +56,7 @@ impl NativeIbus{
         }
         let mut child=Command::new(executable).arg(engine)
             .stdin(Stdio::piped()).stdout(Stdio::piped())
-            .stderr(Stdio::null()).spawn().ok()?;
+            .stderr(Stdio::inherit()).spawn().ok()?;
         let input=child.stdin.take()?;
         let stdout=child.stdout.take()?;
         let (tx,output)=mpsc::sync_channel(32);
