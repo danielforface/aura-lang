@@ -450,3 +450,22 @@ fn public_cli_checks_refined_alias_local_values_not_only_declarations() {
     assert!(result.status.success(),"legal refined local must pass public check: {}",
         String::from_utf8_lossy(&result.stderr));
 }
+
+#[test]
+fn public_check_validates_refined_alias_record_defaults_and_writes() {
+    let invalid="type Window = u8[10..20]\ntype Tiny = record { n: Window = 21 }\ncell main() ->:\n    yield 7\n";
+    let fixture=SourceFile::new(invalid);
+    let rejected=fixture.run(&["check"]);
+    let message=format!("{}\n{}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr));
+    assert!(!rejected.status.success(),"public check accepted invalid refined default: {message}");
+    assert!(message.contains("range") || message.contains("refin"),
+        "expected explicit refinement diagnostic: {message}");
+    let valid="type Window = u8[10..20]\ntype Tiny = record { n: Window = 20 }\ncell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n";
+    let valid_fixture=SourceFile::new(valid);
+    let checked=valid_fixture.run(&["check"]);
+    assert!(checked.status.success(),
+        "valid refined Record default must check: {}",
+        String::from_utf8_lossy(&checked.stderr));
+}

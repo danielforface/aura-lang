@@ -893,3 +893,25 @@ fn raw_avm_refined_alias_local_mutation_and_user_call_valid_boundaries() {
         assert!(!out.verified,"AVM execution does not certify Z3 proof");
     }
 }
+
+#[test]
+fn raw_avm_refined_alias_record_defaults_and_field_writes_enforce_interval() {
+    for (label,source) in [
+        ("unused default", "type Window = u8[10..20]\ntype Tiny = record { n: Window = 21 }\ncell main() ->:\n    yield 7\n"),
+        ("explicit field", "type Window = u8[10..20]\ntype Tiny = record { n: Window }\ncell main() ->:\n    val t: Tiny = Tiny { n: 21 }\n    yield t.n\n"),
+        ("mutation", "type Window = u8[10..20]\ntype Tiny = record { n: Window }\ncell main() ->:\n    val mut t: Tiny = Tiny { n: 10 }\n    t.n = 21\n    yield t.n\n"),
+    ] {
+        let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+        let err=vm.exec_entry_cell(source,"main")
+            .expect_err("raw AVM must enforce refined Record source interval");
+        let message=err.to_string();
+        assert!(message.contains("range") || message.contains("refin"),
+            "{label}: expected range failure: {message}");
+    }
+    let valid="type Window = u8[10..20]\ntype Tiny = record { n: Window = 20 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = 10\n    yield t.n\n";
+    let mut vm=Avm::new(AvmConfig{enable_z3_gate:false,..Default::default()});
+    let out=vm.exec_entry_cell(valid,"main")
+        .expect("valid refined field default and mutation");
+    assert_eq!(out.value,AvmValue::Int(10));
+    assert!(!out.verified);
+}

@@ -690,3 +690,69 @@ fn refined_alias_local_boundary_values_remain_source_legal() {
             .unwrap_or_else(|err|panic!("{label}: valid source range boundary: {err}"));
     }
 }
+
+#[test]
+fn refined_alias_record_default_and_updates_match_oracle_and_linked_native() {
+    let src=r#"
+type Window = u8[10..20]
+type Tiny = record { n: Window = 20 }
+cell default_value() ->:
+    val t: Tiny = Tiny {}
+    yield t.n
+cell explicit_value() ->:
+    val t: Tiny = Tiny { n: 10 }
+    yield t.n
+cell updated_value() ->:
+    val mut t: Tiny = Tiny { n: 10 }
+    t.n = 20
+    yield t.n
+"#;
+    let parsed=aura_parse::parse_source(src).expect("valid refined Record parses");
+    Checker::new().check_program(&parsed).expect("valid refined Record boundaries check");
+    let ir=lower_program(&parsed).expect("refined scalar Record lowers to concrete ABI");
+    validate_module(&ir).expect("refined Record IR valid");
+    for (name,value) in [("default_value",20),("explicit_value",10),("updated_value",20)] {
+        let result=run_oracle_entry(&ir,name,&[],OracleConfig::default())
+            .expect("Oracle executes refined Record");
+        assert!(result.ok && result.stderr.is_empty(),"{name}: {result:?}");
+        assert_eq!(result.return_value,Some(OracleValue::U32(value)),"{name}");
+    }
+    let artifacts=emit_module(&ir,None).expect("C emitter accepts resolved refined u8 field");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "uint8_t default_value(void);\n",
+        "uint8_t explicit_value(void);\n",
+        "uint8_t updated_value(void);\n",
+        "int main(void) { return (default_value()==20 && explicit_value()==10",
+        " && updated_value()==20) ? 0 : 1; }\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("refined_record_{}",&opt[1..]));
+        let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c")).arg(scratch.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("clang installed");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+        let run=Command::new(&exe).output().expect("native executable");
+        assert!(run.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&run.stderr),artifacts.module_c);
+    }
+}
+
+#[test]
+fn refined_alias_record_field_and_unused_default_outside_range_fail_in_core() {
+    for (label,source) in [
+        ("unused default", "type Window = u8[10..20]\ntype Tiny = record { n: Window = 21 }\ncell main() ->:\n    yield 7\n"),
+        ("explicit field", "type Window = u8[10..20]\ntype Tiny = record { n: Window }\ncell main() ->:\n    val t: Tiny = Tiny { n: 21 }\n    yield t.n\n"),
+        ("field mutation", "type Window = u8[10..20]\ntype Tiny = record { n: Window }\ncell main() ->:\n    val mut t: Tiny = Tiny { n: 10 }\n    t.n = 21\n    yield t.n\n"),
+    ] {
+        let ast=aura_parse::parse_source(source).expect("invalid numeric source parses");
+        let err=Checker::new().check_program(&ast)
+            .expect_err("refined Record source must refuse out-of-interval field");
+        assert!(err.message.contains("range") || err.message.contains("refin"),
+            "{label}: require refined range error, got {err}");
+    }
+}
