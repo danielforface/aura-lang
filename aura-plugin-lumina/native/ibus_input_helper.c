@@ -74,8 +74,13 @@ int main(int argc,char**argv) {
                 pump_ms(150);
             }
             IBusEngineDesc *focused=ibus_input_context_get_engine(ic);
+            const char *actual=focused ? ibus_engine_desc_get_name(focused) : NULL;
             fprintf(stderr,"LUMINA_IBUS_FOCUSED_ENGINE %s\n",
-                focused ? ibus_engine_desc_get_name(focused) : "(none)");
+                actual ? actual : "(none)");
+            if(!actual || strcmp(actual,argv[1])!=0) {
+                puts("FATAL requested_engine_not_active");
+                break; /* No fake native IME readiness for the dummy engine */
+            }
             puts("A");continue;
         }
         if(!strncmp(line,"F0",2)){
