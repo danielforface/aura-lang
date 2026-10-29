@@ -6,6 +6,7 @@
 const MAX_TABLES:usize=256;
 const MAX_COVERAGE:usize=8192;
 const MAX_CARETS:usize=64;
+pub(crate) const MAX_COMPONENTS:usize=MAX_CARETS+1;
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum CaretError {
     MalformedFont,
