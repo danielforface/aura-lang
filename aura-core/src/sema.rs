@@ -2599,9 +2599,17 @@ impl Checker {
                         });
                     }
 
-                    // Minimal type checking (range constraints may appear on expected params later).
+                    // User-call argument refinement is a source/ABI contract,
+                    // not a proof that the lowering stage may defer to Z3.
+                    // Require a statically proven interval before a call can
+                    // enter executable IR, regardless of defer_range_proofs.
                     for (i, (expected, arg)) in sig.params.iter().zip(all_args.iter()).enumerate() {
                         let actual = self.infer_expr(arg)?;
+                        self.check_known_refined_integer_bounds(&expected.ty, &actual, arg)
+                            .map_err(|mut e| {
+                                e.message = format!("arg {i}: {}", e.message);
+                                e
+                            })?;
                         self.check_assignable(&expected.ty, &actual, arg).map_err(|mut e| {
                             e.message = format!("arg {i}: {}", e.message);
                             e

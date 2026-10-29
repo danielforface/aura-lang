@@ -218,10 +218,16 @@ impl<'c> Lowerer<'c> {
 
         let mut params = Vec::new();
         for p in &cell.params {
+            // Function parameters must share the exact Checker-resolved ABI
+            // with values, Record fields and return types. A raw source alias
+            // such as Window=u8[10..20] is U8 at the executable boundary,
+            // never Opaque("Window").
+            let checked_ty = self.checker.resolve_type_ref(&p.ty)?;
+            let abi_ty = lower_sema_type_to_ir(&checked_ty, p.ty.span)?;
             let v = self.id.fresh_value();
             params.push(Param {
                 name: p.name.node.clone(),
-                ty: lower_type(&p.ty),
+                ty: abi_ty,
                 span: p.span,
                 value: v,
             });
