@@ -63,14 +63,28 @@ impl NativeIbus{
         std::thread::spawn(move||{
             let mut reader=BufReader::new(stdout);
             loop {
-                let mut line=String::new();
-                let Ok(n)=reader.read_line(&mut line)else{break;};
-                if n==0||n>MAX_PROTOCOL_LINE{break;}
-                if tx.send(line.trim_end_matches(['\r','\n']).to_owned()).is_err(){break;}
+                // BufRead::read_line can allocate an unbounded line *before*
+                // the caller checks length. Read only bounded chunks instead.
+                let mut raw=Vec::new();
+                loop {
+                    let Ok(available)=reader.fill_buf()else{return;};
+                    if available.is_empty(){return;}
+                    let end=available.iter().position(|v|*v==b'\n')
+                        .map(|n|n+1).unwrap_or(available.len());
+                    if raw.len().saturating_add(end)>MAX_PROTOCOL_LINE{return;}
+                    let terminates=available[end-1]==b'\n';
+                    raw.extend_from_slice(&available[..end]);
+                    reader.consume(end);
+                    if terminates{break;}
+                }
+                let Ok(line)=String::from_utf8(raw)else{return;};
+                if tx.send(line.trim_end_matches(['\r','\n']).to_owned()).is_err(){return;}
             }
         });
-        let ready=output.recv_timeout(Duration::from_millis(STARTUP_TIMEOUT_MS)).ok()?;
-        if ready!="READY" {let _=child.kill();return None;}
+        let ready=output.recv_timeout(Duration::from_millis(STARTUP_TIMEOUT_MS));
+        if ready.as_deref()!=Ok("READY") {
+            let _=child.kill();let _=child.wait();return None;
+        }
         Some(Self{child,input,output,focus:None,serial:0,
             composing:false,disconnected:false,engine_events:0})
     }
