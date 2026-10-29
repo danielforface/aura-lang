@@ -196,7 +196,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             && (entry.session.buffer != source_value || revision.is_some()) {
             // Even identical text at a *new* explicit revision starts new
             // authority epoch: old undo history must not resurrect stale data.
-            entry.session = text_input::EditSession::new(source_value.clone());
+            entry.session.rebase_authority(source_value.clone());
             entry.visual_affinity=None;
         }
         entry.on_submit = on_submit;
@@ -265,7 +265,7 @@ fn reconcile_input_sessions(
         revision:Option<u64>| {
         if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
             && (entry.session.buffer!=prop || revision.is_some()) {
-            entry.session=text_input::EditSession::new(prop.to_owned());
+            entry.session.rebase_authority(prop.to_owned());
             entry.visual_affinity=None;
         }
         entry.on_submit=submit;
