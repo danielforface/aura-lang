@@ -88,6 +88,22 @@ impl NativeIbus{
         if line.len()>MAX_PROTOCOL_LINE{self.disconnected=true;return None;}
         Some(line)
     }
+    fn await_ack(&mut self)->bool{
+        for _ in 0..MAX_LINES_PER_KEY {
+            let Some(line)=self.next() else{
+                self.disconnected=true;return false;
+            };
+            if line=="A"{return true;}
+            // Some IBus engines emit hide-preedit during FocusOut/FocusIn.
+            // Such events belong to the OLD focus generation and must not
+            // be delivered to the newly focused native TextInput.
+            if line=="H"||line.starts_with("P\t")||line.starts_with("C\t"){
+                continue;
+            }
+            self.disconnected=true;return false;
+        }
+        self.disconnected=true;false
+    }
     /// Focus is actually passed to libibus; suppress stale engine signals
     /// after blur. A newly focused session must own subsequent signals.
     pub(crate) fn sync_focus(&mut self,target:Option<u64>)->bool{
@@ -95,15 +111,13 @@ impl NativeIbus{
         if self.focus==target{return true;}
         if self.focus.is_some(){
             if !self.send("F0"){return false;}
-            let Some(ack)=self.next()else{self.disconnected=true;return false;};
-            if ack!="A"{self.disconnected=true;return false;}
+            if !self.await_ack(){return false;}
         }
         self.composing=false;
         self.focus=None;
         if let Some(id)=target{
             if !self.send("F1"){return false;}
-            let Some(ack)=self.next()else{self.disconnected=true;return false;};
-            if ack!="A"{self.disconnected=true;return false;}
+            if !self.await_ack(){return false;}
             self.focus=Some(id);
         }
         true
