@@ -25,8 +25,12 @@ if context is None:
 context.set_capabilities(int(IBus.Capabilite.FOCUS) | int(IBus.Capabilite.PREEDIT_TEXT))
 engine = os.environ.get("AURA_LUMINA_IBUS_ENGINE", "")
 if engine:
+    # Global-engine mode normally overrides an individual InputContext's
+    # requested engine on FocusIn; select the server-side global engine too.
+    if not bus.set_global_engine(engine):
+        print("IBUS_GLOBAL_ENGINE_REJECTED:"+engine, file=sys.stderr, flush=True)
+        sys.exit(5)
     context.set_engine(engine)
-# Engine selection can invalidate the prior focus; focus last.
 context.focus_in()
 stats = {"preedit": 0, "commit": 0, "unicode": False}
 def emit(line):
@@ -66,7 +70,28 @@ context.connect("update-preedit-text", preedit)
 context.connect("commit-text", commit)
 context.connect("hide-preedit-text", lambda _: emit("H"))
 loop = GLib.MainLoop()
-emit("READY")
+readiness={"attempts":0, "ready":False}
+def wait_for_selected_engine():
+    readiness["attempts"] += 1
+    selected=context.get_engine()
+    name=selected.get_name() if selected else "NONE"
+    if not engine or name==engine:
+        readiness["ready"]=True
+        emit("READY")
+        print("IBUS_ACTUAL_ENGINE_READY:"+name, file=sys.stderr, flush=True)
+        return False
+    if readiness["attempts"]>=60:
+        print("IBUS_ENGINE_MISMATCH requested="+engine+" actual="+name,
+              file=sys.stderr, flush=True)
+        emit("FAIL")
+        loop.quit()
+        return False
+    if readiness["attempts"]%10==0:
+        bus.set_global_engine(engine)
+        context.set_engine(engine)
+        context.focus_in()
+    return True
+GLib.timeout_add(80, wait_for_selected_engine)
 def key(keysym, keycode=0, state=0):
     consumed=bool(context.process_key_event(keysym, keycode, state))
     if "--probe" in sys.argv:
@@ -134,8 +159,8 @@ if "--probe" in sys.argv:
             print("IBUS_REAL_ENGINE_PROBE_FAIL:" + repr(stats), file=sys.stderr, flush=True)
         loop.quit()
         return False
-    GLib.timeout_add(1200, begin)
-    GLib.timeout_add(5000, verify)
+    GLib.timeout_add(2200, begin)
+    GLib.timeout_add(7000, verify)
     loop.run()
     sys.exit(0 if stats["preedit"] > 0 and stats["commit"] > 0 and stats["unicode"] else 6)
 GLib.io_add_watch(sys.stdin.fileno(), GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, read_stdin)
