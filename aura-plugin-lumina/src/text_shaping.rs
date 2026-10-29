@@ -252,10 +252,14 @@ pub(crate) fn shape_text_with_fonts(
     let mut caret_candidates=Vec::new();
     let mut complete=true;
     for (run_index,run) in visual_runs.iter().enumerate(){
-        let mut cluster_starts:Vec<usize>=run.glyphs.iter()
-            .map(|g|g.cluster_byte).collect();
-        cluster_starts.sort_unstable();
-        cluster_starts.dedup();
+        // Group once by original UTF-8 cluster. Re-scanning every glyph
+        // for each source cluster was quadratic on long single-line inputs.
+        let mut clusters:std::collections::BTreeMap<usize,Vec<&ShapedGlyph>>=
+            std::collections::BTreeMap::new();
+        for glyph in &run.glyphs {
+            clusters.entry(glyph.cluster_byte).or_default().push(glyph);
+        }
+        let cluster_starts:Vec<usize>=clusters.keys().copied().collect();
         if cluster_starts.first().copied()!=Some(run.source_bytes.start) ||
             (run.glyphs.is_empty()&&run.source_bytes.start!=run.source_bytes.end){
             complete=false;
@@ -271,8 +275,9 @@ pub(crate) fn shape_text_with_fonts(
                 else{complete=false;continue;};
             let n=hi.saturating_sub(lo);
             if n==0 || n>gdef_caret::MAX_COMPONENTS {complete=false;continue;}
-            let parts:Vec<&ShapedGlyph>=run.glyphs.iter()
-                .filter(|g|g.cluster_byte==first).collect();
+            let Some(parts)=clusters.get(&first) else{
+                complete=false;continue;
+            };
             let left=parts.iter().map(|g|g.pen_x).fold(f32::INFINITY,f32::min);
             let right=parts.iter().map(|g|g.pen_x+g.advance_x)
                 .fold(f32::NEG_INFINITY,f32::max);
