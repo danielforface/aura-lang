@@ -67,6 +67,11 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)
     let vis=p.diagnostic_text_visual(936,32.0,356.0).unwrap();
     assert!(!vis.preedit_screens.is_empty(),
         "native IBus preedit should have real UI underline");
+    let &(ua,ub)=vis.preedit_screens.first().unwrap();
+    let underline=p.diagnostic_capture_pixel((ua+ub)*0.5,79.0).unwrap();
+    assert!(underline.g>underline.r && underline.b>underline.g,
+        "actual IBus-preedit GPU underline must be cyan: {underline:?}");
+    eprintln!("IBUS_NATIVE_REAL_ENGINE_GPU_UNDERLINE {underline:?}");
     let paint=p.diagnostic_red_signature(32,24,110,54).unwrap();
     assert!(paint.0>5,"real Korean preedit glyph must be rendered on native GPU: {paint:?}");
     seen.extend(key(&p,&app,&mut c,"space"));
