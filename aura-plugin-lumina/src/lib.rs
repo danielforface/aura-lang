@@ -1123,8 +1123,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 let requested=win.focused_input.as_ref().and_then(|fi|{
                     let (node,_)=find_input_by_callback(tree,&planned_layout,fi.on_change)?;
                     if prop(node,"native_ime")!=Some("ibus"){return None;}
-                    let path=prop(node,"native_ime_helper")?;
-                    Some((fi.on_change,path.to_owned()))
+                    // Helper executable is HOST-TRUSTED CONFIG, never an
+                    // untrusted UI-node property or arbitrary app path.
+                    let path=std::env::var("AURA_LUMINA_IBUS_HELPER").ok()?;
+                    if !std::path::Path::new(&path).is_absolute(){return None;}
+                    Some((fi.on_change,path))
                 });
                 if let Some((id,path))=&requested {
                     if win.native_ibus_script.as_deref()!=Some(path.as_str()){
