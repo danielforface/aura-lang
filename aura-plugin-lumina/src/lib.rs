@@ -114,6 +114,29 @@ const INITIAL_WINDOW_H: i32 = 1080;
 #[cfg(feature = "raylib")]
 pub struct AuraLuminaPlugin {
     window: RefCell<Option<LuminaWindow>>,
+    composition_queue: RefCell<Vec<CompositionEvent>>,
+}
+
+/// Explicit input-method adapter events. Raylib's GetCharPressed() exposes
+/// committed Unicode only; it DOES NOT provide XIM preedit lifecycle.
+#[cfg(feature="raylib")]
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum CompositionEvent {
+    Start{callback_id:u64,sequence:u64},
+    Update{callback_id:u64,sequence:u64,text:String,caret:usize},
+    Commit{callback_id:u64,sequence:u64,text:String},
+    Cancel{callback_id:u64,sequence:u64},
+}
+#[cfg(feature="raylib")]
+impl CompositionEvent {
+    fn target(&self)->u64{match self{
+        Self::Start{callback_id,..}|Self::Update{callback_id,..}|
+        Self::Commit{callback_id,..}|Self::Cancel{callback_id,..}=>*callback_id
+    }}
+    fn sequence(&self)->u64{match self{
+        Self::Start{sequence,..}|Self::Update{sequence,..}|
+        Self::Commit{sequence,..}|Self::Cancel{sequence,..}=>*sequence
+    }}
 }
 
 #[cfg(feature = "raylib")]
@@ -154,7 +177,10 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
         if active.on_change == *new_id { return; }
     }
-    if let Some(previous) = win.focused_input.take() {
+    if let Some(mut previous) = win.focused_input.take() {
+        // Blurring a field cancels the uncommitted composition. It may never
+        // reappear when that input regains focus via the persistent session.
+        previous.session.abandon_composition();
         win.input_sessions.insert(previous.on_change, previous);
     }
     if let Some((on_change, on_submit, source_value, revision)) = target {
@@ -170,7 +196,7 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             && (entry.session.buffer != source_value || revision.is_some()) {
             // Even identical text at a *new* explicit revision starts new
             // authority epoch: old undo history must not resurrect stale data.
-            entry.session = text_input::EditSession::new(source_value.clone());
+            entry.session.rebase_authority(source_value.clone());
             entry.visual_affinity=None;
         }
         entry.on_submit = on_submit;
@@ -239,7 +265,7 @@ fn reconcile_input_sessions(
         revision:Option<u64>| {
         if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
             && (entry.session.buffer!=prop || revision.is_some()) {
-            entry.session=text_input::EditSession::new(prop.to_owned());
+            entry.session.rebase_authority(prop.to_owned());
             entry.visual_affinity=None;
         }
         entry.on_submit=submit;
@@ -355,22 +381,26 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
-            let display=if node.kind=="Text"{
-                prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
+            let display:String=if node.kind=="Text"{
+                prop_string(node,"text").or_else(||prop_string(node,"content"))
+                    .unwrap_or("").to_owned()
             }else{
                 let id=parse_callback_id(prop_string(node,"on_change"));
-                let value=focus.as_ref().filter(|e|Some(e.on_change)==id)
-                    .or_else(||id.and_then(|id|sessions.get(&id)))
-                    .map(|e|e.session.buffer.as_str())
-                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))).unwrap_or("");
-                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value}
+                let active=focus.as_ref().filter(|e|Some(e.on_change)==id);
+                let session=active.or_else(||id.and_then(|id|sessions.get(&id)));
+                let value=active.and_then(|e|e.session.projected()).map(|p|p.display)
+                    .or_else(||session.map(|e|e.session.buffer.clone()))
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))
+                        .map(str::to_owned)).unwrap_or_default();
+                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("").to_owned()}
+                else{value}
             };
             if let (Some(key),Some(path))=(
-                shaped_gpu::entry_key(node,display,size),prop_string(node,"font_path")){
+                shaped_gpu::entry_key(node,&display,size),prop_string(node,"font_path")){
                 if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
                     out.push((key,path.to_owned(),
                         prop_string(node,"fallback_font_path").map(str::to_owned),size,
-                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display.to_owned()));
+                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display));
                 }
             }
         }
@@ -432,7 +462,11 @@ fn measure_input_visuals(
             if let Some(cb)=parse_callback_id(prop_string(node,"on_change")).filter(|id|allowed.contains(id)) {
                 let active=focused.as_ref().is_some_and(|fi|fi.on_change==cb);
                 let entry=if active {focused.as_mut()}else{sessions.get_mut(&cb)};
-                let value=entry.as_ref().map(|fi|fi.session.buffer.as_str())
+                let projection=if active {
+                    entry.as_ref().and_then(|fi|fi.session.projected())
+                }else{None};
+                let value=projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||entry.as_ref().map(|fi|fi.session.buffer.as_str()))
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
@@ -446,21 +480,25 @@ fn measure_input_visuals(
                 };
                 let width=prepared.map(|r|r.shaped.width)
                     .unwrap_or(if opt {0.0}else{measure(value)});
+                let caret_index=projection.as_ref().map(|p|p.caret)
+                    .or_else(||entry.as_ref().map(|fi|fi.session.caret)).unwrap_or(0);
                 let caret_stop=if active&&opt {
-                    entry.as_ref().and_then(|fi|prepared.and_then(|p|
-                        bidi_editor::caret_position(&p.shaped,fi.session.caret,fi.visual_affinity)))
+                    prepared.and_then(|p|bidi_editor::caret_position(&p.shaped,
+                        caret_index,if projection.is_some(){None}else{
+                            entry.as_ref().and_then(|fi|fi.visual_affinity)
+                        }))
                 }else{None};
-                let caret=if active{entry.as_ref().map(|fi|{
+                let caret=if active {
                     if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
-                    else{measure(text_viewport::grapheme_prefix(value,fi.session.caret))}
-                })}else{None}.unwrap_or(0.0);
-                let segments=if active&&opt{
+                    else{measure(text_viewport::grapheme_prefix(value,caret_index))}
+                }else{0.0};
+                let segments=if active&&opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .and_then(|(a,b)|prepared.and_then(|p|
                             bidi_editor::selection_fragments(&p.shaped,a,b)))
                         .unwrap_or_default()
                 }else{Vec::new()};
-                let selection=if active&&!opt{
+                let selection=if active&&!opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .map(|(a,b)|{
                             let x=measure(text_viewport::grapheme_prefix(value,a));
@@ -468,6 +506,19 @@ fn measure_input_visuals(
                             (x.min(y),x.max(y))
                         })
                 }else{None};
+                let preedit_spans=projection.as_ref().and_then(|p|{
+                    let a=p.preedit_graphemes.start;
+                    let b=p.preedit_graphemes.end;
+                    if a>=b{return None;}
+                    if opt {
+                        prepared.and_then(|shape|bidi_editor::selection_fragments(
+                            &shape.shaped,a,b))
+                    }else {
+                        let x=measure(text_viewport::grapheme_prefix(value,a));
+                        let y=measure(text_viewport::grapheme_prefix(value,b));
+                        Some(vec![(x.min(y),x.max(y))])
+                    }
+                }).unwrap_or_default();
                 let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
                 let content=text_viewport::content_bounds(plan.bounds);
                 let mut v=text_viewport::plan(content.width,width,caret,selection,previous,active);
@@ -475,6 +526,7 @@ fn measure_input_visuals(
                     v.caret_valid=!active || caret_stop.is_some();
                     v.selection_spans=segments;
                 }
+                v.preedit_spans=preedit_spans;
                 if let Some(entry)=entry {entry.scroll_x=v.scroll;}
                 result.insert(cb,v);
             }
@@ -518,6 +570,7 @@ impl Default for AuraLuminaPlugin {
     fn default() -> Self {
         Self {
             window: RefCell::new(None),
+            composition_queue: RefCell::new(Vec::new()),
         }
     }
 }
@@ -529,6 +582,26 @@ pub struct AuraLuminaPlugin;
 impl AuraLuminaPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Send an input-method event from an external, explicitly integrated
+    /// platform adapter. This is not a native XIM/IBus hookup: Raylib 5.5.1
+    /// does not expose preedit lifecycle. Events are checked again against
+    /// actual focus and session serial during the next native frame.
+    #[cfg(feature="raylib")]
+    pub fn submit_composition_event(&self,event:CompositionEvent)->bool{
+        if event.target()==0||event.sequence()==0{return false;}
+        let valid=match &event {
+            CompositionEvent::Update{text,..}|CompositionEvent::Commit{text,..} =>
+                text.len()<=text_input::MAX_PREEDIT_BYTES &&
+                text.chars().all(|c|!c.is_control() &&
+                    !matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}')),
+            _=>true
+        };
+        if !valid{return false;}
+        let mut queue=self.composition_queue.borrow_mut();
+        if queue.len()>=32{return false;}
+        queue.push(event);
+        true
     }
 }
 
@@ -558,6 +631,7 @@ pub struct DiagnosticTextVisual {
     pub caret_screen_x: f32,
     pub selection_screen: Option<(f32,f32)>,
     pub selection_screens: Vec<(f32,f32)>,
+    pub preedit_screens: Vec<(f32,f32)>,
     pub caret_visible: bool,
     pub caret_affinity: Option<usize>,
     pub caret_grapheme: Option<usize>,
@@ -639,6 +713,7 @@ impl AuraLuminaPlugin {
             caret_screen_x:v.caret_screen(c),
             selection_screen:v.selection_screen(c),
             selection_screens:v.selection_screens(c),
+            preedit_screens:v.preedit_screens(c),
             caret_visible:v.caret_valid,
             caret_affinity:w.as_ref()?.focused_input.as_ref()
                 .filter(|fi|fi.on_change==on_change)
@@ -699,6 +774,18 @@ impl AuraLuminaPlugin {
             .flat_map(|r|r.glyphs.iter().map(|g|(g.font_index,g.glyph_id)))
             .collect();
         Some((prepared.cells.len(),glyphs,prepared.shaped.width))
+    }
+
+    /// Diagnostic only: (authoritative buffer, temporary projected string,
+    /// preedit caret in projected graphemes, undo depth).
+    #[cfg(feature="lumina-diagnostics")]
+    pub fn diagnostic_composition(&self,callback_id:u64)->Option<(String,String,usize,usize)>{
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let fi=win.focused_input.as_ref().filter(|fi|fi.on_change==callback_id)?;
+        let projection=fi.session.projected()?;
+        Some((fi.session.buffer.clone(),projection.display,
+            projection.caret,fi.session.undo_len()))
     }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
@@ -833,6 +920,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
         #[cfg(feature = "raylib")]
         {
+            // Keep a bounded event batch outside the Raylib mutable borrow.
+            let pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
@@ -971,6 +1060,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
                                 if shaped_gpu::is_opted(n) {
                                     let hit=win.focused_input.as_ref().and_then(|fi|{
+                                        if fi.session.composing(){return None;}
                                         let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
                                         let c=text_viewport::content_bounds(pl.bounds);
                                         let scroll=win.last_text_views.get(&on_change)
@@ -995,7 +1085,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     None => {switch_input(win,None);None}
                 }
             } else {None};
-            if tab {
+            if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
                 let active=win.focused_input.as_ref().map(|fi|fi.on_change);
                 let target=layout::next_focus(&focus_order,active,reverse_tab);
                 match target {
@@ -1005,8 +1095,51 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     _=>switch_input(win,None),
                 }
             }
+            // Composition events are distinct from Raylib committed-char
+            // queue. Match the currently focused widget and monotonic serial.
+            // Never emit callbacks for preedit updates or cancellation.
+            let mut composition_consumed=false;
+            for event in pending_composition {
+                let Some(fi)=win.focused_input.as_mut() else{continue;};
+                if event.target()!=fi.on_change{continue;}
+                use CompositionEvent::*;
+                match event {
+                    Start{sequence,..}=>{
+                        if fi.session.start_composition(sequence){
+                            composition_consumed=true;
+                        }
+                    }
+                    Update{sequence,text,caret,..}=>{
+                        if fi.session.update_composition(sequence,&text,caret){
+                            composition_consumed=true;
+                        }
+                    }
+                    Cancel{sequence,..}=>{
+                        if fi.session.cancel_composition(sequence){
+                            composition_consumed=true;
+                        }
+                    }
+                    Commit{sequence,text,..}=>{
+                        if let Some(changed)=fi.session.commit_composition(sequence,&text){
+                            composition_consumed=true;
+                            if changed{
+                                fi.visual_affinity=None;
+                                fi.revision.record_local_edit(&fi.session.buffer);
+                                fb.text_input_events.push(UiTextInputEvent{
+                                    callback_id:fi.on_change,text:fi.session.buffer.clone(),
+                                    submitted:false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
             if let Some(fi)=&mut win.focused_input {
-                if escape {
+                if fi.session.composing() || composition_consumed {
+                    // The platform adapter owns navigation and typing while
+                    // the preedit transaction is active. Escape aborts it.
+                    if escape{fi.session.abandon_composition();}
+                } else if escape {
                     switch_input(win,None);
                 } else {
                     use text_input::{EditCommand,SessionAction};
@@ -1492,8 +1625,15 @@ fn paint_node<D: RaylibDraw>(
             // Display retained drafts for nonfocused inputs until the host
             // changes their authoritative value. Avoid the old visual reset
             // to stale controlled props on Tab/blur.
+            // The IME projection is *display only*: never replace the
+            // authoritative buffer or create an Undo entry while composing.
+            let projection=if is_focused {
+                focused_input.as_ref().and_then(|fi|fi.session.projected())
+            }else{None};
             let value = if is_focused {
-                focused_input.as_ref().map(|fi|fi.session.buffer.as_str()).unwrap_or("")
+                projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||focused_input.as_ref().map(|fi|fi.session.buffer.as_str()))
+                    .unwrap_or("")
             } else {
                 on_change.and_then(|cb|input_sessions.get(&cb))
                     .map(|fi|fi.session.buffer.as_str())
@@ -1531,8 +1671,20 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
             }
 
+            // Only explicitly injected preedit events can draw this blue
+            // underline; Raylib committed Unicode chars do not imply IME.
+            if is_focused {
+                if let Some(v)=visual {
+                    for (x0,x1) in v.preedit_screens(content){
+                        d.draw_rectangle_rec(Rectangle::new(x0,
+                            rect.y+rect.height-7.0,(x1-x0).max(0.0),2.0),
+                            Color::new(56,189,248,255));
+                    }
+                }
+            }
+
             // Exact default-font pixel measurements, not an average cell;
-            // separate BiDi/IME/font fallback certification is still needed.
+            // OS-native XIM/preedit delivery remains unqualified.
             if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
                 if let Some(v)=visual.filter(|v|v.caret_valid) {
                     let cx=v.caret_screen(content);

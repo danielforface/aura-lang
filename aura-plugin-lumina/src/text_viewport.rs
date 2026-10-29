@@ -15,6 +15,8 @@ pub(crate) struct Visual {
     pub selection: Option<(f32,f32)>,
     /// Real visually separated ranges for an opt-in shaped BiDi editor.
     pub selection_spans: Vec<(f32,f32)>,
+    /// Non-authoritative active IME preedit underline fragments, in line px.
+    pub preedit_spans: Vec<(f32,f32)>,
     /// Don't paint a fake caret inside an unresolved ligature cluster.
     pub caret_valid: bool,
 }
@@ -29,6 +31,13 @@ impl Visual {
             let x1=(self.origin(content)+b).clamp(content.x,content.x+content.width);
             (x1>x0).then_some((x0,x1))
         })
+    }
+    pub(crate) fn preedit_screens(&self,content:Bounds)->Vec<(f32,f32)>{
+        self.preedit_spans.iter().filter_map(|&(a,b)|{
+            let x0=(self.origin(content)+a).clamp(content.x,content.x+content.width);
+            let x1=(self.origin(content)+b).clamp(content.x,content.x+content.width);
+            (x1>x0).then_some((x0,x1))
+        }).collect()
     }
     /// Retain one rectangle per noncontiguous UAX9 visual run segment.
     pub(crate) fn selection_screens(&self,content:Bounds)->Vec<(f32,f32)>{
@@ -78,13 +87,21 @@ pub(crate) fn plan(
         let hi=clean(b).min(full);
         (hi>lo).then_some((lo,hi))
     });
-    Visual {scroll,caret,selection,selection_spans:Vec::new(),caret_valid:true}
+    Visual {scroll,caret,selection,selection_spans:Vec::new(),preedit_spans:Vec::new(),caret_valid:true}
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     fn c()->Bounds{content_bounds(Bounds::new(20.0,30.0,100.0,40.0))}
     #[test]fn content_clip_is_inside_widget(){assert_eq!(c(),Bounds::new(32.0,33.0,76.0,34.0));}
+    #[test]fn preedit_underlines_clip_to_visible_content_and_leave_selection_unmodified(){
+        let mut v=plan(76.0,200.0,98.0,None,0.0,true);
+        v.preedit_spans=vec![(15.0,32.0),(145.0,200.0)];
+        assert_eq!(v.preedit_screens(c()),vec![(32.0,40.0)]);
+        v.scroll=10.0;
+        assert_eq!(v.preedit_screens(c()),vec![(37.0,54.0)]);
+        assert_eq!(v.selection,None);
+    }
     #[test]fn short_text_never_scrolls(){let v=plan(76.0,40.0,20.0,None,100.0,true);assert_eq!(v.scroll,0.0);}
     #[test]fn end_caret_scrolls_until_visible(){let v=plan(76.0,200.0,200.0,None,0.0,true);assert_eq!(v.scroll,124.0);assert_eq!(v.caret_screen(c()),108.0);}
     #[test]fn home_returns_to_start(){let v=plan(76.0,250.0,0.0,None,174.0,true);assert_eq!(v.scroll,0.0);}

@@ -77,9 +77,25 @@ pub(crate) struct EditSession {
     pub anchor: usize,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    preedit: Option<Preedit>,
+    last_composition_sequence: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
+
+pub(crate) const MAX_PREEDIT_BYTES: usize = 1024;
+pub(crate) const MAX_PROJECTED_TEXT_BYTES: usize = 8192;
+/// An OS input adapter may supply this sequence, but the editor owns the
+/// authoritative string; only Commit crosses that boundary.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct Preedit { pub(crate) text:String, pub(crate) caret:usize }
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct Projection {
+    pub(crate) display: String,
+    pub(crate) caret: usize,
+    pub(crate) preedit_graphemes: std::ops::Range<usize>,
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionAction {
@@ -90,10 +106,17 @@ pub(crate) enum SessionAction {
     Redo,
 }
 const MAX_HISTORY: usize = 64;
+fn valid_preedit(text:&str)->bool{
+    text.len()<=MAX_PREEDIT_BYTES &&
+    text.chars().all(|c|!c.is_control() && !matches!(c,
+        '\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
+}
+
 impl EditSession {
     pub(crate) fn new(text: String) -> Self {
         let end=grapheme_count(&text);
-        Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new() }
+        Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
+            preedit:None, last_composition_sequence:0 }
     }
     fn snapshot(&self) -> Snapshot {
         Snapshot { buffer:self.buffer.clone(),caret:self.caret,anchor:self.anchor }
@@ -103,6 +126,66 @@ impl EditSession {
         self.caret=s.caret.min(grapheme_count(&self.buffer));
         self.anchor=s.anchor.min(grapheme_count(&self.buffer));
     }
+    /// Begin a new composition epoch on a focused field only. The sequence
+    /// must be monotonically increasing, including after Cancel and Commit.
+    pub(crate) fn start_composition(&mut self,sequence:u64)->bool {
+        if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_some(){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=Some(Preedit{text:String::new(),caret:0});
+        true
+    }
+    pub(crate) fn update_composition(&mut self,sequence:u64,text:&str,caret:usize)->bool {
+        if sequence<=self.last_composition_sequence || sequence==0 ||
+            self.preedit.is_none() || !valid_preedit(text) ||
+            caret>grapheme_count(text){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=Some(Preedit{text:text.to_owned(),caret});
+        true
+    }
+    /// Exactly one committed Edit action: one Undo snapshot, one on_change.
+    pub(crate) fn commit_composition(&mut self,sequence:u64,text:&str)->Option<bool> {
+        if sequence==0 || sequence<=self.last_composition_sequence ||
+           self.preedit.is_none() || !valid_preedit(text){return None;}
+        self.last_composition_sequence=sequence;
+        self.preedit=None;
+        Some(if text.is_empty(){false}else{
+            self.apply(SessionAction::Edit(EditCommand::Insert(text.to_owned())))
+        })
+    }
+    pub(crate) fn cancel_composition(&mut self,sequence:u64)->bool {
+        if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_none(){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=None;
+        true
+    }
+    pub(crate) fn abandon_composition(&mut self) {self.preedit=None;}
+    pub(crate) fn composing(&self)->bool{self.preedit.is_some()}
+    /// A new authoritative value revision clears transient composition and
+    /// undo, yet must not reset the adapter replay barrier for this widget.
+    pub(crate) fn rebase_authority(&mut self,text:String){
+        let last=self.last_composition_sequence;
+        *self=Self::new(text);
+        self.last_composition_sequence=last;
+    }
+    /// Non-authoritative projection used by GPU and measured viewport only.
+    /// The source buffer, caret, selection, undo and redo remain unchanged.
+    pub(crate) fn projected(&self)->Option<Projection>{
+        let p=self.preedit.as_ref()?;
+        let (start,end)=self.selection().unwrap_or((self.caret,self.caret));
+        let lo=byte_offset(&self.buffer,start);
+        let hi=byte_offset(&self.buffer,end);
+        let bytes=self.buffer.len().checked_sub(hi-lo)?.checked_add(p.text.len())?;
+        if bytes>MAX_PROJECTED_TEXT_BYTES{return None;}
+        let mut display=String::with_capacity(bytes);
+        display.push_str(&self.buffer[..lo]);
+        display.push_str(&p.text);
+        display.push_str(&self.buffer[hi..]);
+        let begin=grapheme_index_at_or_after_byte(&display,lo);
+        let end_at=grapheme_index_at_or_after_byte(&display,lo+p.text.len());
+        let caret_byte=lo+byte_offset(&p.text,p.caret);
+        let caret=grapheme_index_at_or_after_byte(&display,caret_byte);
+        Some(Projection{display,caret,preedit_graphemes:begin..end_at})
+    }
     pub(crate) fn selection(&self) -> Option<(usize,usize)> {
         (self.anchor!=self.caret).then(||(self.anchor.min(self.caret),self.anchor.max(self.caret)))
     }
@@ -111,6 +194,9 @@ impl EditSession {
         undo.push(snapshot);
     }
     pub(crate) fn apply(&mut self, action: SessionAction) -> bool {
+        // Raw navigation, delete, insert and Undo are owned by the IME until
+        // its explicit Commit or Cancel; no partial editor mutation.
+        if self.preedit.is_some(){return false;}
         let len=grapheme_count(&self.buffer);
         self.caret=self.caret.min(len); self.anchor=self.anchor.min(len);
         match action {
@@ -386,5 +472,87 @@ mod tests {
         for _ in 0..10 { assert!(!apply_edit(&mut s,&mut caret,EditCommand::Delete)); }
         assert!(apply_edit(&mut s,&mut caret,EditCommand::Insert("Hi".into())));
         assert_eq!((s,caret),("Hi".into(),2));
+    }
+
+    #[test]fn ime_preedit_update_cancel_keeps_authoritative_and_undo_untouched(){
+        let mut e=EditSession::new("Aשלום".into());
+        e.apply(SessionAction::Move(EditCommand::Home,false));
+        e.apply(SessionAction::Move(EditCommand::Right,false));
+        assert!(e.start_composition(101));
+        assert!(e.update_composition(102,"界に",1));
+        let preview=e.projected().expect("temporary render projection");
+        assert_eq!(preview.display,"A界にשלום");
+        assert_eq!(preview.caret,2);
+        assert_eq!(preview.preedit_graphemes,1..3);
+        assert_eq!(e.buffer,"Aשלום");
+        assert_eq!(e.undo_len(),0);
+        assert!(!e.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert!(!e.apply(SessionAction::Undo));
+        assert!(!e.update_composition(102,"replay",1));
+        assert!(!e.update_composition(103,"bad\nvalue",1));
+        assert!(e.cancel_composition(104));
+        assert!(e.projected().is_none());
+        assert_eq!(e.buffer,"Aשלום");
+        assert!(!e.apply(SessionAction::Undo));
+    }
+    #[test]fn ime_commit_is_one_authoritative_edit_and_one_undo_step(){
+        let mut e=EditSession::new("ab".into());
+        assert!(e.start_composition(11));
+        assert!(e.update_composition(12,"k",1));
+        assert!(e.update_composition(13,"か",1));
+        assert_eq!(e.buffer,"ab");
+        assert_eq!(e.commit_composition(14,"漢"),Some(true));
+        assert_eq!(e.buffer,"ab漢");
+        assert_eq!(e.undo_len(),1);
+        assert_eq!(e.commit_composition(15,"duplicate"),None);
+        assert_eq!(e.buffer,"ab漢");
+        assert!(e.apply(SessionAction::Undo));
+        assert_eq!(e.buffer,"ab");
+        assert!(e.apply(SessionAction::Redo));
+        assert_eq!(e.buffer,"ab漢");
+        assert!(!e.start_composition(14),"old serial never starts a new composition");
+        assert!(e.start_composition(16));
+    }
+    #[test]fn ime_selection_replacement_and_zwj_grapheme_anchor_is_stable(){
+        let mut e=EditSession::new("B👩‍👩‍👧‍👦C".into());
+        e.apply(SessionAction::SelectAll);
+        assert!(e.start_composition(5));
+        assert!(e.update_composition(6,"日",1));
+        let p=e.projected().unwrap();
+        assert_eq!(p.display,"日");
+        assert_eq!(p.preedit_graphemes,0..1);
+        assert_eq!(e.buffer,"B👩‍👩‍👧‍👦C");
+        assert_eq!(e.selection(),Some((0,3)));
+        assert_eq!(e.commit_composition(7,"שלום"),Some(true));
+        assert_eq!(e.buffer,"שלום");
+        assert_eq!(e.undo_len(),1);
+        assert!(e.apply(SessionAction::Undo));
+        assert_eq!(e.buffer,"B👩‍👩‍👧‍👦C");
+    }
+    #[test]fn newer_host_value_revision_cancels_preedit_without_reopening_old_serial(){
+        let mut e=EditSession::new("original".into());
+        assert!(e.start_composition(40));
+        assert!(e.update_composition(41,"漢",1));
+        assert!(e.projected().is_some());
+        e.rebase_authority("server".into());
+        assert!(e.projected().is_none());
+        assert_eq!(e.buffer,"server");
+        assert_eq!(e.undo_len(),0);
+        assert!(!e.start_composition(41));
+        assert!(!e.commit_composition(42,"stale").is_some());
+        assert!(e.start_composition(43));
+    }
+    #[test]fn ime_limits_invalid_cursor_and_controls_rejected_without_sequence_advance(){
+        let mut e=EditSession::new(String::new());
+        assert!(!e.start_composition(0));
+        assert!(e.start_composition(1));
+        assert!(!e.update_composition(2,&"X".repeat(MAX_PREEDIT_BYTES+1),0));
+        assert!(!e.update_composition(2,"e\u{301}",2));
+        assert!(!e.update_composition(2,"evil\u{202E}",1));
+        assert!(e.update_composition(2,"e\u{301}",1));
+        assert_eq!(e.projected().unwrap().preedit_graphemes,0..1);
+        assert_eq!(e.commit_composition(3,""),Some(false));
+        assert_eq!(e.buffer,"");
+        assert_eq!(e.undo_len(),0);
     }
 }
