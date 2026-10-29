@@ -412,7 +412,8 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions)?;
+        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions,
+            &module.refined_param_bounds)?;
         out.push('\n');
     }
 
@@ -420,7 +421,8 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions)?;
+        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions,
+            &module.refined_param_bounds)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -499,6 +501,7 @@ fn emit_function(
     ret_map: &HashMap<String, CType>,
     record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
     functions: &BTreeMap<String, FunctionIR>,
+    source_refined_param_bounds: &BTreeMap<String, Vec<Option<(u64, u64)>>>,
 ) -> Result<(), CBackendError> {
     emit_function_signature(out, f, record_layouts, &f.name)?;
     out.push_str(" {\n");
@@ -1152,7 +1155,35 @@ fn emit_function(
                                 callee, target.params.len(), args.len(),
                             ) });
                         }
+                        let source_bounds = source_refined_param_bounds.get(callee);
+                        if let Some(bounds) = source_bounds {
+                            if bounds.len() != target.params.len() {
+                                return Err(CBackendError { message: format!(
+                                    "refined ABI metadata arity mismatch for '{callee}': {} vs {}",
+                                    bounds.len(), target.params.len()
+                                ) });
+                            }
+                        }
                         for (i, (arg, expected)) in args.iter().zip(target.params.iter()).enumerate() {
+                            let declared_range = source_bounds
+                                .and_then(|b| b.get(i)).copied().flatten();
+                            // IR source contract and runtime guard are separate
+                            // authorities. For refined source parameters, the
+                            // executable same-block interval must lie entirely
+                            // within the original declared interval. A widened
+                            // or missing guard cannot certify the call even if
+                            // the constant fits the underlying primitive.
+                            if let Some((decl_lo, decl_hi)) = declared_range {
+                                let emitted_guard = current_block_ranges.get(arg).copied();
+                                if decl_lo > decl_hi ||
+                                    !emitted_guard.is_some_and(|(lo, hi)|
+                                        lo <= hi && lo >= decl_lo && hi <= decl_hi)
+                                {
+                                    return Err(CBackendError { message: format!(
+                                        "refined ABI call '{callee}' arg {i} range guard mismatch: source=[{decl_lo}..{decl_hi}], emitted={emitted_guard:?}"
+                                    ) });
+                                }
+                            }
                             let expected_record = qualified_record_abi_type(&expected.ty, record_layouts)?;
                             match expected_record {
                                 Some(name) => match records.get(arg) {
@@ -1183,6 +1214,7 @@ fn emit_function(
                                                 .expect("scalar operand checked").1.clone();
                                             let range = current_block_ranges.get(arg);
                                             let guarded_cast = if *actual == CType::U32 && required == CType::U8 &&
+                                                declared_range.is_some() &&
                                                 range.is_some_and(|(lo, hi)| *lo <= *hi && *hi <= u8::MAX as u64)
                                             {
                                                 Some(format!("((uint8_t)({original}))"))

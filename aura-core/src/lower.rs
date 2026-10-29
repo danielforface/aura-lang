@@ -137,6 +137,12 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
             }
             Stmt::CellDef(cell) => {
                 let f = lower.lower_cell(cell)?;
+                // Keep the source's qualified interval independently of
+                // the executable IR RangeCheck that an optimizer can rewrite.
+                // The exact vec order matches the FunctionIR parameter ABI.
+                if let Some(bounds) = checker.function_refined_arg_ranges(&f.name) {
+                    module.refined_param_bounds.insert(f.name.clone(), bounds);
+                }
                 module.functions.insert(f.name.clone(), f);
             }
             Stmt::FlowBlock(fb) => {
