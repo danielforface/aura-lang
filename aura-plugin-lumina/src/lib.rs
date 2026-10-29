@@ -782,6 +782,15 @@ impl AuraLuminaPlugin {
         Some((prepared.cells.len(),glyphs,prepared.shaped.width))
     }
 
+    /// True only after the helper's real IBus InputContext FocusIn ACK.
+    /// This does not certify a specific engine's actual preedit behavior.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_ready(&self,callback_id:u64)->bool{
+        let w=self.window.borrow();
+        w.as_ref().and_then(|win|win.native_ibus.as_ref())
+            .is_some_and(|ibus|ibus.active(Some(callback_id)))
+    }
+
     /// Diagnostic only: (authoritative buffer, temporary projected string,
     /// preedit caret in projected graphemes, undo depth).
     #[cfg(feature="lumina-diagnostics")]
