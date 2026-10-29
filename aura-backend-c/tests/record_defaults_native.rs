@@ -813,7 +813,8 @@ cell entry_value() ->:
         .expect("oracle executes valid refined user cell call");
     assert!(result.ok && result.stderr.is_empty(), "{result:?}");
     assert_eq!(result.return_value,Some(OracleValue::U32(20)));
-    let artifacts=emit_module(&ir,None).expect("a refined parameter has qualified u8 native ABI");
+    let artifacts=emit_module(&ir,None).unwrap_or_else(|e|
+        panic!("a refined parameter has qualified u8 native ABI: {e}; IR = {ir:#?}"));
     let scratch=Scratch::new();
     fs::write(scratch.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
     fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
