@@ -1198,6 +1198,23 @@ impl<'c> Lowerer<'c> {
                     "collections.vector_set" => "tensor.set".to_string(),
                     _ => callee_name,
                 };
+                // An argument accepted by the source-level refinement checker
+                // still needs an executable IR guard before narrowing U32 to
+                // its concrete integer C ABI. No implicit compiler-side
+                // truncation and no reliance on a deferred solver proof.
+                if let Some(ranges) = self.checker.function_refined_arg_ranges(&callee_name) {
+                    for (arg, range) in lowered_args.iter().zip(ranges.iter()) {
+                        if let Some((lo, hi)) = range {
+                            self.push_inst(Inst {
+                                span: expr.span,
+                                dest: None,
+                                kind: InstKind::RangeCheckU32 {
+                                    value: *arg, lo: *lo, hi: *hi
+                                },
+                            });
+                        }
+                    }
+                }
                 let v = self.id.fresh_value();
                 let is_void = self.checker.is_void_function(&callee_name);
                 self.push_inst(Inst {

@@ -828,6 +828,10 @@ fn emit_function(
 
     // Emit blocks
     for b in &f.blocks {
+        // Only a guard executed in this same basic block before the call
+        // authorizes an exact integer ABI narrowing. Never infer a proof
+        // from a different predecessor, an SSA type, or a source-level name.
+        let mut current_block_ranges: HashMap<ValueId, (u64, u64)> = HashMap::new();
         emit_line_directive(out, debug, b.span);
         out.push_str("\n");
         out.push_str(&bb_label(b.id));
@@ -845,7 +849,12 @@ fn emit_function(
                 }
 
                 InstKind::RangeCheckU32 { value, lo, hi } | InstKind::RangeCheck { value, lo, hi } => {
-                    if let Some((_ct, name)) = values.get(value) {
+                    if let Some((ct, name)) = values.get(value) {
+                        // The emitted guard runs before the call and is the
+                        // authority for narrowing a U32 argument to U8.
+                        if *ct == CType::U32 && lo <= hi {
+                            current_block_ranges.insert(*value, (*lo, *hi));
+                        }
                         out.push_str("  AURA_RANGE_CHECK_U32(");
                         out.push_str(name);
                         out.push_str(", ");
@@ -1135,6 +1144,7 @@ fn emit_function(
                 }
 
                 InstKind::Call { callee, args } => {
+                    let mut call_values = values.clone();
                     if let Some(target) = functions.get(callee) {
                         if target.params.len() != args.len() {
                             return Err(CBackendError { message: format!(
@@ -1162,10 +1172,24 @@ fn emit_function(
                                     if let Some((actual, _)) = values.get(arg) {
                                         let required = map_type_to_ctype(&expected.ty);
                                         if *actual != required {
-                                            return Err(CBackendError { message: format!(
-                                                "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}",
-                                                callee, i, actual, required,
-                                            ) });
+                                            // An executable same-block U32 range guard is
+                                            // sufficient to narrow to U8 without truncation.
+                                            // Raw/forged IR without this guard still fails
+                                            // closed, preserving exact nominal and scalar ABI.
+                                            let range = current_block_ranges.get(arg);
+                                            if *actual == CType::U32 && required == CType::U8 &&
+                                                range.is_some_and(|(lo, hi)| *lo <= *hi && *hi <= u8::MAX as u64)
+                                            {
+                                                let original = values.get(arg)
+                                                    .expect("scalar operand checked").1.clone();
+                                                call_values.insert(*arg,
+                                                    (required, format!("((uint8_t)({original}))")));
+                                            } else {
+                                                return Err(CBackendError { message: format!(
+                                                    "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}",
+                                                    callee, i, actual, required,
+                                                ) });
+                                            }
                                         }
                                     } else {
                                         return Err(CBackendError { message: format!(
@@ -1179,7 +1203,7 @@ fn emit_function(
                         if let Some(record) = qualified_record_abi_type(&target.ret, record_layouts)? {
                             let arg_names = args.iter().map(|a| {
                                 records.get(a).map(|(_, n)| n.clone())
-                                    .or_else(|| values.get(a).map(|(_, n)| n.clone()))
+                                    .or_else(|| call_values.get(a).map(|(_, n)| n.clone()))
                                     .expect("all Record ABI call args checked")
                             }).collect::<Vec<_>>();
                             if let Some(dest) = inst.dest {
@@ -1203,9 +1227,14 @@ fn emit_function(
                         ) });
                     }
                     emit_call(
-                        out, inst.dest, callee, args, &mut values, &records, ret_map,
+                        out, inst.dest, callee, args, &mut call_values, &records, ret_map,
                         &string_literals, &named_values,
                     );
+                    if let Some(dest) = inst.dest {
+                        if let Some(binding) = call_values.get(&dest).cloned() {
+                            values.insert(dest, binding);
+                        }
+                    }
                 }
                 InstKind::ComputeKernel { callee, args } => {
                     if args.iter().any(|arg| records.contains_key(arg)) {

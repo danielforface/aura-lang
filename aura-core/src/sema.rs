@@ -776,6 +776,19 @@ impl Checker {
         self.functions.get(name).map(|sig| &sig.ret)
     }
 
+    // The lowerer uses exactly this source-checked contract to insert an
+    // executable range guard before narrowing an argument to a native ABI.
+    pub(crate) fn function_refined_arg_ranges(
+        &self, name: &str
+    ) -> Option<Vec<Option<(u64, u64)>>> {
+        self.functions.get(name).map(|sig| sig.params.iter()
+            .map(|p| match &p.ty {
+                Type::ConstrainedRange { base, lo, hi }
+                    if base_type(base).is_integer() => Some((*lo, *hi)),
+                _ => None,
+            }).collect())
+    }
+
     pub fn function_param_names(&self, name: &str) -> Option<Vec<String>> {
         self.functions.get(name).map(|sig| {
             sig.params
