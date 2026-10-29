@@ -23,10 +23,11 @@ if context is None:
     print("IBUS_NO_INPUT_CONTEXT", file=sys.stderr, flush=True)
     sys.exit(4)
 context.set_capabilities(int(IBus.Capabilite.FOCUS) | int(IBus.Capabilite.PREEDIT_TEXT))
-context.focus_in()
 engine = os.environ.get("AURA_LUMINA_IBUS_ENGINE", "")
 if engine:
     context.set_engine(engine)
+# Engine selection can invalidate the prior focus; focus last.
+context.focus_in()
 stats = {"preedit": 0, "commit": 0, "unicode": False}
 def emit(line):
     print(line, flush=True)
@@ -67,7 +68,11 @@ context.connect("hide-preedit-text", lambda _: emit("H"))
 loop = GLib.MainLoop()
 emit("READY")
 def key(keysym, keycode=0, state=0):
-    return bool(context.process_key_event(keysym, keycode, state))
+    consumed=bool(context.process_key_event(keysym, keycode, state))
+    if "--probe" in sys.argv:
+        print("IBUS_PROBE_KEY",hex(keysym),"handled",consumed,
+              file=sys.stderr,flush=True)
+    return consumed
 def read_stdin(_fd, condition):
     if condition & (GLib.IO_HUP | GLib.IO_ERR):
         loop.quit()
@@ -104,6 +109,13 @@ if "--probe" in sys.argv:
         print("PROBE_REQUIRES_HANGUL", file=sys.stderr, flush=True)
         sys.exit(5)
     # Actual two-set Hangul keyboard: r,k combine to Korean syllable.
+    # First inspect whether the context really owns a selected engine.
+    def report_engine():
+        e=context.get_engine()
+        print("IBUS_PROBE_ENGINE",e.get_name() if e else "NONE",
+              file=sys.stderr,flush=True)
+        return False
+    GLib.timeout_add(1000,report_engine)
     steps = iter([ord("r"), ord("k"), ord(" "), 0xFF0D])
     def next_key():
         try:
