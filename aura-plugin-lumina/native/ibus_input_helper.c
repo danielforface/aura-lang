@@ -52,7 +52,10 @@ int main(int argc,char**argv) {
     g_signal_connect(ic,"hide-preedit-text",G_CALLBACK(hide_preedit),NULL);
     ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT);
     ibus_input_context_set_engine(ic,argv[1]);
-    pump_ms(250);
+    pump_ms(350);
+    IBusEngineDesc *initial=ibus_input_context_get_engine(ic);
+    fprintf(stderr,"LUMINA_IBUS_ACTUAL_ENGINE %s\n",
+        initial ? ibus_engine_desc_get_name(initial) : "(none)");
     puts("READY");
     char *line=NULL;size_t cap=0;
     while(getline(&line,&cap,stdin)!=-1){
@@ -60,7 +63,13 @@ int main(int argc,char**argv) {
         if(n>128){puts("FATAL input_too_long");break;}
         if(!strncmp(line,"F1",2)){
             ibus_input_context_focus_in(ic);
-            pump_ms(80);puts("A");continue;
+            ibus_input_context_enable(ic);
+            ibus_input_context_property_activate(ic,"InputMode",PROP_STATE_CHECKED);
+            pump_ms(200);
+            IBusEngineDesc *focused=ibus_input_context_get_engine(ic);
+            fprintf(stderr,"LUMINA_IBUS_FOCUSED_ENGINE %s\n",
+                focused ? ibus_engine_desc_get_name(focused) : "(none)");
+            puts("A");continue;
         }
         if(!strncmp(line,"F0",2)){
             ibus_input_context_focus_out(ic);
@@ -74,6 +83,7 @@ int main(int argc,char**argv) {
                 puts("R\t0");continue;
             }
             gboolean handled=ibus_input_context_process_key_event(ic,(guint32)key,0,0);
+            fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY key=%lu handled=%d\n",key,handled);
             // ProcessKeyEvent replies synchronously, but the input-context
             // signals are received by the GLib main loop.
             pump_ms(25);
