@@ -25,6 +25,8 @@ mod gdef_caret;
 mod text_shaping;
 #[cfg(feature="raylib")]
 mod shaped_gpu;
+#[cfg(all(feature="raylib",target_os="linux"))]
+mod native_ibus;
 #[cfg(any(feature="raylib",test))]
 mod bidi_editor;
 
@@ -153,6 +155,10 @@ struct LuminaWindow {
     focused_input: Option<FocusedTextInput>,
     input_sessions: HashMap<u64, FocusedTextInput>,
     last_text_views: HashMap<u64,text_viewport::Visual>,
+    #[cfg(target_os="linux")]
+    native_ibus: Option<native_ibus::NativeIbus>,
+    #[cfg(target_os="linux")]
+    native_ibus_script: Option<String>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
@@ -921,7 +927,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
         #[cfg(feature = "raylib")]
         {
             // Keep a bounded event batch outside the Raylib mutable borrow.
-            let pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
+            let mut pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
@@ -956,6 +962,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     focused_input: None,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
+                    #[cfg(target_os="linux")]
+                    native_ibus: None,
+                    #[cfg(target_os="linux")]
+                    native_ibus_script: None,
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
                     shaped_textures: HashMap::new(),
@@ -1095,6 +1105,55 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     _=>switch_input(win,None),
                 }
             }
+            // Only a TextInput explicitly opted into the Linux IBus helper
+            // may activate real IBus InputContext processing. Nothing here
+            // pretends that Raylib GetCharPressed is an IME preedit callback.
+            let mut native_ime_active=false;
+            #[cfg(target_os="linux")]
+            {
+                let requested=win.focused_input.as_ref().and_then(|fi|{
+                    let (node,_)=find_input_by_callback(tree,&planned_layout,fi.on_change)?;
+                    if prop(node,"native_ime")!=Some("ibus"){return None;}
+                    let path=prop(node,"native_ime_helper")?;
+                    Some((fi.on_change,path.to_owned()))
+                });
+                if let Some((id,path))=&requested {
+                    if win.native_ibus_script.as_deref()!=Some(path.as_str()){
+                        win.native_ibus=None; // clean up previous subprocess
+                        win.native_ibus_script=Some(path.clone());
+                    }
+                    if win.native_ibus.is_none() {
+                        win.native_ibus=native_ibus::NativeIbus::spawn(path);
+                    }
+                    if let Some(ibus)=win.native_ibus.as_mut(){
+                        ibus.focus(Some(*id));
+                        pending_composition.extend(ibus.drain());
+                        native_ime_active=ibus.active(Some(*id));
+                        if escape && native_ime_active {
+                            // Abort backend focus as well as editor preedit.
+                            // Do not carry stale engine state to new epoch.
+                            ibus.focus(None);
+                        }else if native_ime_active {
+                            // Raw physical key queue is not a Unicode text
+                            // source. The helper performs real IBus key
+                            // processing and publishes engine-origin signals.
+                            for _ in 0..32 {
+                                let Some(key)=win.rl.get_key_pressed() else{break;};
+                                if !ctrl {let _=ibus.key(key as u32);}
+                            }
+                        }
+                    }
+                }else{
+                    if let Some(ibus)=win.native_ibus.as_mut(){
+                        ibus.focus(None);
+                    }
+                }
+                if native_ime_active {
+                    // Strictly avoid GLFW's duplicate committed chars while
+                    // our real IBus context exclusively owns text input.
+                    typed.clear();
+                }
+            }
             // Composition events are distinct from Raylib committed-char
             // queue. Match the currently focused widget and monotonic serial.
             // Never emit callbacks for preedit updates or cancellation.
@@ -1135,7 +1194,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }
             if let Some(fi)=&mut win.focused_input {
-                if fi.session.composing() || composition_consumed {
+                if fi.session.composing() || composition_consumed || native_ime_active {
                     // The platform adapter owns navigation and typing while
                     // the preedit transaction is active. Escape aborts it.
                     if escape{fi.session.abandon_composition();}
