@@ -70,17 +70,23 @@ context.connect("update-preedit-text", preedit)
 context.connect("commit-text", commit)
 context.connect("hide-preedit-text", lambda _: emit("H"))
 loop = GLib.MainLoop()
-readiness={"attempts":0, "ready":False}
+readiness={"attempts":0, "ready":False, "stable":0}
 def wait_for_selected_engine():
     readiness["attempts"] += 1
     selected=context.get_engine()
     name=selected.get_name() if selected else "NONE"
     if not engine or name==engine:
+        readiness["stable"] += 1
+        # The daemon can transiently advertise the right engine and then
+        # replace it with XKB; demand six consecutive live engine reads.
+        if readiness["stable"] < 6:
+            return True
         readiness["ready"]=True
         emit("READY")
         print("IBUS_ACTUAL_ENGINE_READY:"+name, file=sys.stderr, flush=True)
         return False
-    if readiness["attempts"]>=60:
+    readiness["stable"]=0
+    if readiness["attempts"]>=90:
         print("IBUS_ENGINE_MISMATCH requested="+engine+" actual="+name,
               file=sys.stderr, flush=True)
         emit("FAIL")
@@ -93,6 +99,14 @@ def wait_for_selected_engine():
     return True
 GLib.timeout_add(80, wait_for_selected_engine)
 def key(keysym, keycode=0, state=0):
+    if engine:
+        selected=context.get_engine()
+        name=selected.get_name() if selected else "NONE"
+        if name!=engine:
+            print("IBUS_INPUT_ENGINE_LOST expected="+engine+" actual="+name,
+                  file=sys.stderr, flush=True)
+            emit("FAIL")
+            return False
     consumed=bool(context.process_key_event(keysym, keycode, state))
     if "--probe" in sys.argv:
         print("IBUS_PROBE_KEY",hex(keysym),"handled",consumed,
