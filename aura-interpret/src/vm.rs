@@ -2364,7 +2364,6 @@ impl Avm {
             }
             if !alias.params.is_empty()
                 || !alias.target.args.is_empty()
-                || alias.target.range.is_some()
             {
                 return Err(miette::miette!(
                     "AVM: unqualified generic or refined TypeAlias '{}' in raw integer resolution",
@@ -2378,15 +2377,67 @@ impl Avm {
     fn resolve_raw_integer_annotation(
         &self, ty: &aura_ast::TypeRef
     ) -> miette::Result<Option<aura_ast::TypeRef>> {
-        if !ty.args.is_empty() || ty.range.is_some() {
+        if !ty.args.is_empty() {
             return Ok(None);
         }
-        let Some(name) = self.resolve_raw_integer_alias(&ty.name.node)? else {
+        if self.resolve_raw_integer_alias(&ty.name.node)?.is_none() {
             return Ok(None);
-        };
-        let mut concrete = ty.clone();
-        concrete.name.node = name;
-        Ok(Some(concrete))
+        }
+        // Preserve the ORIGINAL alias annotation (including refinement
+        // metadata) in the per-frame registry, so later mutable writes are
+        // checked against the same interval as the initial local binding.
+        Ok(Some(ty.clone()))
+    }
+
+    // Resolve and enforce every nonnegative range edge in the annotated
+    // source alias chain, not merely the terminal integer representation.
+    // This function runs on the evaluated value (no Z3), including mutable
+    // assignments and nested user-cell call frames, before writing state.
+    fn check_raw_integer_refinement_value(
+        &self,
+        ty: &aura_ast::TypeRef,
+        value: &AvmValue,
+    ) -> miette::Result<()> {
+        let AvmValue::Int(n) = value else { return Ok(()) };
+        let mut current = ty.name.node.as_str();
+        let mut seen = HashSet::new();
+        let mut edge_range = ty.range.as_ref();
+        loop {
+            if let Some(range) = edge_range {
+                let ExprKind::IntLit(lo) = &range.lo.kind else {
+                    return Err(miette::miette!(
+                        "AVM: unqualified nonliteral refined integer lower range"
+                    ));
+                };
+                let ExprKind::IntLit(hi) = &range.hi.kind else {
+                    return Err(miette::miette!(
+                        "AVM: unqualified nonliteral refined integer upper range"
+                    ));
+                };
+                if *n < 0 || (*n as u64) < *lo || (*n as u64) > *hi {
+                    return Err(miette::miette!(
+                        "AVM: refined integer value {} outside range [{}..{}] for '{}'",
+                        n, lo, hi, ty.name.node
+                    ));
+                }
+            }
+            let Some(alias) = self.source_type_aliases.get(current) else {
+                break;
+            };
+            if !seen.insert(current.to_string()) {
+                return Err(miette::miette!(
+                    "AVM: cyclic integer TypeAlias value range '{}'",current
+                ));
+            }
+            if !alias.params.is_empty() || !alias.target.args.is_empty() {
+                return Err(miette::miette!(
+                    "AVM: unqualified generic refined integer alias '{}'",current
+                ));
+            }
+            edge_range = alias.target.range.as_ref();
+            current = alias.target.name.node.as_str();
+        }
+        Ok(())
     }
 
     // This raw-source AVM runs without the static Checker. It must still
@@ -2430,6 +2481,9 @@ impl Avm {
                 "AVM: Record field type mismatch (nominal '{}' expected)",
                 expected
             ));
+        }
+        if resolved.is_some() {
+            self.check_raw_integer_refinement_value(ty, value)?;
         }
         Ok(())
     }
