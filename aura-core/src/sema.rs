@@ -1318,6 +1318,7 @@ impl Checker {
             // values; reject them at this boundary until signed IR parity.
             self.check_record_integer_literal_width(&expected, &sd.expr)?;
             self.check_record_integer_inferred_range(&expected, &expr_ty, &sd.expr)?;
+            self.check_known_refined_integer_bounds(&expected, &expr_ty, &sd.expr)?;
 
             // If there is a `where` clause, we treat it as a refinement for type tracking,
             // but we don't require proving it here (the verifier is the hard gate).
@@ -1483,6 +1484,7 @@ impl Checker {
         // before being passed to a typed Record or another consumer.
         self.check_record_integer_literal_width(&target_ty, &assign.expr)?;
         self.check_record_integer_inferred_range(&target_ty, &rhs_ty, &assign.expr)?;
+        self.check_known_refined_integer_bounds(&target_ty, &rhs_ty, &assign.expr)?;
         // Mutation aliasing rule (MVP): assigning from a resource identifier moves it.
         if let ExprKind::Ident(src) = &assign.expr.kind {
             if src.node != assign.target.node && self.is_non_copy_type(&rhs_ty) {
@@ -1785,6 +1787,51 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    // Source-proven interval qualification for explicitly refined integer
+    // locals and their mutations. The current Q03 backend erases refinement
+    // metadata to the concrete integer ABI, so retaining an impossible value
+    // would make static and executable meaning disagree. This does NOT prove
+    // arbitrary dynamic expressions or negative signed integer execution.
+    fn check_known_refined_integer_bounds(
+        &self,
+        required: &Type,
+        actual: &Type,
+        rhs: &Expr,
+    ) -> Result<(), SemanticError> {
+        let Type::ConstrainedRange { lo, hi, base } = required else {
+            return Ok(());
+        };
+        if !base_type(base).is_integer() {
+            return Ok(());
+        }
+        if matches!(&rhs.kind, ExprKind::Unary { op: UnaryOp::Neg, .. }) {
+            return Err(SemanticError {
+                message: "unqualified negative refined integer expression".to_string(),
+                span: rhs.span,
+            });
+        }
+        if let Type::ConstrainedRange { lo: actual_lo, hi: actual_hi, .. } = actual {
+            if actual_lo >= lo && actual_hi <= hi {
+                return Ok(());
+            }
+            return Err(SemanticError {
+                message: format!(
+                    "refined integer value range [{actual_lo}..{actual_hi}] outside required range [{lo}..{hi}]"
+                ),
+                span: rhs.span,
+            });
+        }
+        // A refined binding may only claim a value proven in-range, not an
+        // unrelated unconstrained integer later narrowed by the C backend.
+        Err(SemanticError {
+            message: format!(
+                "unqualified refined integer source range for {} (requires [{lo}..{hi}])",
+                required.display()
+            ),
+            span: rhs.span,
+        })
     }
 
     // Q03 qualified *source* Record defaults: scalar constants and finite,
