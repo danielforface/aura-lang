@@ -77,9 +77,25 @@ pub(crate) struct EditSession {
     pub anchor: usize,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    preedit: Option<Preedit>,
+    last_composition_sequence: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
+
+pub(crate) const MAX_PREEDIT_BYTES: usize = 1024;
+pub(crate) const MAX_PROJECTED_TEXT_BYTES: usize = 8192;
+/// An OS input adapter may supply this sequence, but the editor owns the
+/// authoritative string; only Commit crosses that boundary.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct Preedit { pub(crate) text:String, pub(crate) caret:usize }
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct Projection {
+    pub(crate) display: String,
+    pub(crate) caret: usize,
+    pub(crate) preedit_graphemes: std::ops::Range<usize>,
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionAction {
@@ -90,10 +106,17 @@ pub(crate) enum SessionAction {
     Redo,
 }
 const MAX_HISTORY: usize = 64;
+fn valid_preedit(text:&str)->bool{
+    text.len()<=MAX_PREEDIT_BYTES &&
+    text.chars().all(|c|!c.is_control() && !matches!(c,
+        '\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
+}
+
 impl EditSession {
     pub(crate) fn new(text: String) -> Self {
         let end=grapheme_count(&text);
-        Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new() }
+        Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
+            preedit:None, last_composition_sequence:0 }
     }
     fn snapshot(&self) -> Snapshot {
         Snapshot { buffer:self.buffer.clone(),caret:self.caret,anchor:self.anchor }
@@ -103,6 +126,59 @@ impl EditSession {
         self.caret=s.caret.min(grapheme_count(&self.buffer));
         self.anchor=s.anchor.min(grapheme_count(&self.buffer));
     }
+    /// Begin a new composition epoch on a focused field only. The sequence
+    /// must be monotonically increasing, including after Cancel and Commit.
+    pub(crate) fn start_composition(&mut self,sequence:u64)->bool {
+        if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_some(){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=Some(Preedit{text:String::new(),caret:0});
+        true
+    }
+    pub(crate) fn update_composition(&mut self,sequence:u64,text:&str,caret:usize)->bool {
+        if sequence<=self.last_composition_sequence || sequence==0 ||
+            self.preedit.is_none() || !valid_preedit(text) ||
+            caret>grapheme_count(text){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=Some(Preedit{text:text.to_owned(),caret});
+        true
+    }
+    /// Exactly one committed Edit action: one Undo snapshot, one on_change.
+    pub(crate) fn commit_composition(&mut self,sequence:u64,text:&str)->Option<bool> {
+        if sequence==0 || sequence<=self.last_composition_sequence ||
+           self.preedit.is_none() || !valid_preedit(text){return None;}
+        self.last_composition_sequence=sequence;
+        self.preedit=None;
+        Some(if text.is_empty(){false}else{
+            self.apply(SessionAction::Edit(EditCommand::Insert(text.to_owned())))
+        })
+    }
+    pub(crate) fn cancel_composition(&mut self,sequence:u64)->bool {
+        if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_none(){return false;}
+        self.last_composition_sequence=sequence;
+        self.preedit=None;
+        true
+    }
+    pub(crate) fn abandon_composition(&mut self) {self.preedit=None;}
+    pub(crate) fn composing(&self)->bool{self.preedit.is_some()}
+    /// Non-authoritative projection used by GPU and measured viewport only.
+    /// The source buffer, caret, selection, undo and redo remain unchanged.
+    pub(crate) fn projected(&self)->Option<Projection>{
+        let p=self.preedit.as_ref()?;
+        let (start,end)=self.selection().unwrap_or((self.caret,self.caret));
+        let lo=byte_offset(&self.buffer,start);
+        let hi=byte_offset(&self.buffer,end);
+        let bytes=self.buffer.len().checked_sub(hi-lo)?.checked_add(p.text.len())?;
+        if bytes>MAX_PROJECTED_TEXT_BYTES{return None;}
+        let mut display=String::with_capacity(bytes);
+        display.push_str(&self.buffer[..lo]);
+        display.push_str(&p.text);
+        display.push_str(&self.buffer[hi..]);
+        let begin=grapheme_index_at_or_after_byte(&display,lo);
+        let end_at=grapheme_index_at_or_after_byte(&display,lo+p.text.len());
+        let caret_byte=lo+byte_offset(&p.text,p.caret);
+        let caret=grapheme_index_at_or_after_byte(&display,caret_byte);
+        Some(Projection{display,caret,preedit_graphemes:begin..end_at})
+    }
     pub(crate) fn selection(&self) -> Option<(usize,usize)> {
         (self.anchor!=self.caret).then(||(self.anchor.min(self.caret),self.anchor.max(self.caret)))
     }
@@ -111,6 +187,9 @@ impl EditSession {
         undo.push(snapshot);
     }
     pub(crate) fn apply(&mut self, action: SessionAction) -> bool {
+        // Raw navigation, delete, insert and Undo are owned by the IME until
+        // its explicit Commit or Cancel; no partial editor mutation.
+        if self.preedit.is_some(){return false;}
         let len=grapheme_count(&self.buffer);
         self.caret=self.caret.min(len); self.anchor=self.anchor.min(len);
         match action {
