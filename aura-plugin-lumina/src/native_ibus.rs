@@ -73,7 +73,8 @@ pub(crate) struct NativeIbus {
 }
 impl NativeIbus {
     pub(crate) fn spawn(script:&str)->Option<Self>{
-        if !std::path::Path::new(script).is_file() || script.len()>1024 {return None;}
+        let p=std::path::Path::new(script);
+        if !p.is_absolute() || !p.is_file() || script.len()>1024 {return None;}
         let mut child=Command::new("/usr/bin/python3")
             .arg("-u").arg(script)
             .stdin(Stdio::piped()).stdout(Stdio::piped())
