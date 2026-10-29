@@ -46,6 +46,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum dbus-x11
+      - name: Actual live IBus Hangul engine and physical XTest preedit/commit (not injected)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-helper"
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            ibus-daemon --daemonize --xim --panel disable
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            sleep 1
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper"
+            export LUMINA_IBUS_ENGINE="hangul"
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
+          '
+
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -114,17 +129,3 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test composition_bridge_e2e -- --nocapture --test-threads=1
 
-      - name: Actual live IBus Hangul engine and physical XTest preedit/commit (not injected)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          IBUS_USE_PORTAL: "0"
-        run: |
-          bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-helper"
-          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
-            ibus-daemon --daemonize --xim --panel disable
-            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
-            sleep 1
-            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper"
-            export LUMINA_IBUS_ENGINE="hangul"
-            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
-          '
