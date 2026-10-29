@@ -70,6 +70,7 @@ jobs:
             ibus list-engine | grep -i hangul
             ibus engine hangul
             /usr/bin/python3 aura-plugin-lumina/native/ibus_bridge.py --probe
+            export AURA_LUMINA_IBUS_HELPER="$PWD/aura-plugin-lumina/native/ibus_bridge.py"
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
           '
 
