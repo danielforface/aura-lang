@@ -63,7 +63,6 @@ int main(int argc,char**argv) {
         if(n>128){puts("FATAL input_too_long");break;}
         if(!strncmp(line,"F1",2)){
             ibus_input_context_focus_in(ic);
-            ibus_input_context_enable(ic);
             ibus_input_context_property_activate(ic,"InputMode",PROP_STATE_CHECKED);
             pump_ms(200);
             IBusEngineDesc *focused=ibus_input_context_get_engine(ic);
