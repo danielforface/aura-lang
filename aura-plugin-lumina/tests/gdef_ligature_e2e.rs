@@ -76,10 +76,24 @@ fn click(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,id:&str,x:i32){
     let clicked=p.diagnostic_text_visual(915,32.0,306.0).unwrap();
     assert_eq!(clicked.caret_grapheme,Some(1));
     assert!((clicked.caret_screen_x-first.caret_screen_x).abs()<0.2);
-    // A native framebuffer sample proves the white vertical caret was drawn
-    // within the ligature's interval, beyond pure logical assertions.
-    let sample=p.diagnostic_capture_pixel(clicked.caret_screen_x.floor(),70.0).unwrap();
-    assert!(sample.r>=160&&sample.g>=160&&sample.b>=160,
-        "native caret pixel at GDEF-proven position must be painted: {sample:?}");
+    // Select precisely the interval BETWEEN two GDEF carets. The actual
+    // selection GPU rectangle must span 7.98..16.5 px, not a made-up 1/3.
+    xdo(&["keydown","Shift_L"]);frames(&p,&app,&mut c,3);
+    key(&p,&app,&mut c,"Right");
+    xdo(&["keyup","Shift_L"]);frames(&p,&app,&mut c,4);
+    let selected=p.diagnostic_text_visual(915,32.0,306.0).unwrap();
+    eprintln!("GDEF_NATIVE_SELECTION {selected:?}");
+    assert_eq!(selected.logical_selection,Some((1,2)));
+    let &(start,end)=selected.selection_screens.first()
+        .expect("selection within GDEF ligature should paint a real span");
+    assert_eq!(selected.selection_screens.len(),1);
+    assert!((start-first.caret_screen_x).abs()<0.2);
+    assert!((end-second.caret_screen_x).abs()<0.2);
+    assert!((end-start-8.52).abs()<0.2);
+    // The selection rectangle starts at y24 (top margin); sample above glyph
+    // outlines to assert the actual blue-tinted GPU pixels, not just geometry.
+    let sample=p.diagnostic_capture_pixel((start+end)*0.5,25.0).unwrap();
+    assert!(sample.b>50&&sample.b>sample.r,
+        "native selected GDEF interior must have a real blue GPU pixel: {sample:?}");
     drop(p);
 }
