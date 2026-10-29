@@ -756,3 +756,61 @@ fn refined_alias_record_field_and_unused_default_outside_range_fail_in_core() {
             "{label}: require refined range error, got {err}");
     }
 }
+
+#[test]
+fn lowered_native_must_not_defer_refined_user_call_argument_proofs() {
+    for (label, source) in [
+        ("direct refined argument overflow", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    yield accept(21)
+"#),
+        ("unconstrained dynamic integer argument", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell proxy(n: u32) ->:
+    yield accept(n)
+"#),
+        ("wrong nested refined range", r#"
+type Window = u8[10..20]
+type Narrow = Window[12..18]
+cell accept(n: Narrow) ->:
+    yield n
+cell main() ->:
+    val n: Window = 20
+    yield accept(n)
+"#),
+    ] {
+        let ast=aura_parse::parse_source(source)
+            .unwrap_or_else(|e| panic!("{label}: qualified source must parse: {e}"));
+        // This is specifically a compilation safety gate. The lowerer
+        // must not silently trust its defer_range_proofs checker mode.
+        let err=lower_program(&ast)
+            .expect_err("unproved refined user-cell call argument must not lower to native IR");
+        assert!(err.message.contains("range") || err.message.contains("refin") ||
+                err.message.contains("prove"),
+            "{label}: require a refinement-specific diagnostic, got {err}");
+    }
+}
+
+#[test]
+fn lowered_refined_user_call_with_proven_value_remains_legal() {
+    let src=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    val n: Window = 20
+    yield accept(n)
+"#;
+    let ast=aura_parse::parse_source(src).expect("valid argument source parses");
+    let ir=lower_program(&ast).expect("proven refined argument must lower");
+    validate_module(&ir).expect("refined call IR validates");
+    let result=run_oracle_entry(&ir,"main",&[],OracleConfig::default())
+        .expect("oracle executes valid refined user cell call");
+    assert!(result.ok && result.stderr.is_empty(), "{result:?}");
+    assert_eq!(result.return_value,Some(OracleValue::U32(20)));
+}
