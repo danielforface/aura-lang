@@ -1172,20 +1172,15 @@ fn emit_function(
                                     if let Some((actual, _)) = values.get(arg) {
                                         let required = map_type_to_ctype(&expected.ty);
                                         if *actual != required {
-                                            // An executable same-block U32 range guard is
-                                            // sufficient to narrow to U8 without truncation.
-                                            // Raw/forged IR without this guard still fails
-                                            // closed, preserving exact nominal and scalar ABI.
+                                            // A U32 constant fitting U8 is NOT itself
+                                            // proof of a stricter source refinement such
+                                            // as Window=u8[10..20]. Only an executable
+                                            // same-basic-block range guard can certify the
+                                            // narrowed call. This also rejects IR with a
+                                            // stripped proof, even if an SSA constant is
+                                            // numerically representable as U8.
                                             let original = values.get(arg)
                                                 .expect("scalar operand checked").1.clone();
-                                            // Optimize-function may safely fold away a
-                                            // RangeCheckU32 when it already knows the
-                                            // SSA constant. Reuse the established Record
-                                            // scalar constant-provenance gate in that case.
-                                            // Otherwise require a runtime same-block guard.
-                                            let constant_cast = qualified_record_scalar_value(
-                                                required, *actual, *arg, &original, &known_u32_constants
-                                            );
                                             let range = current_block_ranges.get(arg);
                                             let guarded_cast = if *actual == CType::U32 && required == CType::U8 &&
                                                 range.is_some_and(|(lo, hi)| *lo <= *hi && *hi <= u8::MAX as u64)
@@ -1194,7 +1189,7 @@ fn emit_function(
                                             } else {
                                                 None
                                             };
-                                            if let Some(cast) = constant_cast.or(guarded_cast) {
+                                            if let Some(cast) = guarded_cast {
                                                 call_values.insert(*arg, (required, cast));
                                             } else {
                                                 return Err(CBackendError { message: format!(
