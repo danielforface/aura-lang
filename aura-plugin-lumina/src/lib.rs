@@ -385,10 +385,14 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
                 prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
             }else{
                 let id=parse_callback_id(prop_string(node,"on_change"));
-                let value=focus.as_ref().filter(|e|Some(e.on_change)==id)
-                    .or_else(||id.and_then(|id|sessions.get(&id)))
-                    .map(|e|e.session.buffer.as_str())
-                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))).unwrap_or("");
+                let session=focus.as_ref().filter(|e|Some(e.on_change)==id)
+                    .or_else(||id.and_then(|id|sessions.get(&id)));
+                let projection=focus.as_ref().filter(|e|Some(e.on_change)==id)
+                    .and_then(|e|e.session.projected());
+                let value=projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||session.map(|e|e.session.buffer.as_str()))
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                    .unwrap_or("");
                 if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value}
             };
             if let (Some(key),Some(path))=(
@@ -458,7 +462,11 @@ fn measure_input_visuals(
             if let Some(cb)=parse_callback_id(prop_string(node,"on_change")).filter(|id|allowed.contains(id)) {
                 let active=focused.as_ref().is_some_and(|fi|fi.on_change==cb);
                 let entry=if active {focused.as_mut()}else{sessions.get_mut(&cb)};
-                let value=entry.as_ref().map(|fi|fi.session.buffer.as_str())
+                let projection=if active {
+                    entry.as_ref().and_then(|fi|fi.session.projected())
+                }else{None};
+                let value=projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||entry.as_ref().map(|fi|fi.session.buffer.as_str()))
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
@@ -472,21 +480,25 @@ fn measure_input_visuals(
                 };
                 let width=prepared.map(|r|r.shaped.width)
                     .unwrap_or(if opt {0.0}else{measure(value)});
+                let caret_index=projection.as_ref().map(|p|p.caret)
+                    .or_else(||entry.as_ref().map(|fi|fi.session.caret)).unwrap_or(0);
                 let caret_stop=if active&&opt {
-                    entry.as_ref().and_then(|fi|prepared.and_then(|p|
-                        bidi_editor::caret_position(&p.shaped,fi.session.caret,fi.visual_affinity)))
+                    prepared.and_then(|p|bidi_editor::caret_position(&p.shaped,
+                        caret_index,if projection.is_some(){None}else{
+                            entry.as_ref().and_then(|fi|fi.visual_affinity)
+                        }))
                 }else{None};
-                let caret=if active{entry.as_ref().map(|fi|{
+                let caret=if active {
                     if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
-                    else{measure(text_viewport::grapheme_prefix(value,fi.session.caret))}
-                })}else{None}.unwrap_or(0.0);
-                let segments=if active&&opt{
+                    else{measure(text_viewport::grapheme_prefix(value,caret_index))}
+                }else{0.0};
+                let segments=if active&&opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .and_then(|(a,b)|prepared.and_then(|p|
                             bidi_editor::selection_fragments(&p.shaped,a,b)))
                         .unwrap_or_default()
                 }else{Vec::new()};
-                let selection=if active&&!opt{
+                let selection=if active&&!opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .map(|(a,b)|{
                             let x=measure(text_viewport::grapheme_prefix(value,a));
@@ -494,6 +506,19 @@ fn measure_input_visuals(
                             (x.min(y),x.max(y))
                         })
                 }else{None};
+                let preedit_spans=projection.as_ref().and_then(|p|{
+                    let a=p.preedit_graphemes.start;
+                    let b=p.preedit_graphemes.end;
+                    if a>=b{return None;}
+                    if opt {
+                        prepared.and_then(|shape|bidi_editor::selection_fragments(
+                            &shape.shaped,a,b))
+                    }else {
+                        let x=measure(text_viewport::grapheme_prefix(value,a));
+                        let y=measure(text_viewport::grapheme_prefix(value,b));
+                        Some(vec![(x.min(y),x.max(y))])
+                    }
+                }).unwrap_or_default();
                 let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
                 let content=text_viewport::content_bounds(plan.bounds);
                 let mut v=text_viewport::plan(content.width,width,caret,selection,previous,active);
@@ -501,6 +526,7 @@ fn measure_input_visuals(
                     v.caret_valid=!active || caret_stop.is_some();
                     v.selection_spans=segments;
                 }
+                v.preedit_spans=preedit_spans;
                 if let Some(entry)=entry {entry.scroll_x=v.scroll;}
                 result.insert(cb,v);
             }
@@ -1597,8 +1623,15 @@ fn paint_node<D: RaylibDraw>(
             // Display retained drafts for nonfocused inputs until the host
             // changes their authoritative value. Avoid the old visual reset
             // to stale controlled props on Tab/blur.
+            // The IME projection is *display only*: never replace the
+            // authoritative buffer or create an Undo entry while composing.
+            let projection=if is_focused {
+                focused_input.as_ref().and_then(|fi|fi.session.projected())
+            }else{None};
             let value = if is_focused {
-                focused_input.as_ref().map(|fi|fi.session.buffer.as_str()).unwrap_or("")
+                projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||focused_input.as_ref().map(|fi|fi.session.buffer.as_str()))
+                    .unwrap_or("")
             } else {
                 on_change.and_then(|cb|input_sessions.get(&cb))
                     .map(|fi|fi.session.buffer.as_str())
@@ -1636,8 +1669,20 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
             }
 
+            // Only explicitly injected preedit events can draw this blue
+            // underline; Raylib committed Unicode chars do not imply IME.
+            if is_focused {
+                if let Some(v)=visual {
+                    for (x0,x1) in v.preedit_screens(content){
+                        d.draw_rectangle_rec(Rectangle::new(x0,
+                            rect.y+rect.height-7.0,(x1-x0).max(0.0),2.0),
+                            Color::new(56,189,248,255));
+                    }
+                }
+            }
+
             // Exact default-font pixel measurements, not an average cell;
-            // separate BiDi/IME/font fallback certification is still needed.
+            // OS-native XIM/preedit delivery remains unqualified.
             if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
                 if let Some(v)=visual.filter(|v|v.caret_valid) {
                     let cx=v.caret_screen(content);
