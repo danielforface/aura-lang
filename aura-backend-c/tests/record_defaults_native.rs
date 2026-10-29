@@ -889,3 +889,56 @@ cell entry_value() ->:
             "{scenario}: expected an exact boundary error, got {err}");
     }
 }
+
+#[test]
+fn native_refined_user_call_rejects_tampered_surviving_range_guard() {
+    // The executable guard can exist yet no longer prove the declared
+    // Window=[10..20] if its bounds were widened after source qualification.
+    let src=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell entry_value() ->:
+    yield accept(20)
+"#;
+    let ast=aura_parse::parse_source(src).expect("valid real Aura source");
+    let baseline=lower_program(&ast).expect("real source lowers");
+    validate_module(&baseline).expect("original SSA validates");
+    let allowed=emit_module(&baseline,None).expect("unaltered source ABI emits");
+    assert!(allowed.module_c.contains("accept"),"positive C source exists");
+    for (label, changed_value) in [
+        ("widened range with invalid source value", Some(21)),
+        ("widened range with original source value", None),
+    ] {
+        let mut ir=baseline.clone();
+        let caller=ir.functions.get_mut("entry_value").expect("caller function");
+        let mut edited_guard=false;
+        let mut edited_literal=false;
+        for inst in caller.blocks.iter_mut().flat_map(|b| b.insts.iter_mut()) {
+            match &mut inst.kind {
+                aura_ir::InstKind::RangeCheck{lo,hi,..} |
+                aura_ir::InstKind::RangeCheckU32{lo,hi,..}
+                    if *lo==10 && *hi==20 => {
+                    *lo=0; *hi=255; edited_guard=true;
+                }
+                aura_ir::InstKind::BindStrand{
+                    expr:aura_ir::RValue::ConstU32(v),..
+                } if *v==20 && changed_value.is_some() => {
+                    *v=changed_value.expect("known case");
+                    edited_literal=true;
+                }
+                _ => {}
+            }
+        }
+        assert!(edited_guard,"{label}: test must actually widen the IR range guard");
+        if changed_value.is_some() {
+            assert!(edited_literal,"{label}: test must actually alter the IR value");
+        }
+        validate_module(&ir).expect("malicious range change remains structural SSA");
+        let err=emit_module(&ir,None).err()
+            .expect("C emitter must reject widened guard not justified by source parameter");
+        assert!(err.message.contains("range") || err.message.contains("refin") ||
+                err.message.contains("ABI") || err.message.contains("guard"),
+            "{label}: expected a source-contract mismatch, got {err}");
+    }
+}
