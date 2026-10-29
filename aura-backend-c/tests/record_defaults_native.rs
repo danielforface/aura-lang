@@ -942,3 +942,39 @@ cell entry_value() ->:
             "{label}: expected a source-contract mismatch, got {err}");
     }
 }
+
+#[test]
+fn native_refined_call_fails_closed_when_source_contract_metadata_is_missing_or_malformed() {
+    let src=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell entry_value() ->:
+    yield accept(20)
+"#;
+    let ast=aura_parse::parse_source(src).expect("real Aura source parses");
+    let baseline=lower_program(&ast).expect("real refined call lowers");
+    validate_module(&baseline).expect("original source IR structurally valid");
+    assert_eq!(baseline.refined_param_bounds.get("accept"),
+        Some(&vec![Some((10,20))]),"Lowerer must keep exact source provenance");
+    emit_module(&baseline,None).expect("unaltered source contract and guard emit C");
+    for (label,mutation) in [
+        ("missing source contract",0),
+        ("wrong metadata arity",1),
+    ] {
+        let mut ir=baseline.clone();
+        if mutation==0 {
+            ir.refined_param_bounds.remove("accept");
+        } else {
+            ir.refined_param_bounds.insert("accept".into(),vec![]);
+        }
+        // This is deliberately only structural IR validation: the C emission
+        // trust boundary must detect a missing/malformed source contract.
+        validate_module(&ir).expect("forged metadata has not changed SSA shape");
+        let err=emit_module(&ir,None).err()
+            .expect("refined U32-to-U8 call without qualified metadata must fail");
+        assert!(err.message.contains("ABI") || err.message.contains("range") ||
+            err.message.contains("type mismatch"),
+            "{label}: expected explicit refined ABI refusal: {err}");
+    }
+}
