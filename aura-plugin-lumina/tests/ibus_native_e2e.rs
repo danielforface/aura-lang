@@ -30,6 +30,8 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
 #[test]fn real_ibus_hangul_signal_to_raylib_gpu(){
     assert!(std::path::Path::new(FONT).is_file());
     assert!(std::path::Path::new(HELPER).is_file());
+    assert_eq!(std::env::var("AURA_LUMINA_IBUS_HELPER").as_deref(),Ok(HELPER),
+        "host must configure the audited absolute helper path, not the UI node");
     assert_eq!(std::env::var("AURA_LUMINA_IBUS_ENGINE").as_deref(),Ok("hangul"));
     let p=AuraLuminaPlugin::new();
     let mut c=NexusContext::default();
@@ -39,7 +41,7 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
         ("radius","0"),("value","Hi"),("value_revision","1"),
         ("on_change","cb:918"),("size","31"),("fg","#DD3030"),
         ("font_path",FONT),("shaping","opentype"),("direction","ltr"),
-        ("native_ime","ibus"),("native_ime_helper",HELPER)
+        ("native_ime","ibus")
     ]));
     frames(&p,&app,&mut c,4);
     assert!(p.diagnostic_resize_window(640,420));
