@@ -85,6 +85,7 @@ def read_stdin(_fd, condition):
             (context.focus_in if pieces[1] == "1" else context.focus_out)()
             if pieces[1] == "0":
                 emit("H")
+            emit("A\t" + pieces[1])
             return True
         if len(pieces) == 4 and pieces[0] == "K":
             args = [int(v) for v in pieces[1:]]
