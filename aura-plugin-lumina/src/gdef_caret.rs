@@ -221,6 +221,24 @@ mod tests{
         Err(CaretError::MalformedFont),
         "no malformed trailing CoverageFormat1 record may be ignored");
  }
+ #[test]fn coverage_format2_rejects_overlapping_trailing_range_after_match(){
+    let mut f=fixture(2,1,0);
+    // Move the LigGlyph record to offset 48, leaving space to encode a
+    // second CoverageFormat2 range without overlapping its caret records.
+    f.resize(28+96,0);
+    let glyph=f[28+32..28+50].to_vec();
+    f[28+48..28+66].copy_from_slice(&glyph);
+    f[28+32..28+48].fill(0);
+    set32(&mut f,24,96);
+    set16(&mut f,28+16,36);
+    set16(&mut f,28+22,2);
+    set16(&mut f,28+30,99);
+    set16(&mut f,28+32,99);
+    set16(&mut f,28+34,1);
+    assert_eq!(ligature_caret_coords(&f,100,2),
+        Err(CaretError::MalformedFont),
+        "CoverageFormat2 overlap after an earlier match must fail");
+ }
  #[test]fn authentic_linux_libertine_font_gdef_ffi_if_installed(){
     let p="/usr/share/fonts/opentype/linux-libertine/LinLibertine_R.otf";
     if !std::path::Path::new(p).is_file(){return;}
