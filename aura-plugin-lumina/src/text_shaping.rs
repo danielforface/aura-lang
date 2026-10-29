@@ -437,4 +437,41 @@ mod tests {
         assert!(res.visual_runs.iter().flat_map(|r|r.glyphs.iter()).all(|g|
             g.cluster_byte<t.len()&&t.is_char_boundary(g.cluster_byte)));
     }
+
+    #[test] fn actual_linux_libertine_ffi_gdef_carets_map_exact_design_units(){
+        let path="/usr/share/fonts/opentype/linux-libertine/LinLibertine_R.otf";
+        if !std::path::Path::new(path).is_file(){return;}
+        let bytes=std::fs::read(path).unwrap();
+        let shaped=shape_text("ffi",&bytes,30.0,ParagraphDirection::Ltr).unwrap();
+        let glyphs:Vec<_>=shaped.visual_runs.iter().flat_map(|r|&r.glyphs).collect();
+        assert_eq!(glyphs.len(),1,"real GSUB must produce a ligature glyph");
+        assert_eq!(glyphs[0].glyph_id,2649,"real Linux Libertine ffi GID");
+        assert!(shaped.caret_map_complete,"GDEF must enable all ffi interior UAX29 positions");
+        let xs:Vec<_>=(0..=3).map(|i|{
+            shaped.caret_candidates.iter().find(|p|p.byte==i).unwrap().visual_x
+        }).collect();
+        let scale=30.0/1000.0;
+        assert!((xs[1]-xs[0]-266.0*scale).abs()<0.02,
+            "first caret must use GDEF 266 design units, got {xs:?}");
+        assert!((xs[2]-xs[0]-550.0*scale).abs()<0.02,
+            "second caret must use GDEF 550 design units, got {xs:?}");
+        assert!(xs.windows(2).all(|w|w[1]>w[0]));
+        assert!(xs[3]>xs[2]);
+        let fi=shape_text("fi",&bytes,30.0,ParagraphDirection::Ltr).unwrap();
+        let glyphs:Vec<_>=fi.visual_runs.iter().flat_map(|r|&r.glyphs).collect();
+        assert_eq!(glyphs.len(),1);
+        assert_eq!(glyphs[0].glyph_id,2647);
+        assert!(fi.caret_map_complete);
+        let x=fi.caret_candidates.iter().find(|p|p.byte==1).unwrap().visual_x;
+        assert!((x-277.0*scale).abs()<0.02);
+    }
+    #[test] fn absent_gdef_arabic_ligature_does_not_invent_interior(){
+        let path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(path).is_file(){return;}
+        let bytes=std::fs::read(path).unwrap();
+        let shaped=shape_text("سلام",&bytes,30.0,ParagraphDirection::Rtl).unwrap();
+        assert_eq!(shaped.visual_runs.iter().flat_map(|r|r.glyphs.iter()).count(),3);
+        assert!(!shaped.caret_map_complete,
+            "no valid LigCaretList coordinate: never invent Arabic caret position");
+    }
 }
