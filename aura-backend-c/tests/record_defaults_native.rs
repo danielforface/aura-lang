@@ -858,23 +858,26 @@ cell entry_value() ->:
     for scenario in ["elided guard with tampered constant", "elided guard with original constant"] {
         let mut ir=original.clone();
         let entry=ir.functions.get_mut("entry_value").expect("lowered user call");
-        // Optimizer may erase the RangeCheckU32 once it sees a constant.
+        // Simulate a forged post-optimization IR bundle with a stripped
+        // certified range check, regardless of whether the optimizer keeps
+        // guards in the new production architecture. This is an adversarial
+        // boundary test, not an assertion about optimizer implementation.
         aura_ir::optimize_function(entry);
-        let mut saw_guard=false;
+        for block in &mut entry.blocks {
+            block.insts.retain(|inst| !matches!(&inst.kind,
+                aura_ir::InstKind::RangeCheckU32{..} |
+                aura_ir::InstKind::RangeCheck{..}));
+        }
         let mut changed=false;
         for inst in entry.blocks.iter_mut().flat_map(|b| b.insts.iter_mut()) {
-            match &mut inst.kind {
-                aura_ir::InstKind::RangeCheckU32{..} |
-                aura_ir::InstKind::RangeCheck{..} => saw_guard=true,
-                aura_ir::InstKind::BindStrand{expr:aura_ir::RValue::ConstU32(n),..}
-                    if *n==20 && scenario=="elided guard with tampered constant" => {
+            if let aura_ir::InstKind::BindStrand{
+                expr:aura_ir::RValue::ConstU32(n),..
+            } = &mut inst.kind {
+                if *n==20 && scenario=="elided guard with tampered constant" {
                     *n=21; changed=true;
                 }
-                _ => {}
             }
         }
-        assert!(!saw_guard,
-            "RED precondition: optimizer currently removes the source range proof");
         if scenario=="elided guard with tampered constant" {
             assert!(changed,"must actually edit an IR scalar source value");
         }
