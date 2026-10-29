@@ -381,26 +381,26 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
-            let display=if node.kind=="Text"{
-                prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
+            let display:String=if node.kind=="Text"{
+                prop_string(node,"text").or_else(||prop_string(node,"content"))
+                    .unwrap_or("").to_owned()
             }else{
                 let id=parse_callback_id(prop_string(node,"on_change"));
-                let session=focus.as_ref().filter(|e|Some(e.on_change)==id)
-                    .or_else(||id.and_then(|id|sessions.get(&id)));
-                let projection=focus.as_ref().filter(|e|Some(e.on_change)==id)
-                    .and_then(|e|e.session.projected());
-                let value=projection.as_ref().map(|p|p.display.as_str())
-                    .or_else(||session.map(|e|e.session.buffer.as_str()))
-                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
-                    .unwrap_or("");
-                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value}
+                let active=focus.as_ref().filter(|e|Some(e.on_change)==id);
+                let session=active.or_else(||id.and_then(|id|sessions.get(&id)));
+                let value=active.and_then(|e|e.session.projected()).map(|p|p.display)
+                    .or_else(||session.map(|e|e.session.buffer.clone()))
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))
+                        .map(str::to_owned)).unwrap_or_default();
+                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("").to_owned()}
+                else{value}
             };
             if let (Some(key),Some(path))=(
-                shaped_gpu::entry_key(node,display,size),prop_string(node,"font_path")){
+                shaped_gpu::entry_key(node,&display,size),prop_string(node,"font_path")){
                 if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
                     out.push((key,path.to_owned(),
                         prop_string(node,"fallback_font_path").map(str::to_owned),size,
-                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display.to_owned()));
+                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display));
                 }
             }
         }
