@@ -55,6 +55,10 @@ jobs:
             # Set before daemon starts: its engine defaults to Latin mode.
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode hangul
             gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            # IBus general default disables IME on new input contexts, which
+            # silently replaces requested Hangul by xkb:kr:kr104:kor.
+            gsettings set org.freedesktop.ibus.general enable-by-default true
+            gsettings set org.freedesktop.ibus.general use-global-engine true
             ibus-daemon --daemonize --xim
             # ibus address can exist before the daemon accepts method calls.
             for n in $(seq 1 100); do
