@@ -6,6 +6,7 @@
 use std::ops::Range;
 use unicode_bidi::{BidiInfo, Level};
 use unicode_segmentation::UnicodeSegmentation;
+use crate::gdef_caret;
 
 pub(crate) const MAX_SHAPE_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_SHAPE_FONT_BYTES: usize = 16 * 1024 * 1024;
@@ -244,29 +245,81 @@ pub(crate) fn shape_text_with_fonts(
             width:pen_x-origin,glyphs
         });
     }
-    // Keep the *same* exact-cluster UAX9 caret model as the old one-font
-    // shaper: no interpolated caret inside a glyph ligature.
+    // Derive clusters from *actual* rustybuzz source byte associations.
+    // Each cluster's physical boundaries are exact glyph advances. Only a
+    // single GSUB ligature GID with matching GDEF LigCaretList coordinates may
+    // supply interior grapheme carets. Do not interpolate missing positions.
     let mut caret_candidates=Vec::new();
     let mut complete=true;
     for (run_index,run) in visual_runs.iter().enumerate(){
-        let corresponding=&bidi.visual_runs[run_index];
-        for g in corresponding.graphemes.clone(){
-            let start=bidi.grapheme_boundaries[g];
-            let end=bidi.grapheme_boundaries[g+1];
-            let mut left=f32::INFINITY;
-            let mut right=f32::NEG_INFINITY;
-            for glyph in &run.glyphs {
-                if glyph.cluster_byte==start{
-                    left=left.min(glyph.pen_x);
-                    right=right.max(glyph.pen_x+glyph.advance_x);
-                }
-            }
-            if !left.is_finite()||!right.is_finite(){
+        // Group once by original UTF-8 cluster. Re-scanning every glyph
+        // for each source cluster was quadratic on long single-line inputs.
+        let mut clusters:std::collections::BTreeMap<usize,Vec<&ShapedGlyph>>=
+            std::collections::BTreeMap::new();
+        for glyph in &run.glyphs {
+            clusters.entry(glyph.cluster_byte).or_default().push(glyph);
+        }
+        let cluster_starts:Vec<usize>=clusters.keys().copied().collect();
+        if cluster_starts.first().copied()!=Some(run.source_bytes.start) ||
+            (run.glyphs.is_empty()&&run.source_bytes.start!=run.source_bytes.end){
+            complete=false;
+            continue;
+        }
+        for (ci,&first) in cluster_starts.iter().enumerate() {
+            let last=cluster_starts.get(ci+1).copied()
+                .unwrap_or(run.source_bytes.end);
+            if last<=first || last>run.source_bytes.end {complete=false;continue;}
+            let Ok(lo)=bidi.grapheme_boundaries.binary_search(&first)
+                else{complete=false;continue;};
+            let Ok(hi)=bidi.grapheme_boundaries.binary_search(&last)
+                else{complete=false;continue;};
+            let n=hi.saturating_sub(lo);
+            if n==0 || n>gdef_caret::MAX_COMPONENTS {complete=false;continue;}
+            let Some(parts)=clusters.get(&first) else{
+                complete=false;continue;
+            };
+            let left=parts.iter().map(|g|g.pen_x).fold(f32::INFINITY,f32::min);
+            let right=parts.iter().map(|g|g.pen_x+g.advance_x)
+                .fold(f32::NEG_INFINITY,f32::max);
+            if !left.is_finite()||!right.is_finite()||right<left {
                 complete=false;continue;
             }
-            let (a,b)=if run.rtl{(right,left)}else{(left,right)};
-            caret_candidates.push(CaretCandidate{byte:start,visual_x:a,visual_run:run_index});
-            caret_candidates.push(CaretCandidate{byte:end,visual_x:b,visual_run:run_index});
+            let mut physical=Vec::with_capacity(n+1);
+            physical.push(left);
+            if n>1 {
+                // Unsupported cluster (several output glyphs) or absent GDEF
+                // does not create fake caret coordinates. OpenType design
+                // units are converted with the SAME px/upem scale as GSUB.
+                let Some(glyph)=parts.first().filter(|_|parts.len()==1)
+                    else{complete=false;continue;};
+                let Some(bytes)=font_data.get(glyph.font_index) else{
+                    complete=false;continue;
+                };
+                let Ok(coords)=gdef_caret::ligature_caret_coords(
+                    bytes,glyph.glyph_id,n-1) else{complete=false;continue;};
+                let scale=scales[glyph.font_index];
+                let mut prev=left;
+                let mut valid=true;
+                for x in coords {
+                    let pos=glyph.pen_x+x as f32*scale;
+                    // Reject out-of-glyph, zero-width and non-monotonic
+                    // positions, never snap to a guessed fractional step.
+                    if !pos.is_finite()||pos<=prev+0.001||pos>=right-0.001{
+                        valid=false;break;
+                    }
+                    physical.push(pos);
+                    prev=pos;
+                }
+                if !valid || physical.len()!=n {complete=false;continue;}
+            }
+            physical.push(right);
+            for i in 0..=n {
+                let byte=bidi.grapheme_boundaries[lo+i];
+                let x=if run.rtl{physical[n-i]}else{physical[i]};
+                caret_candidates.push(CaretCandidate{
+                    byte,visual_x:x,visual_run:run_index
+                });
+            }
         }
     }
     caret_candidates.sort_by(|a,b|a.byte.cmp(&b.byte)
@@ -388,5 +441,42 @@ mod tests {
         assert_eq!(res.bidi.grapheme_boundaries.last(),Some(&t.len()));
         assert!(res.visual_runs.iter().flat_map(|r|r.glyphs.iter()).all(|g|
             g.cluster_byte<t.len()&&t.is_char_boundary(g.cluster_byte)));
+    }
+
+    #[test] fn actual_linux_libertine_ffi_gdef_carets_map_exact_design_units(){
+        let path="/usr/share/fonts/opentype/linux-libertine/LinLibertine_R.otf";
+        if !std::path::Path::new(path).is_file(){return;}
+        let bytes=std::fs::read(path).unwrap();
+        let shaped=shape_text("ffi",&bytes,30.0,ParagraphDirection::Ltr).unwrap();
+        let glyphs:Vec<_>=shaped.visual_runs.iter().flat_map(|r|&r.glyphs).collect();
+        assert_eq!(glyphs.len(),1,"real GSUB must produce a ligature glyph");
+        assert_eq!(glyphs[0].glyph_id,2649,"real Linux Libertine ffi GID");
+        assert!(shaped.caret_map_complete,"GDEF must enable all ffi interior UAX29 positions");
+        let xs:Vec<_>=(0..=3).map(|i|{
+            shaped.caret_candidates.iter().find(|p|p.byte==i).unwrap().visual_x
+        }).collect();
+        let scale=30.0/1000.0;
+        assert!((xs[1]-xs[0]-266.0*scale).abs()<0.02,
+            "first caret must use GDEF 266 design units, got {xs:?}");
+        assert!((xs[2]-xs[0]-550.0*scale).abs()<0.02,
+            "second caret must use GDEF 550 design units, got {xs:?}");
+        assert!(xs.windows(2).all(|w|w[1]>w[0]));
+        assert!(xs[3]>xs[2]);
+        let fi=shape_text("fi",&bytes,30.0,ParagraphDirection::Ltr).unwrap();
+        let glyphs:Vec<_>=fi.visual_runs.iter().flat_map(|r|&r.glyphs).collect();
+        assert_eq!(glyphs.len(),1);
+        assert_eq!(glyphs[0].glyph_id,2647);
+        assert!(fi.caret_map_complete);
+        let x=fi.caret_candidates.iter().find(|p|p.byte==1).unwrap().visual_x;
+        assert!((x-277.0*scale).abs()<0.02);
+    }
+    #[test] fn absent_gdef_arabic_ligature_does_not_invent_interior(){
+        let path="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+        if !std::path::Path::new(path).is_file(){return;}
+        let bytes=std::fs::read(path).unwrap();
+        let shaped=shape_text("سلام",&bytes,30.0,ParagraphDirection::Rtl).unwrap();
+        assert_eq!(shaped.visual_runs.iter().flat_map(|r|r.glyphs.iter()).count(),3);
+        assert!(!shaped.caret_map_complete,
+            "no valid LigCaretList coordinate: never invent Arabic caret position");
     }
 }

@@ -19,6 +19,9 @@ mod text_viewport;
 mod font_atlas;
 
 #[cfg(any(feature = "raylib", test))]
+mod gdef_caret;
+
+#[cfg(any(feature = "raylib", test))]
 mod text_shaping;
 #[cfg(feature="raylib")]
 mod shaped_gpu;
