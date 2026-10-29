@@ -802,15 +802,39 @@ fn lowered_refined_user_call_with_proven_value_remains_legal() {
 type Window = u8[10..20]
 cell accept(n: Window) ->:
     yield n
-cell main() ->:
+cell entry_value() ->:
     val n: Window = 20
     yield accept(n)
 "#;
     let ast=aura_parse::parse_source(src).expect("valid argument source parses");
     let ir=lower_program(&ast).expect("proven refined argument must lower");
     validate_module(&ir).expect("refined call IR validates");
-    let result=run_oracle_entry(&ir,"main",&[],OracleConfig::default())
+    let result=run_oracle_entry(&ir,"entry_value",&[],OracleConfig::default())
         .expect("oracle executes valid refined user cell call");
     assert!(result.ok && result.stderr.is_empty(), "{result:?}");
     assert_eq!(result.return_value,Some(OracleValue::U32(20)));
+    let artifacts=emit_module(&ir,None).expect("a refined parameter has qualified u8 native ABI");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "uint8_t accept(uint8_t);\n",
+        "uint8_t entry_value(void);\n",
+        "int main(void) { return (accept(10)==10 && accept(20)==20",
+        " && entry_value()==20) ? 0 : 1; }\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("refined_param_{}",&opt[1..]));
+        let build=Command::new("clang")
+            .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("strict clang available");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+        let run=Command::new(&exe).output().expect("linked refined user-call executable");
+        assert!(run.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&run.stderr),artifacts.module_c);
+    }
 }
