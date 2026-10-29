@@ -63,8 +63,16 @@ int main(int argc,char**argv) {
         if(n>128){puts("FATAL input_too_long");break;}
         if(!strncmp(line,"F1",2)){
             ibus_input_context_focus_in(ic);
-            ibus_input_context_property_activate(ic,"InputMode",PROP_STATE_CHECKED);
             pump_ms(200);
+            // A deterministic opt-in test can request the REAL engine's
+            // Hangul-mode switch key. No preedit text is fabricated here:
+            // subsequent XTest r/k must be processed by ibus-hangul itself.
+            if (g_getenv("LUMINA_IBUS_TEST_HANGUL_SWITCH") != NULL) {
+                gboolean toggled=ibus_input_context_process_key_event(
+                    ic,IBUS_KEY_Hangul,0,0);
+                fprintf(stderr,"LUMINA_IBUS_HANGUL_SWITCH handled=%d\n",toggled);
+                pump_ms(150);
+            }
             IBusEngineDesc *focused=ibus_input_context_get_engine(ic);
             fprintf(stderr,"LUMINA_IBUS_FOCUSED_ENGINE %s\n",
                 focused ? ibus_engine_desc_get_name(focused) : "(none)");
