@@ -1809,6 +1809,7 @@ mod emit_tests {
             functions: BTreeMap::new(),
             externs: BTreeMap::new(),
             record_layouts: BTreeMap::new(),
+            refined_param_bounds: BTreeMap::new(),
         };
 
         let dummy_span: Span = (0, 0).into();
