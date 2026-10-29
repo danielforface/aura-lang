@@ -2050,6 +2050,15 @@ impl Avm {
             }
         }
 
+        // Qualify concrete refined TypeAlias declarations even if they are
+        // never referenced by a local, parameter, or Record. A raw no-Z3
+        // interpreter cannot silently accept an impossible numeric domain.
+        for alias in self.source_type_aliases.values() {
+            if alias.params.is_empty() && alias.target.range.is_some() {
+                self.qualify_source_refined_alias_declaration(alias)?;
+            }
+        }
+
         // Like Core's declaration pass, raw AVM source qualification must not
         // depend on constructing an instance. Reject unused malformed schemas
         // before executing any top-level statement or entry cell.
@@ -2070,6 +2079,80 @@ impl Avm {
                     &field.ty.name.node,default,
                     &mut vec![record.name.node.clone()])?;
             }
+        }
+        Ok(())
+    }
+
+    // This declaration gate checks only simple, monomorphic, nonnegative
+    // integer refinements. It is separate from runtime enforcement for values
+    // typed by refined aliases, which is not yet qualified in raw AVM.
+    fn qualify_source_refined_alias_declaration(
+        &self,
+        alias: &aura_ast::TypeAlias,
+    ) -> miette::Result<()> {
+        let mut current = alias.name.node.as_str();
+        let mut seen = HashSet::new();
+        let mut chain: Vec<&aura_ast::TypeAlias> = Vec::new();
+        let mut domain = loop {
+            let primitive = match current {
+                "u8" => Some((0, u8::MAX as u64)),
+                "u16" => Some((0, u16::MAX as u64)),
+                "u32" | "Int" => Some((0, u32::MAX as u64)),
+                "u64" | "u128" | "usize" => Some((0, u64::MAX)),
+                "i8" => Some((0, i8::MAX as u64)),
+                "i16" => Some((0, i16::MAX as u64)),
+                "i32" => Some((0, i32::MAX as u64)),
+                "i64" | "i128" | "isize" => Some((0, i64::MAX as u64)),
+                _ => None,
+            };
+            if let Some(bounds) = primitive {
+                break bounds;
+            }
+            if !seen.insert(current.to_string()) {
+                return Err(miette::miette!(
+                    "AVM: cyclic refined TypeAlias '{}' via '{}'",
+                    alias.name.node, current
+                ));
+            }
+            let Some(def) = self.source_type_aliases.get(current) else {
+                return Err(miette::miette!(
+                    "AVM: refined TypeAlias '{}' requires integer base range, unknown or noninteger '{}'",
+                    alias.name.node, current
+                ));
+            };
+            if !def.params.is_empty() || !def.target.args.is_empty() {
+                return Err(miette::miette!(
+                    "AVM: unqualified generic refined TypeAlias '{}'",
+                    def.name.node
+                ));
+            }
+            chain.push(def);
+            current = def.target.name.node.as_str();
+        };
+        // Verify from the primitive terminal back to the outermost alias:
+        // every refining interval must be wholly contained in its immediate
+        // underlying domain, not merely overlap it.
+        for def in chain.into_iter().rev() {
+            let Some(range) = &def.target.range else { continue };
+            let ExprKind::IntLit(lo) = &range.lo.kind else {
+                return Err(miette::miette!(
+                    "AVM: refined TypeAlias '{}' range lower bound is not a nonnegative literal",
+                    def.name.node
+                ));
+            };
+            let ExprKind::IntLit(hi) = &range.hi.kind else {
+                return Err(miette::miette!(
+                    "AVM: refined TypeAlias '{}' range upper bound is not a nonnegative literal",
+                    def.name.node
+                ));
+            };
+            if lo > hi || *lo < domain.0 || *hi > domain.1 {
+                return Err(miette::miette!(
+                    "AVM: refined TypeAlias '{}' range [{}..{}] outside base range [{}..{}]",
+                    def.name.node, lo, hi, domain.0, domain.1
+                ));
+            }
+            domain = (*lo, *hi);
         }
         Ok(())
     }
