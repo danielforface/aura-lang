@@ -469,3 +469,60 @@ fn public_check_validates_refined_alias_record_defaults_and_writes() {
         "valid refined Record default must check: {}",
         String::from_utf8_lossy(&checked.stderr));
 }
+
+#[test]
+fn public_cli_refined_user_call_requires_proven_argument_for_check_and_native_build() {
+    for (label, source) in [
+        ("out-of-window literal", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    yield accept(21)
+"#),
+        ("unconstrained caller parameter", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell proxy(n: u32) ->:
+    yield accept(n)
+"#),
+    ] {
+        let fixture=SourceFile::new(source);
+        for args in [
+            &["check"][..],
+            &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+        ] {
+            let res=fixture.run(args);
+            let output=format!("{}\n{}",
+                String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+            assert!(!res.status.success(),
+                "{label}: public Aura {:?} accepted unproven refined call: {output}",args);
+            assert!(output.contains("range") || output.contains("refin") ||
+                output.contains("prove"),
+                "{label}: require explicit refinement refusal: {output}");
+        }
+    }
+}
+
+#[test]
+fn public_cli_builds_valid_refined_user_call_with_exact_native_abi() {
+    let source=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    yield accept(20)
+"#;
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let res=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+        assert!(res.status.success(),
+            "public Aura {:?} must build proven refined call: {output}",args);
+    }
+}
