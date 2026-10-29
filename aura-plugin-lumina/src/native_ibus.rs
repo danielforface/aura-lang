@@ -152,7 +152,13 @@ impl NativeIbus {
             match reply{
                 Reply::Ready=>{self.ready=true;}
                 Reply::Focus(state)=>{self.focus_ack=state&&self.focus.is_some();}
-                Reply::Fail=>{self.ready=false;self.focus_ack=false;self.composing=false;}
+                Reply::Fail=>{
+                    if let Some(cb)=self.focus.filter(|_|self.composing){
+                        let sequence=self.serial();
+                        out.push(CompositionEvent::Cancel{callback_id:cb,sequence});
+                    }
+                    self.ready=false;self.focus_ack=false;self.composing=false;
+                }
                 _ if !self.active(self.focus)=>{}
                 Reply::Preedit(text,cursor)=>{
                     let Some(cb)=self.focus else{continue;};
@@ -202,7 +208,7 @@ mod tests{
         assert_eq!(parse_reply("P\t65cc81\t2"),Reply::Preedit("e\u{301}".into(),2));
         assert_eq!(scalar_to_grapheme("e\u{301}",1),Some(1));
         assert_eq!(scalar_to_grapheme("e\u{301}",2),Some(1));
-        assert_eq!(parse_reply("C\td795d5dc"),Reply::Commit("שלום".into()));
+        assert_eq!(parse_reply("C\td7a9d79cd795d79d"),Reply::Commit("שלום".into()));
         assert_eq!(parse_reply("P\tff\t1"),Reply::Fail);
         assert_eq!(parse_reply("P\t65cc81\t3"),Reply::Fail);
         assert_eq!(parse_reply("K\t97\t0\t0"),Reply::Fail);
