@@ -839,3 +839,50 @@ cell entry_value() ->:
             String::from_utf8_lossy(&run.stderr),artifacts.module_c);
     }
 }
+
+#[test]
+fn native_refined_user_call_rejects_lost_range_proof_after_ir_optimization() {
+    // Native output is a separate trust boundary. Changing already-optimized
+    // source-proven IR must not launder a now-unproved call into the U8 ABI.
+    // In the old emitter, constant provenance alone allowed ANY 0..255 value.
+    let source=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell entry_value() ->:
+    yield accept(20)
+"#;
+    let ast=aura_parse::parse_source(source).expect("legal source parses");
+    let original=lower_program(&ast).expect("legal refined call lowers");
+    validate_module(&original).expect("baseline IR validates");
+    for scenario in ["elided guard with tampered constant", "elided guard with original constant"] {
+        let mut ir=original.clone();
+        let entry=ir.functions.get_mut("entry_value").expect("lowered user call");
+        // Optimizer may erase the RangeCheckU32 once it sees a constant.
+        aura_ir::optimize_function(entry);
+        let mut saw_guard=false;
+        let mut changed=false;
+        for inst in entry.blocks.iter_mut().flat_map(|b| b.insts.iter_mut()) {
+            match &mut inst.kind {
+                aura_ir::InstKind::RangeCheckU32{..} |
+                aura_ir::InstKind::RangeCheck{..} => saw_guard=true,
+                aura_ir::InstKind::BindStrand{expr:aura_ir::RValue::ConstU32(n),..}
+                    if *n==20 && scenario=="elided guard with tampered constant" => {
+                    *n=21; changed=true;
+                }
+                _ => {}
+            }
+        }
+        assert!(!saw_guard,
+            "RED precondition: optimizer currently removes the source range proof");
+        if scenario=="elided guard with tampered constant" {
+            assert!(changed,"must actually edit an IR scalar source value");
+        }
+        validate_module(&ir).expect("forged IR remains structurally valid");
+        let err=emit_module(&ir,None).err()
+            .expect("C emitter must refuse U32 -> refined U8 without retained range proof");
+        assert!(err.message.contains("ABI") || err.message.contains("range") ||
+                err.message.contains("narrow") || err.message.contains("type mismatch"),
+            "{scenario}: expected an exact boundary error, got {err}");
+    }
+}
