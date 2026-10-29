@@ -59,7 +59,7 @@ jobs:
             # silently replaces requested Hangul by xkb:kr:kr104:kor.
             gsettings set org.freedesktop.ibus.general enable-by-default true
             gsettings set org.freedesktop.ibus.general use-global-engine true
-            ibus-daemon --daemonize --xim
+            ibus-daemon --daemonize --panel disable
             # ibus address can exist before the daemon accepts method calls.
             for n in $(seq 1 100); do
               if ibus list-engine 2>/dev/null | grep -qi hangul; then
