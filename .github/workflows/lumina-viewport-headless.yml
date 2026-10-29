@@ -120,17 +120,18 @@ jobs:
           AURA_LUMINA_IBUS_ENGINE: "hangul"
         run: |
           xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -eu -c '
-            ibus-daemon --daemonize --xim
-            for n in $(seq 1 60); do
-              test -n "$(ibus address 2>/dev/null)" && break
-              sleep 0.2
-            done
-            test -n "$(ibus address)"
-            ibus list-engine | grep -i hangul
-            # ibus-hangul defaults to Latin! Without explicit Hangul mode
-            # ProcessKeyEvent(r,k) produces no real Korean preedit.
+            # Set before daemon starts: its engine defaults to Latin mode.
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode hangul
             gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            ibus-daemon --daemonize --xim
+            # ibus address can exist before the daemon accepts method calls.
+            for n in $(seq 1 100); do
+              if ibus list-engine 2>/dev/null | grep -qi hangul; then
+                break
+              fi
+              sleep 0.2
+            done
+            ibus list-engine | grep -i hangul
             ibus engine hangul
             /usr/bin/python3 aura-plugin-lumina/native/ibus_bridge.py --probe
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
