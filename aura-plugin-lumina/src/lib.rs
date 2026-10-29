@@ -27,6 +27,8 @@ mod text_shaping;
 mod shaped_gpu;
 #[cfg(any(feature="raylib",test))]
 mod bidi_editor;
+#[cfg(all(feature="raylib",target_os="linux"))]
+mod ibus_native;
 
 #[cfg(feature = "raylib")]
 use viewport::FrameMetrics;
@@ -148,6 +150,8 @@ struct LuminaWindow {
     textures: HashMap<String, Texture2D>,
     fonts: HashMap<String,LoadedUnicodeFont>,
     shaped_textures: HashMap<String,shaped_gpu::PreparedGlyphText>,
+    #[cfg(target_os="linux")]
+    native_ibus: Option<ibus_native::NativeIbus>,
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
@@ -788,6 +792,15 @@ impl AuraLuminaPlugin {
             projection.caret,fi.session.undo_len()))
     }
 
+    /// Diagnostics prove that the active IBus client was started by the
+    /// configured helper, and expose the count of actual daemon engine
+    /// preedit/commit callbacks (never synthetic injected queue events).
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.engine_events)
+    }
+
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
     /// hashes even if the raw number of red pixels is similar. Xvfb only.
@@ -921,7 +934,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
         #[cfg(feature = "raylib")]
         {
             // Keep a bounded event batch outside the Raylib mutable borrow.
-            let pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
+            let mut pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
@@ -959,6 +972,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
                     shaped_textures: HashMap::new(),
+                    #[cfg(target_os="linux")]
+                    native_ibus: ibus_native::NativeIbus::connect(),
                 });
             }
 
@@ -1095,6 +1110,29 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     _=>switch_input(win,None),
                 }
             }
+            // Linux opt-in: feed physical GLFW/X11 ASCII keypresses through a
+            // real libibus input context instead of directly committing them.
+            // The engine owns its own GSUB/preedit logic; only engine-origin
+            // preedit/commit signals become bounded CompositionEvent values.
+            // Without an explicit working helper, old keyboard paths remain.
+            #[cfg(target_os="linux")]
+            if let Some(bus)=win.native_ibus.as_mut(){
+                let focus=win.focused_input.as_ref().map(|f|f.on_change);
+                let available=bus.sync_focus(focus);
+                if available && focus.is_some() && !ctrl{
+                    let incoming=std::mem::take(&mut typed);
+                    for ch in incoming.chars() {
+                        match bus.process_ibus_key(ch,focus){
+                            Some((handled,signals))=>{
+                                pending_composition.extend(signals);
+                                if !handled{typed.push(ch);}
+                            }
+                            None=>typed.push(ch),
+                        }
+                    }
+                }
+            }
+
             // Composition events are distinct from Raylib committed-char
             // queue. Match the currently focused widget and monotonic serial.
             // Never emit callbacks for preedit updates or cancellation.
