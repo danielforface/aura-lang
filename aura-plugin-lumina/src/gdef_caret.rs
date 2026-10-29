@@ -70,18 +70,22 @@ fn coverage_index(data:&[u8],table:usize,gid:u16)->Result<Option<usize>,CaretErr
             let end=table.checked_add(4+2*count).ok_or(CaretError::MalformedFont)?;
             if end>data.len(){return Err(CaretError::MalformedFont);}
             let mut prev=None;
+            let mut found=None;
             for i in 0..count {
                 let id=u16be(data,table+4+2*i)?;
                 if prev.is_some_and(|v|id<=v){return Err(CaretError::MalformedFont);}
                 prev=Some(id);
-                if id==gid{return Ok(Some(i));}
+                if id==gid{found=Some(i);}
             }
-            Ok(None)
+            // Validate *all* records before trusting a hit, including any
+            // malformed tail after the first matching glyph.
+            Ok(found)
         }
         2=>{
             let end=table.checked_add(4+6*count).ok_or(CaretError::MalformedFont)?;
             if end>data.len(){return Err(CaretError::MalformedFont);}
             let mut prev_end=None;
+            let mut found=None;
             for i in 0..count{
                 let a=u16be(data,table+4+6*i)?;
                 let b=u16be(data,table+6+6*i)?;
@@ -91,10 +95,10 @@ fn coverage_index(data:&[u8],table:usize,gid:u16)->Result<Option<usize>,CaretErr
                 }
                 prev_end=Some(b);
                 if gid>=a&&gid<=b {
-                    return Ok(Some(idx+(gid-a) as usize));
+                    found=Some(idx+(gid-a) as usize);
                 }
             }
-            Ok(None)
+            Ok(found)
         }
         _=>Err(CaretError::UnsupportedCaretFormat)
     }
