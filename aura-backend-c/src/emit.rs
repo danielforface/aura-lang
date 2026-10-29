@@ -1176,14 +1176,26 @@ fn emit_function(
                                             // sufficient to narrow to U8 without truncation.
                                             // Raw/forged IR without this guard still fails
                                             // closed, preserving exact nominal and scalar ABI.
+                                            let original = values.get(arg)
+                                                .expect("scalar operand checked").1.clone();
+                                            // Optimize-function may safely fold away a
+                                            // RangeCheckU32 when it already knows the
+                                            // SSA constant. Reuse the established Record
+                                            // scalar constant-provenance gate in that case.
+                                            // Otherwise require a runtime same-block guard.
+                                            let constant_cast = qualified_record_scalar_value(
+                                                required, *actual, *arg, &original, &known_u32_constants
+                                            );
                                             let range = current_block_ranges.get(arg);
-                                            if *actual == CType::U32 && required == CType::U8 &&
+                                            let guarded_cast = if *actual == CType::U32 && required == CType::U8 &&
                                                 range.is_some_and(|(lo, hi)| *lo <= *hi && *hi <= u8::MAX as u64)
                                             {
-                                                let original = values.get(arg)
-                                                    .expect("scalar operand checked").1.clone();
-                                                call_values.insert(*arg,
-                                                    (required, format!("((uint8_t)({original}))")));
+                                                Some(format!("((uint8_t)({original}))"))
+                                            } else {
+                                                None
+                                            };
+                                            if let Some(cast) = constant_cast.or(guarded_cast) {
+                                                call_values.insert(*arg, (required, cast));
                                             } else {
                                                 return Err(CBackendError { message: format!(
                                                     "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}; same-block-guards={:?}",
