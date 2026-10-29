@@ -100,3 +100,60 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert_eq!(p.diagnostic_shaped_gpu(FONT,30,"ltr","Hiשלום").unwrap().0,gpu.0);
     drop(p);
 }
+
+#[test]fn adapter_preedit_blur_and_authoritative_version_rebase_have_no_stale_commit(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","340"),("height","64"),
+        ("radius","0"),("value","seed"),("value_revision","1"),
+        ("on_change","cb:917"),("size","28"),("fg","#EE3030"),
+        ("font_path",FONT),("shaping","opentype"),("direction","ltr")
+    ]));
+    app.children.push(node("Button",&[
+        ("x","390"),("y","20"),("width","90"),("height","50"),
+        ("label","blur"),("on_click","cb:444")
+    ]));
+    frames(&p,&app,&mut c,4);assert!(p.diagnostic_resize_window(640,420));
+    frames(&p,&app,&mut c,4);
+    let wins=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=wins.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",win]);key(&p,&app,&mut c,"Tab");
+    assert!(p.submit_composition_event(CompositionEvent::Start{callback_id:917,sequence:100}));
+    assert!(p.submit_composition_event(CompositionEvent::Update{
+        callback_id:917,sequence:101,text:"אב".into(),caret:2}));
+    assert!(frames(&p,&app,&mut c,3).is_empty());
+    assert_eq!(p.diagnostic_composition(917).unwrap().1,"seedאב");
+    // Real pointer blur must abandon transient preedit and keep original value.
+    xdo(&["mousemove","--window",win,"420","40"]);frames(&p,&app,&mut c,3);
+    xdo(&["mousedown","1"]);frames(&p,&app,&mut c,3);
+    xdo(&["mouseup","1"]);frames(&p,&app,&mut c,3);
+    assert!(p.diagnostic_composition(917).is_none());
+    key(&p,&app,&mut c,"Tab");
+    assert!(p.diagnostic_composition(917).is_none());
+    assert!(p.submit_composition_event(CompositionEvent::Commit{
+        callback_id:917,sequence:102,text:"stale".into()}));
+    assert!(frames(&p,&app,&mut c,3).is_empty(),
+        "blurred preedit commit must not survive re-focus");
+    assert!(p.submit_composition_event(CompositionEvent::Start{callback_id:917,sequence:103}));
+    assert!(p.submit_composition_event(CompositionEvent::Update{
+        callback_id:917,sequence:104,text:"שלום".into(),caret:4}));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_composition(917).is_some());
+    // A newer host authority revision rebases editor, cancels preedit,
+    // clears Undo and retains replay-barrier serial across rebase.
+    app.children[0].set_prop("value","server");
+    app.children[0].set_prop("value_revision","2");
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_composition(917).is_none());
+    assert!(p.submit_composition_event(CompositionEvent::Start{callback_id:917,sequence:104}));
+    assert!(p.submit_composition_event(CompositionEvent::Commit{
+        callback_id:917,sequence:105,text:"phantom".into()}));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_composition(917).is_none());
+    assert!(p.submit_composition_event(CompositionEvent::Start{callback_id:917,sequence:106}));
+    assert!(frames(&p,&app,&mut c,3).is_empty());
+    let draft=p.diagnostic_composition(917).unwrap();
+    assert_eq!((draft.0.as_str(),draft.1.as_str(),draft.3),("server","server",0));
+    drop(p);
+}
