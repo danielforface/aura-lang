@@ -160,6 +160,13 @@ impl EditSession {
     }
     pub(crate) fn abandon_composition(&mut self) {self.preedit=None;}
     pub(crate) fn composing(&self)->bool{self.preedit.is_some()}
+    /// A new authoritative value revision clears transient composition and
+    /// undo, yet must not reset the adapter replay barrier for this widget.
+    pub(crate) fn rebase_authority(&mut self,text:String){
+        let last=self.last_composition_sequence;
+        *self=Self::new(text);
+        self.last_composition_sequence=last;
+    }
     /// Non-authoritative projection used by GPU and measured viewport only.
     /// The source buffer, caret, selection, undo and redo remain unchanged.
     pub(crate) fn projected(&self)->Option<Projection>{
@@ -521,6 +528,19 @@ mod tests {
         assert_eq!(e.undo_len(),1);
         assert!(e.apply(SessionAction::Undo));
         assert_eq!(e.buffer,"B👩‍👩‍👧‍👦C");
+    }
+    #[test]fn newer_host_value_revision_cancels_preedit_without_reopening_old_serial(){
+        let mut e=EditSession::new("original".into());
+        assert!(e.start_composition(40));
+        assert!(e.update_composition(41,"漢",1));
+        assert!(e.projected().is_some());
+        e.rebase_authority("server".into());
+        assert!(e.projected().is_none());
+        assert_eq!(e.buffer,"server");
+        assert_eq!(e.undo_len(),0);
+        assert!(!e.start_composition(41));
+        assert!(!e.commit_composition(42,"stale").is_some());
+        assert!(e.start_composition(43));
     }
     #[test]fn ime_limits_invalid_cursor_and_controls_rejected_without_sequence_advance(){
         let mut e=EditSession::new(String::new());
