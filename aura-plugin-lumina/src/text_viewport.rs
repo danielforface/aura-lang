@@ -97,7 +97,7 @@ mod tests {
     #[test]fn preedit_underlines_clip_to_visible_content_and_leave_selection_unmodified(){
         let mut v=plan(76.0,200.0,98.0,None,0.0,true);
         v.preedit_spans=vec![(15.0,32.0),(145.0,200.0)];
-        assert_eq!(v.preedit_screens(c()),vec![(32.0,32.0+0.0)].into_iter().filter(|(a,b)|b>a).collect::<Vec<_>>());
+        assert_eq!(v.preedit_screens(c()),vec![(32.0,40.0)]);
         v.scroll=10.0;
         assert_eq!(v.preedit_screens(c()),vec![(37.0,54.0)]);
         assert_eq!(v.selection,None);
