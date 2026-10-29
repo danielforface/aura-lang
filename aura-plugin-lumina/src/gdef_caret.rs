@@ -205,6 +205,18 @@ mod tests{
     let mut missing=f.clone();set16(&mut missing,28+8,0);
     assert_eq!(ligature_caret_coords(&missing,100,2),Err(CaretError::MissingCaret));
  }
+ #[test]fn coverage_format1_rejects_malformed_trailing_glyph_even_after_matching_first(){
+    let mut f=fixture(1,1,0);
+    // Two coverage entries are required to be sorted. A previously
+    // vulnerable early return on first match skipped validation of the
+    // malicious second glyph ID. This is a real parser acceptance bug.
+    set16(&mut f,28+22,2);
+    set16(&mut f,28+24,100);
+    set16(&mut f,28+26,90);
+    assert_eq!(ligature_caret_coords(&f,100,2),
+        Err(CaretError::MalformedFont),
+        "no malformed trailing CoverageFormat1 record may be ignored");
+ }
  #[test]fn authentic_linux_libertine_font_gdef_ffi_if_installed(){
     let p="/usr/share/fonts/opentype/linux-libertine/LinLibertine_R.otf";
     if !std::path::Path::new(p).is_file(){return;}
