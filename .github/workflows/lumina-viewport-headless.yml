@@ -55,6 +55,13 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
             ibus-daemon --daemonize --xim --panel disable
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            sleep 1
+            echo "LUMINA_IBUS_REGISTERED_ENGINES:"
+            ibus list-engine | head -65
+            echo "LUMINA_IBUS_REQUEST_ENGINE:"
+            ibus engine hangul
+            ibus engine
             sleep 1
             export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper"
             export LUMINA_IBUS_ENGINE="hangul"
