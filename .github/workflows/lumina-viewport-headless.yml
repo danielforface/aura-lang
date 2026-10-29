@@ -127,6 +127,10 @@ jobs:
             done
             test -n "$(ibus address)"
             ibus list-engine | grep -i hangul
+            # ibus-hangul defaults to Latin! Without explicit Hangul mode
+            # ProcessKeyEvent(r,k) produces no real Korean preedit.
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode hangul
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
             ibus engine hangul
             /usr/bin/python3 aura-plugin-lumina/native/ibus_bridge.py --probe
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
