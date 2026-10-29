@@ -114,6 +114,29 @@ const INITIAL_WINDOW_H: i32 = 1080;
 #[cfg(feature = "raylib")]
 pub struct AuraLuminaPlugin {
     window: RefCell<Option<LuminaWindow>>,
+    composition_queue: RefCell<Vec<CompositionEvent>>,
+}
+
+/// Explicit input-method adapter events. Raylib's GetCharPressed() exposes
+/// committed Unicode only; it DOES NOT provide XIM preedit lifecycle.
+#[cfg(feature="raylib")]
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum CompositionEvent {
+    Start{callback_id:u64,sequence:u64},
+    Update{callback_id:u64,sequence:u64,text:String,caret:usize},
+    Commit{callback_id:u64,sequence:u64,text:String},
+    Cancel{callback_id:u64,sequence:u64},
+}
+#[cfg(feature="raylib")]
+impl CompositionEvent {
+    fn target(&self)->u64{match self{
+        Self::Start{callback_id,..}|Self::Update{callback_id,..}|
+        Self::Commit{callback_id,..}|Self::Cancel{callback_id,..}=>*callback_id
+    }}
+    fn sequence(&self)->u64{match self{
+        Self::Start{sequence,..}|Self::Update{sequence,..}|
+        Self::Commit{sequence,..}|Self::Cancel{sequence,..}=>*sequence
+    }}
 }
 
 #[cfg(feature = "raylib")]
@@ -154,7 +177,10 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
         if active.on_change == *new_id { return; }
     }
-    if let Some(previous) = win.focused_input.take() {
+    if let Some(mut previous) = win.focused_input.take() {
+        // Blurring a field cancels the uncommitted composition. It may never
+        // reappear when that input regains focus via the persistent session.
+        previous.session.abandon_composition();
         win.input_sessions.insert(previous.on_change, previous);
     }
     if let Some((on_change, on_submit, source_value, revision)) = target {
@@ -518,6 +544,7 @@ impl Default for AuraLuminaPlugin {
     fn default() -> Self {
         Self {
             window: RefCell::new(None),
+            composition_queue: RefCell::new(Vec::new()),
         }
     }
 }
@@ -529,6 +556,26 @@ pub struct AuraLuminaPlugin;
 impl AuraLuminaPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Send an input-method event from an external, explicitly integrated
+    /// platform adapter. This is not a native XIM/IBus hookup: Raylib 5.5.1
+    /// does not expose preedit lifecycle. Events are checked again against
+    /// actual focus and session serial during the next native frame.
+    #[cfg(feature="raylib")]
+    pub fn submit_composition_event(&self,event:CompositionEvent)->bool{
+        if event.target()==0||event.sequence()==0{return false;}
+        let valid=match &event {
+            CompositionEvent::Update{text,..}|CompositionEvent::Commit{text,..} =>
+                text.len()<=text_input::MAX_PREEDIT_BYTES &&
+                text.chars().all(|c|!c.is_control() &&
+                    !matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}')),
+            _=>true
+        };
+        if !valid{return false;}
+        let mut queue=self.composition_queue.borrow_mut();
+        if queue.len()>=32{return false;}
+        queue.push(event);
+        true
     }
 }
 
@@ -701,6 +748,18 @@ impl AuraLuminaPlugin {
         Some((prepared.cells.len(),glyphs,prepared.shaped.width))
     }
 
+    /// Diagnostic only: (authoritative buffer, temporary projected string,
+    /// preedit caret in projected graphemes, undo depth).
+    #[cfg(feature="lumina-diagnostics")]
+    pub fn diagnostic_composition(&self,callback_id:u64)->Option<(String,String,usize,usize)>{
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let fi=win.focused_input.as_ref().filter(|fi|fi.on_change==callback_id)?;
+        let projection=fi.session.projected()?;
+        Some((fi.session.buffer.clone(),projection.display,
+            projection.caret,fi.session.undo_len()))
+    }
+
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
     /// hashes even if the raw number of red pixels is similar. Xvfb only.
@@ -833,6 +892,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
         #[cfg(feature = "raylib")]
         {
+            // Keep a bounded event batch outside the Raylib mutable borrow.
+            let pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
@@ -971,6 +1032,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
                                 if shaped_gpu::is_opted(n) {
                                     let hit=win.focused_input.as_ref().and_then(|fi|{
+                                        if fi.session.composing(){return None;}
                                         let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
                                         let c=text_viewport::content_bounds(pl.bounds);
                                         let scroll=win.last_text_views.get(&on_change)
@@ -995,7 +1057,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     None => {switch_input(win,None);None}
                 }
             } else {None};
-            if tab {
+            if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
                 let active=win.focused_input.as_ref().map(|fi|fi.on_change);
                 let target=layout::next_focus(&focus_order,active,reverse_tab);
                 match target {
@@ -1005,8 +1067,51 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     _=>switch_input(win,None),
                 }
             }
+            // Composition events are distinct from Raylib committed-char
+            // queue. Match the currently focused widget and monotonic serial.
+            // Never emit callbacks for preedit updates or cancellation.
+            let mut composition_consumed=false;
+            for event in pending_composition {
+                let Some(fi)=win.focused_input.as_mut() else{continue;};
+                if event.target()!=fi.on_change{continue;}
+                use CompositionEvent::*;
+                match event {
+                    Start{sequence,..}=>{
+                        if fi.session.start_composition(sequence){
+                            composition_consumed=true;
+                        }
+                    }
+                    Update{sequence,text,caret,..}=>{
+                        if fi.session.update_composition(sequence,&text,caret){
+                            composition_consumed=true;
+                        }
+                    }
+                    Cancel{sequence,..}=>{
+                        if fi.session.cancel_composition(sequence){
+                            composition_consumed=true;
+                        }
+                    }
+                    Commit{sequence,text,..}=>{
+                        if let Some(changed)=fi.session.commit_composition(sequence,&text){
+                            composition_consumed=true;
+                            if changed{
+                                fi.visual_affinity=None;
+                                fi.revision.record_local_edit(&fi.session.buffer);
+                                fb.text_input_events.push(UiTextInputEvent{
+                                    callback_id:fi.on_change,text:fi.session.buffer.clone(),
+                                    submitted:false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
             if let Some(fi)=&mut win.focused_input {
-                if escape {
+                if fi.session.composing() || composition_consumed {
+                    // The platform adapter owns navigation and typing while
+                    // the preedit transaction is active. Escape aborts it.
+                    if escape{fi.session.abandon_composition();}
+                } else if escape {
                     switch_input(win,None);
                 } else {
                     use text_input::{EditCommand,SessionAction};
