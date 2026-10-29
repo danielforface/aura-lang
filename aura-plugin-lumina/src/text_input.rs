@@ -466,4 +466,73 @@ mod tests {
         assert!(apply_edit(&mut s,&mut caret,EditCommand::Insert("Hi".into())));
         assert_eq!((s,caret),("Hi".into(),2));
     }
+
+    #[test]fn ime_preedit_update_cancel_keeps_authoritative_and_undo_untouched(){
+        let mut e=EditSession::new("Aשלום".into());
+        e.apply(SessionAction::Move(EditCommand::Home,false));
+        e.apply(SessionAction::Move(EditCommand::Right,false));
+        assert!(e.start_composition(101));
+        assert!(e.update_composition(102,"界に",1));
+        let preview=e.projected().expect("temporary render projection");
+        assert_eq!(preview.display,"A界にשלום");
+        assert_eq!(preview.caret,2);
+        assert_eq!(preview.preedit_graphemes,1..3);
+        assert_eq!(e.buffer,"Aשלום");
+        assert_eq!(e.undo_len(),0);
+        assert!(!e.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert!(!e.apply(SessionAction::Undo));
+        assert!(!e.update_composition(102,"replay",1));
+        assert!(!e.update_composition(103,"bad\nvalue",1));
+        assert!(e.cancel_composition(104));
+        assert!(e.projected().is_none());
+        assert_eq!(e.buffer,"Aשלום");
+        assert!(!e.apply(SessionAction::Undo));
+    }
+    #[test]fn ime_commit_is_one_authoritative_edit_and_one_undo_step(){
+        let mut e=EditSession::new("ab".into());
+        assert!(e.start_composition(11));
+        assert!(e.update_composition(12,"k",1));
+        assert!(e.update_composition(13,"か",1));
+        assert_eq!(e.buffer,"ab");
+        assert_eq!(e.commit_composition(14,"漢"),Some(true));
+        assert_eq!(e.buffer,"ab漢");
+        assert_eq!(e.undo_len(),1);
+        assert_eq!(e.commit_composition(15,"duplicate"),None);
+        assert_eq!(e.buffer,"ab漢");
+        assert!(e.apply(SessionAction::Undo));
+        assert_eq!(e.buffer,"ab");
+        assert!(e.apply(SessionAction::Redo));
+        assert_eq!(e.buffer,"ab漢");
+        assert!(!e.start_composition(14),"old serial never starts a new composition");
+        assert!(e.start_composition(16));
+    }
+    #[test]fn ime_selection_replacement_and_zwj_grapheme_anchor_is_stable(){
+        let mut e=EditSession::new("B👩‍👩‍👧‍👦C".into());
+        e.apply(SessionAction::SelectAll);
+        assert!(e.start_composition(5));
+        assert!(e.update_composition(6,"日",1));
+        let p=e.projected().unwrap();
+        assert_eq!(p.display,"日");
+        assert_eq!(p.preedit_graphemes,0..1);
+        assert_eq!(e.buffer,"B👩‍👩‍👧‍👦C");
+        assert_eq!(e.selection(),Some((0,3)));
+        assert_eq!(e.commit_composition(7,"שלום"),Some(true));
+        assert_eq!(e.buffer,"שלום");
+        assert_eq!(e.undo_len(),1);
+        assert!(e.apply(SessionAction::Undo));
+        assert_eq!(e.buffer,"B👩‍👩‍👧‍👦C");
+    }
+    #[test]fn ime_limits_invalid_cursor_and_controls_rejected_without_sequence_advance(){
+        let mut e=EditSession::new(String::new());
+        assert!(!e.start_composition(0));
+        assert!(e.start_composition(1));
+        assert!(!e.update_composition(2,&"X".repeat(MAX_PREEDIT_BYTES+1),0));
+        assert!(!e.update_composition(2,"e\u{301}",2));
+        assert!(!e.update_composition(2,"evil\u{202E}",1));
+        assert!(e.update_composition(2,"e\u{301}",1));
+        assert_eq!(e.projected().unwrap().preedit_graphemes,0..1);
+        assert_eq!(e.commit_composition(3,""),Some(false));
+        assert_eq!(e.buffer,"");
+        assert_eq!(e.undo_len(),0);
+    }
 }
