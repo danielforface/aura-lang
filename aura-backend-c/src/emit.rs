@@ -1186,8 +1186,8 @@ fn emit_function(
                                                     (required, format!("((uint8_t)({original}))")));
                                             } else {
                                                 return Err(CBackendError { message: format!(
-                                                    "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}",
-                                                    callee, i, actual, required,
+                                                    "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}; same-block-guards={:?}",
+                                                    callee, i, actual, required, current_block_ranges,
                                                 ) });
                                             }
                                         }
