@@ -75,9 +75,13 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(!v.preedit_screens.is_empty(),"no native IBus underline");
     let &(a,b)=v.preedit_screens.first().unwrap();
     assert!(b>a+5.0);
-    let pix=p.diagnostic_capture_pixel((a+b)*0.5,77.0).unwrap();
+    // Underline is actually at y=(widget.y+height-7)=79, NOT y77.
+    // Reject the dark background RGB(13,17,23), which trivially satisfies
+    // blue > red and would be a false positive. Require real cyan ink.
+    let pix=p.diagnostic_capture_pixel((a+b)*0.5,79.0).unwrap();
     eprintln!("REAL_IBUS_PREEDIT {:?} {v:?} {pix:?}",state.1);
-    assert!(pix.b>pix.r && pix.g>pix.r);
+    assert!(pix.b>180 && pix.g>130 && pix.r<120,
+        "real IBus preedit underline needs actual cyan framebuffer ink, not background");
     let mut committed=key(&p,&app,&mut c,"space");
     for _ in 0..150 {
         committed.extend(frames(&p,&app,&mut c,1));
