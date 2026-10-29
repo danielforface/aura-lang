@@ -78,7 +78,7 @@ fn click(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,id:&str,x:i32){
     assert!((clicked.caret_screen_x-first.caret_screen_x).abs()<0.2);
     // A native framebuffer sample proves the white vertical caret was drawn
     // within the ligature's interval, beyond pure logical assertions.
-    let sample=p.diagnostic_capture_pixel(clicked.caret_screen_x.floor(),77.0).unwrap();
+    let sample=p.diagnostic_capture_pixel(clicked.caret_screen_x.floor(),70.0).unwrap();
     assert!(sample.r>=160&&sample.g>=160&&sample.b>=160,
         "native caret pixel at GDEF-proven position must be painted: {sample:?}");
     drop(p);
