@@ -2168,6 +2168,7 @@ impl Avm {
         expr: &Expr,
         active: &mut Vec<String>,
     ) -> miette::Result<()> {
+        let source_name = expected;
         let resolved = self.resolve_raw_integer_alias(expected)?;
         let expected = resolved.as_deref().unwrap_or(expected);
         match &expr.kind {
@@ -2192,6 +2193,17 @@ impl Avm {
                         "AVM: Record default scalar type or range mismatch for '{}' (value {})",
                         expected,n
                     ));
+                }
+                // A default is qualified even when its Record is unused.
+                // Preserve the source alias name: terminal primitive width
+                // alone does not enforce Window=u8[10..20] on a default 21.
+                if let Some(alias) = self.source_type_aliases.get(source_name) {
+                    let value=i64::try_from(*n).map_err(|_| miette::miette!(
+                        "AVM: Record refined default {} outside i64 representation range",n
+                    ))?;
+                    self.check_raw_integer_refinement_value(
+                        &alias.target, &AvmValue::Int(value)
+                    )?;
                 }
                 Ok(())
             },
