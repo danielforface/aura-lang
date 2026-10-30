@@ -84,6 +84,15 @@ fn emit_runtime_h() -> String {
     out.push_str("    abort();\n");
     out.push_str("  }\n");
     out.push_str("}\n\n");
+    // A wider entry guard must not truncate 64-bit arguments into U32 before
+    // checking the declared interval (especially for an external C caller).
+    out.push_str("static inline void AURA_RANGE_CHECK_U64(uint64_t v, uint64_t lo, uint64_t hi, const char* what) {\n");
+    out.push_str("  if (v < lo || v > hi) {\n");
+    out.push_str("    fprintf(stderr, \"Aura range check failed for %s: %llu not in [%llu..%llu]\\n\", what, (unsigned long long)v, (unsigned long long)lo, (unsigned long long)hi);\n");
+    out.push_str("    fflush(stderr);\n");
+    out.push_str("    abort();\n");
+    out.push_str("  }\n");
+    out.push_str("}\n\n");
 
     out.push_str("// Builtins used by main.aura\n");
     out.push_str("static inline Tensor io_load_tensor(const char* path) {\n");
@@ -505,6 +514,55 @@ fn emit_function(
 ) -> Result<(), CBackendError> {
     emit_function_signature(out, f, record_layouts, &f.name)?;
     out.push_str(" {\n");
+
+    // The *callee* is also a public C ABI trust boundary. Aura call sites
+    // have verified RangeCheck instructions, but an external C caller has
+    // none. Validate the Checker-resolved source contract upon every entry,
+    // before executing even the first basic block. Do not infer any contract
+    // from the integer ABI width alone.
+    if let Some(bounds) = source_refined_param_bounds.get(&f.name) {
+        if bounds.len() != f.params.len() {
+            return Err(CBackendError { message: format!(
+                "refined ABI entry '{}' metadata arity mismatch: {} vs {}",
+                f.name, bounds.len(), f.params.len()
+            ) });
+        }
+        for (idx, (param, interval)) in f.params.iter().zip(bounds.iter()).enumerate() {
+            let Some((lo, hi)) = interval else { continue };
+            let cty = map_type_to_ctype(&param.ty);
+            let (max, wide) = match cty {
+                CType::U8 => (u8::MAX as u64, false),
+                CType::U16 => (u16::MAX as u64, false),
+                CType::U32 => (u32::MAX as u64, false),
+                CType::I8 => (i8::MAX as u64, false),
+                CType::I16 => (i16::MAX as u64, false),
+                CType::I32 => (i32::MAX as u64, false),
+                CType::U64 | CType::USize => (u64::MAX, true),
+                CType::I64 | CType::ISize => (i64::MAX as u64, true),
+                _ => return Err(CBackendError { message: format!(
+                    "unqualified refined ABI entry '{}' parameter {} type {:?}",
+                    f.name, idx, cty
+                ) }),
+            };
+            if lo > hi || *hi > max {
+                return Err(CBackendError { message: format!(
+                    "refined ABI entry '{}' parameter {} range [{}..{}] exceeds {:?}",
+                    f.name, idx, lo, hi, cty
+                ) });
+            }
+            let arg = c_ident(&param.name);
+            let display = escape_c_string(&format!("{}.{}", f.name, param.name));
+            if wide {
+                out.push_str(&format!(
+                    "  AURA_RANGE_CHECK_U64((uint64_t)({arg}), {lo}ULL, {hi}ULL, \"{display}\");\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  AURA_RANGE_CHECK_U32((uint32_t)({arg}), {lo}u, {hi}u, \"{display}\");\n"
+                ));
+            }
+        }
+    }
 
     // Value table: ValueId -> (ctype, generated C name)
     let mut values: HashMap<ValueId, (CType, String)> = HashMap::new();
