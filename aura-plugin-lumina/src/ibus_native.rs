@@ -54,6 +54,9 @@ pub(crate) struct NativeIbus{
     disconnected:bool,
     /// Number of actual engine-produced nonempty preedit/commit callbacks.
     pub(crate) engine_events:usize,
+    pub(crate) key_acks:usize,
+    pub(crate) release_acks:usize,
+    pub(crate) shifted_acks:usize,
 }
 fn decode_hex(input:&str)->Option<String>{
     if input.len()%2!=0 || input.len()>MAX_TEXT_BYTES*2{return None;}
@@ -114,7 +117,8 @@ impl NativeIbus{
             let _=child.kill();let _=child.wait();return None;
         }
         Some(Self{child,input,output,focus:None,serial:0,
-            composing:false,disconnected:false,engine_events:0})
+            composing:false,disconnected:false,engine_events:0,
+            key_acks:0,release_acks:0,shifted_acks:0})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -192,6 +196,13 @@ impl NativeIbus{
             };
             if let Some(bit)=line.strip_prefix("R\t"){
                 handled=match bit{"1"=>Some(true),"0"=>Some(false),_=>None};
+                if handled.is_some(){
+                    self.key_acks=self.key_acks.saturating_add(1);
+                    if key.released{self.release_acks=self.release_acks.saturating_add(1);}
+                    if key.modifiers & MOD_SHIFT != 0{
+                        self.shifted_acks=self.shifted_acks.saturating_add(1);
+                    }
+                }
                 break;
             }
             if line=="H"||line.starts_with("P\t")||line.starts_with("C\t"){
