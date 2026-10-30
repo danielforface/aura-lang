@@ -1083,3 +1083,48 @@ cell accept_wide(n: Wide) ->:
         }
     }
 }
+
+#[test]
+fn c_emitter_cannot_authenticate_jointly_forged_refined_metadata_and_guard() {
+    // EV-186: a ModuleIR with its *metadata and guard rewritten together*
+    // can claim Window=[0..255] although trusted Aura source was [10..20].
+    // IR-only emission has no independent source authority and MUST NOT
+    // be confused with a source-verified compiler boundary.
+    let source=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell entry_value() ->:
+    yield accept(20)
+"#;
+    let ast=aura_parse::parse_source(source).expect("Aura source parses");
+    let mut ir=lower_program(&ast).expect("original Aura source lowers");
+    validate_module(&ir).expect("baseline validates");
+    assert_eq!(ir.refined_param_bounds.get("accept"),
+        Some(&vec![Some((10,20))]));
+    let caller=ir.functions.get_mut("entry_value").expect("source caller");
+    let mut changed_check=false;
+    let mut changed_value=false;
+    for inst in caller.blocks.iter_mut().flat_map(|b| b.insts.iter_mut()) {
+        match &mut inst.kind {
+            aura_ir::InstKind::RangeCheck{lo,hi,..} |
+            aura_ir::InstKind::RangeCheckU32{lo,hi,..} if (*lo,*hi)==(10,20) => {
+                *lo=0; *hi=255; changed_check=true;
+            }
+            aura_ir::InstKind::BindStrand{
+                expr:aura_ir::RValue::ConstU32(n),..
+            } if *n==20 => {
+                *n=21; changed_value=true;
+            }
+            _ => {}
+        }
+    }
+    assert!(changed_check && changed_value,"must forge both guard and value");
+    ir.refined_param_bounds.insert("accept".into(),vec![Some((0,255))]);
+    validate_module(&ir).expect("forged IR is structurally valid");
+    let err=emit_module(&ir,None).err()
+        .expect("IR-only C emission must not accept jointly forged source metadata and range proof");
+    assert!(err.message.contains("source") || err.message.contains("refin") ||
+            err.message.contains("provenance") || err.message.contains("contract"),
+        "expected independent source trust-boundary refusal, got {err}");
+}
