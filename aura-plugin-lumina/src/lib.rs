@@ -800,6 +800,12 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|bus.engine_events)
     }
+    /// Acknowledged by the real helper, not an emulated keyboard stream.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|(bus.key_acks,bus.release_acks,bus.shifted_acks))
+    }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
@@ -1120,6 +1126,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 let mut helper_lost=false;
                 if let Some(bus)=win.native_ibus.as_mut(){
                     let focus=win.focused_input.as_ref().map(|f|f.on_change);
+                    // If an external value_revision rebased the editor while
+                    // the engine still owns preedit, reset that engine session.
+                    // Never allow a late CommitText into the new authority era.
+                    if bus.has_composition() && win.focused_input.as_ref()
+                        .is_some_and(|fi|!fi.session.composing()) {
+                        let _=bus.sync_focus(None);
+                    }
                     let available=bus.sync_focus(focus);
                     if available && focus.is_some() {
                         let shift=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
