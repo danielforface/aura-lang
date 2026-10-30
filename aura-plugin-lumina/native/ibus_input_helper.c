@@ -131,25 +131,6 @@ int main(int argc,char**argv) {
         puts("FATAL invalid_command");break;
     }
     ibus_input_context_focus_out(ic);
-            ibus_input_context_reset(ic);
-            pump_ms(40);puts("A");continue;
-        }
-        if(!strncmp(line,"K\t",2)){
-            char *end=NULL;
-            unsigned long key=strtoul(line+2,&end,10);
-            if(end==line+2 || (end && *end!='\n') || key>0x10FFFFUL){
-                puts("R\t0");continue;
-            }
-            gboolean handled=ibus_input_context_process_key_event(ic,(guint32)key,0,0);
-            fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY key=%lu handled=%d\n",key,handled);
-            // ProcessKeyEvent replies synchronously, but the input-context
-            // signals are received by the GLib main loop.
-            pump_ms(25);
-            printf("R\t%d\n",!!handled);continue;
-        }
-        puts("FATAL invalid_command");break;
-    }
-    ibus_input_context_focus_out(ic);
     g_object_unref(ic);
     g_object_unref(bus);
     return 0;
