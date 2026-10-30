@@ -164,6 +164,10 @@ impl NativeIbus{
         }
         true
     }
+    pub(crate) fn is_disconnected(&mut self)->bool{
+        self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
+    }
+    pub(crate) fn has_composition(&self)->bool{self.composing}
     fn add(&mut self,event:CompositionEvent,output:&mut Vec<CompositionEvent>){
         if output.len()<MAX_LINES_PER_KEY{output.push(event);}
     }
