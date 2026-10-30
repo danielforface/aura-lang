@@ -1033,3 +1033,53 @@ cell entry_value() ->:
         }
     }
 }
+
+#[test]
+fn foreign_c_refined_u64_entry_guard_cannot_truncate_high_bits() {
+    // A U32-only guard would accept 2^32+12 as 12, violating Wide[10..20].
+    let source=r#"
+type Wide = u64[10..20]
+cell accept_wide(n: Wide) ->:
+    yield n
+"#;
+    let ast=aura_parse::parse_source(source).expect("u64 refined alias source parses");
+    let ir=lower_program(&ast).expect("u64 refined source lowers");
+    validate_module(&ir).expect("wide qualified SSA validates");
+    assert_eq!(ir.refined_param_bounds.get("accept_wide"),
+        Some(&vec![Some((10,20))]));
+    let artifacts=emit_module(&ir,None).expect("qualify wide native C parameter");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "#include <stdlib.h>\n",
+        "uint64_t accept_wide(uint64_t);\n",
+        "int main(int argc, char **argv) {\n",
+        "  if (argc != 2) return 91;\n",
+        "  uint64_t n = (uint64_t)strtoull(argv[1], NULL, 10);\n",
+        "  return accept_wide(n)==n ? 0 : 92;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("wide_refined_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c"))
+            .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("strict Clang available");
+        assert!(built.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        for n in ["10","20"] {
+            let run=Command::new(&exe).arg(n).output().expect("valid wide input");
+            assert!(run.status.success(),"{opt} legal u64 {n}: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+        for n in ["9","21","4294967308"] {
+            let run=Command::new(&exe).arg(n).output().expect("invalid wide input");
+            assert!(!run.status.success(),"{opt}: U64 refinement incorrectly allowed {n}");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt} invalid {n}: wrong rejection path: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
