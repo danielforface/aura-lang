@@ -16,6 +16,34 @@ const KEY_TIMEOUT_MS:u64=500;
 const STARTUP_TIMEOUT_MS:u64=3500;
 const MAX_TEXT_BYTES:usize=crate::text_input::MAX_PREEDIT_BYTES;
 
+// Only modifier states sampled from Raylib are represented here.
+// The hardware scancode and a complete XKB layout are NOT available.
+pub(crate) const MOD_SHIFT:u32=1;
+pub(crate) const MOD_CONTROL:u32=2;
+pub(crate) const MOD_ALT:u32=4;
+pub(crate) const MOD_SUPER:u32=8;
+const VALID_MODIFIERS:u32=MOD_SHIFT|MOD_CONTROL|MOD_ALT|MOD_SUPER;
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub(crate) struct NativeKeyEvent{
+    pub(crate) keysym:u32,
+    pub(crate) modifiers:u32,
+    pub(crate) released:bool,
+}
+impl NativeKeyEvent{
+    /// X11 Unicode keysym, not a fabricated physical hardware keycode.
+    pub(crate) fn from_char(ch:char,modifiers:u32)->Option<Self>{
+        if ch.is_control() || modifiers & !VALID_MODIFIERS != 0 {return None;}
+        let scalar=ch as u32;
+        let keysym=if scalar<=0xff{scalar}else{0x0100_0000|scalar};
+        Some(Self{keysym,modifiers,released:false})
+    }
+    fn valid(self)->bool{
+        self.modifiers & !VALID_MODIFIERS == 0 &&
+        ((self.keysym>=0x20 && self.keysym<=0xff) ||
+         (self.keysym>=0xff00 && self.keysym<=0xffff) ||
+         (self.keysym>=0x0100_0100 && self.keysym<=0x0110_ffff))
+    }
+}
 pub(crate) struct NativeIbus{
     child:Child,
     input:ChildStdin,
@@ -143,17 +171,15 @@ impl NativeIbus{
         self.serial=self.serial.checked_add(1)?;
         Some(self.serial)
     }
-    /// ASCII physical character from an actual X11/GLFW keyboard event is
-    /// submitted to IBusInputContext::ProcessKeyEvent. Return 'handled' and
-    /// real engine-generated UpdatePreeditText/CommitText; never synthesize
-    /// Korean or other Unicode from a US-keyboard mapping.
-    pub(crate) fn process_ibus_key(
-        &mut self,key:char,target:Option<u64>
+    /// Keysym, sampled modifier state and release bit are passed to libibus.
+    /// Unknown physical scancode is explicitly zero, not guessed from ASCII.
+    pub(crate) fn process_ibus_key_event(
+        &mut self,key:NativeKeyEvent,target:Option<u64>
     )->Option<(bool,Vec<CompositionEvent>)>{
-        if !key.is_ascii()||key.is_ascii_control()||
-           !self.sync_focus(target){return None;}
+        if !key.valid() || !self.sync_focus(target){return None;}
         let cb=target?;
-        if !self.send(&format!("K\t{}",key as u32)){return None;}
+        if !self.send(&format!("K\t{}\t{}\t{}\t0",
+            key.keysym,key.modifiers,u8::from(key.released))){return None;}
         let mut lines=Vec::new();
         let mut handled=None;
         for _ in 0..MAX_LINES_PER_KEY{
@@ -230,5 +256,15 @@ mod tests{
         assert_eq!(decode_hex(&"ab".repeat(MAX_TEXT_BYTES+1)),None);
         assert_eq!(grapheme_from_scalar("e\u{301}x",1),Some(1));
         assert_eq!(grapheme_from_scalar("가나",1),Some(1));
+    }
+    #[test]fn typed_keysym_preserves_shift_and_unicode_not_fake_ascii(){
+        let k=NativeKeyEvent::from_char('가',MOD_SHIFT).unwrap();
+        assert_eq!((k.keysym,k.modifiers,k.released),
+            (0x0100_ac00,MOD_SHIFT,false));
+        assert!(k.valid());
+        assert_eq!(NativeKeyEvent::from_char('A',MOD_SHIFT).unwrap().keysym,65);
+        assert!(NativeKeyEvent::from_char('\n',0).is_none());
+        assert!(!NativeKeyEvent{keysym:65,modifiers:0x80,released:false}.valid());
+        assert!(NativeKeyEvent{keysym:0xff52,modifiers:0,released:true}.valid());
     }
 }
