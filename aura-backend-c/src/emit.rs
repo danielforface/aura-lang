@@ -22,6 +22,59 @@ pub struct CArtifacts {
     pub module_c: String,
 }
 
+/// Produce C only after checking the source-declared ABI against independently
+/// re-lowered, trusted Aura source. Unlike the IR-only API, this detects a
+/// forged ModuleIR whose refined metadata and RangeCheck are both rewritten.
+/// The supplied AST must be the original trusted source, not parsed from a
+/// mutable IR payload. This is a *source-refinement ABI* check, not an
+/// authenticated signature or proof of arbitrary IR instruction provenance.
+pub fn emit_module_with_source_contract(
+    original_source: &aura_ast::Program,
+    module: &ModuleIR,
+    debug: Option<&DebugSource>,
+) -> Result<CArtifacts, CBackendError> {
+    let trusted = aura_core::lower_program(original_source).map_err(|e| CBackendError {
+        message: format!("trusted source requalification failed: {e}"),
+    })?;
+    // No missing, added or modified per-parameter source interval may pass.
+    // All supplied ModuleIR metadata is untrusted until this comparison.
+    if module.refined_param_bounds != trusted.refined_param_bounds {
+        return Err(CBackendError {
+            message: format!(
+                "refined source contract mismatch: supplied={:?}; trusted={:?}",
+                module.refined_param_bounds, trusted.refined_param_bounds
+            ),
+        });
+    }
+    // Prevent a nominally matching source interval from being paired with
+    // an unrelated or rewritten exported signature.
+    if module.functions.len() != trusted.functions.len() ||
+        module.functions.keys().ne(trusted.functions.keys()) ||
+        module.record_layouts != trusted.record_layouts ||
+        module.externs != trusted.externs
+    {
+        return Err(CBackendError {
+            message: "trusted source contract mismatch: function, extern or Record ABI layout".into(),
+        });
+    }
+    for (name, supplied) in &module.functions {
+        let expected = trusted.functions.get(name).expect("checked function set");
+        if supplied.ret != expected.ret ||
+            supplied.params.len() != expected.params.len() ||
+            supplied.params.iter().zip(expected.params.iter())
+                .any(|(a,b)| a.name != b.name || a.ty != b.ty)
+        {
+            return Err(CBackendError {
+                message: format!("trusted source function ABI contract mismatch for '{name}'"),
+            });
+        }
+    }
+    emit_module(module, debug)
+}
+
+/// Emit an already-trusted IR module. This lower-level API has no original
+/// source anchor and CANNOT authenticate jointly rewritten refinement metadata
+/// plus guards. Public C/WASM builds use emit_module_with_source_contract.
 pub fn emit_module(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<CArtifacts, CBackendError> {
     let mut module = module.clone();
 

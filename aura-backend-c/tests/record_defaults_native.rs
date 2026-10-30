@@ -1122,9 +1122,18 @@ cell entry_value() ->:
     assert!(changed_check && changed_value,"must forge both guard and value");
     ir.refined_param_bounds.insert("accept".into(),vec![Some((0,255))]);
     validate_module(&ir).expect("forged IR is structurally valid");
-    let err=emit_module(&ir,None).err()
-        .expect("IR-only C emission must not accept jointly forged source metadata and range proof");
-    assert!(err.message.contains("source") || err.message.contains("refin") ||
-            err.message.contains("provenance") || err.message.contains("contract"),
-        "expected independent source trust-boundary refusal, got {err}");
+    // Confirm the old, lower-level IR-only emitter has no independent source
+    // truth. This success is evidence of its limited trust boundary, never
+    // a public-C safety claim.
+    emit_module(&ir,None)
+        .expect("IR-only legacy emission cannot authenticate coherent IR forgery");
+    // The public-source compiler path instead requalifies the trusted AST.
+    let err=emit_module_with_source_contract(&ast,&ir,None).err()
+        .expect("source-bound C emission must reject jointly forged interval and guard");
+    assert!(err.message.contains("source") && err.message.contains("contract"),
+        "expected independent trusted-source contract refusal, got {err}");
+    // Both valid source and valid source-lowered IR remain supported.
+    let baseline=lower_program(&ast).expect("original trusted source lowers again");
+    emit_module_with_source_contract(&ast,&baseline,None)
+        .expect("source-bound C path preserves valid refined native ABI");
 }
