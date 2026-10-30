@@ -62,3 +62,47 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str){
     assert!(new_releases>=releases,"release accounting must be monotonic");
     drop(p);
 }
+
+#[test]fn real_ibus_host_revision_rebase_drops_engine_preedit_before_next_key(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","360"),("height","60"),
+        ("value","A"),("value_revision","1"),("on_change","cb:939"),("size","28"),
+        ("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(640,420));
+    frames(&p,&app,&mut c,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("native window");
+    xdo(&["windowfocus","--sync",id]);
+    key(&p,&app,&mut c,"Tab");
+    key(&p,&app,&mut c,"r");
+    let preview=p.diagnostic_composition(939);
+    eprintln!("IBUS_NATIVE_REBASE_BEFORE {preview:?}");
+    assert!(preview.as_ref().is_some_and(|x|x.1.contains('ㄱ')),
+        "real engine must have an uncommitted preedit before rebase");
+    app.children[0].set_prop("value","B");
+    app.children[0].set_prop("value_revision","2");
+    frames(&p,&app,&mut c,5);
+    assert!(p.diagnostic_composition(939).is_none(),
+        "new host value revision must cancel old preedit");
+    // If IBus retained the old ㄱ draft, Space could issue a ghost commit.
+    // The focus reset must prevent that while allowing normal raw fallback.
+    xdo(&["keydown","space"]);
+    let mut events=Vec::new();
+    for _ in 0..5 {
+        p.on_ui_render(&app,&mut c).unwrap().unwrap();
+        events.extend(c.get::<UiRuntimeFeedback>().unwrap().text_input_events.clone());
+    }
+    xdo(&["keyup","space"]);
+    for _ in 0..5 {
+        p.on_ui_render(&app,&mut c).unwrap().unwrap();
+        events.extend(c.get::<UiRuntimeFeedback>().unwrap().text_input_events.clone());
+    }
+    eprintln!("IBUS_NATIVE_REBASE_AFTER events={events:?}");
+    assert!(events.iter().all(|e|e.callback_id!=939 || !e.text.contains('ㄱ')),
+        "stale IME transaction must never commit into a newer host revision");
+    drop(p);
+}
