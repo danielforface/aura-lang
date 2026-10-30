@@ -1,6 +1,6 @@
 //! Q03-001: omitted Scalar Record field defaults are real runtime values, not
 //! merely a Checker permission. Source -> Checker -> SSA -> Oracle -> native C.
-use aura_backend_c::emit_module;
+use aura_backend_c::{emit_module, emit_module_with_source_contract};
 use aura_core::{Checker, lower_program};
 use aura_ir::{run_oracle_entry, validate_module, OracleConfig, OracleValue};
 use std::{collections::HashMap, fs, path::PathBuf, process::Command,
