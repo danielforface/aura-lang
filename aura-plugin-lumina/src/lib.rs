@@ -800,6 +800,12 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|bus.engine_events)
     }
+    /// Acknowledged by the real helper, not an emulated keyboard stream.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|(bus.key_acks,bus.release_acks,bus.shifted_acks))
+    }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
@@ -1002,15 +1008,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let now = win.rl.get_time();
 
             // Keyboard sampling must happen before begin_drawing (borrow rules).
-            let backspace = win.rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE);
-            let delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
-            let left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
-            let right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
-            let home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
-            let end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
-            let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
+            let mut backspace = win.rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE);
+            let mut delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
+            let mut left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
+            let mut right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let mut home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
+            let mut end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
+            let mut enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
                 || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
-            let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+            let mut escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
             let ctrl = win.rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL);
             let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
@@ -1110,25 +1116,107 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     _=>switch_input(win,None),
                 }
             }
-            // Linux opt-in: feed physical GLFW/X11 ASCII keypresses through a
-            // real libibus input context instead of directly committing them.
-            // The engine owns its own GSUB/preedit logic; only engine-origin
-            // preedit/commit signals become bounded CompositionEvent values.
-            // Without an explicit working helper, old keyboard paths remain.
+            // Linux opt-in: forward sampled native Raylib keyboard semantics
+            // into REAL libibus. GLFW chars supply Unicode keysyms, while named
+            // keys use documented X11 keysyms; unknown hardware scancodes are
+            // NEVER guessed. Tab stays a Lumina focus key outside composition.
+            // Unhandled keys retain the standard editor fallback.
             #[cfg(target_os="linux")]
-            if let Some(bus)=win.native_ibus.as_mut(){
-                let focus=win.focused_input.as_ref().map(|f|f.on_change);
-                let available=bus.sync_focus(focus);
-                if available && focus.is_some() && !ctrl{
-                    let incoming=std::mem::take(&mut typed);
-                    for ch in incoming.chars() {
-                        match bus.process_ibus_key(ch,focus){
-                            Some((handled,signals))=>{
-                                pending_composition.extend(signals);
-                                if !handled{typed.push(ch);}
+            {
+                let mut helper_lost=false;
+                if let Some(bus)=win.native_ibus.as_mut(){
+                    let focus=win.focused_input.as_ref().map(|f|f.on_change);
+                    // If an external value_revision rebased the editor while
+                    // the engine still owns preedit, reset that engine session.
+                    // Never allow a late CommitText into the new authority era.
+                    if bus.has_composition() && win.focused_input.as_ref()
+                        .is_some_and(|fi|!fi.session.composing()) {
+                        let _=bus.sync_focus(None);
+                    }
+                    let available=bus.sync_focus(focus);
+                    if available && focus.is_some() {
+                        let shift=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
+                        let alt=win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT);
+                        let super_key=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+                        let mut mods=0;
+                        if shift { mods|=ibus_native::MOD_SHIFT; }
+                        if ctrl { mods|=ibus_native::MOD_CONTROL; }
+                        if alt { mods|=ibus_native::MOD_ALT; }
+                        if super_key { mods|=ibus_native::MOD_SUPER; }
+                        // Named virtual-key events provide key press/release
+                        // independently of text. Shifted and navigational
+                        // preedit can now reach IBus; editor shortcuts remain
+                        // reserved rather than swallowed by the IME.
+                        if !ctrl && !alt && !super_key {
+                            let composing=win.focused_input.as_ref()
+                                .is_some_and(|f|f.session.composing());
+                            let keys=[
+                                (KeyboardKey::KEY_BACKSPACE,0xff08u32),
+                                (KeyboardKey::KEY_DELETE,0xffff),
+                                (KeyboardKey::KEY_LEFT,0xff51),
+                                (KeyboardKey::KEY_UP,0xff52),
+                                (KeyboardKey::KEY_RIGHT,0xff53),
+                                (KeyboardKey::KEY_DOWN,0xff54),
+                                (KeyboardKey::KEY_HOME,0xff50),
+                                (KeyboardKey::KEY_END,0xff57),
+                                (KeyboardKey::KEY_ENTER,0xff0d),
+                                (KeyboardKey::KEY_ESCAPE,0xff1b),
+                                (KeyboardKey::KEY_TAB,0xff09),
+                            ];
+                            for &(vk,keysym) in &keys {
+                                if vk==KeyboardKey::KEY_TAB && !composing {continue;}
+                                for released in [false,true] {
+                                    let active=if released {
+                                        win.rl.is_key_released(vk)
+                                    }else{win.rl.is_key_pressed(vk)};
+                                    if !active {continue;}
+                                    let event=ibus_native::NativeKeyEvent{
+                                        keysym,modifiers:mods,released,
+                                    };
+                                    if let Some((handled,signals))=
+                                        bus.process_ibus_key_event(event,focus){
+                                        pending_composition.extend(signals);
+                                        if handled && !released {
+                                            match keysym {
+                                                0xff08=>backspace=false,
+                                                0xffff=>delete=false,
+                                                0xff51=>left=false,
+                                                0xff53=>right=false,
+                                                0xff50=>home=false,
+                                                0xff57=>end=false,
+                                                0xff0d=>enter=false,
+                                                0xff1b=>escape=false,
+                                                _=>{}
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            None=>typed.push(ch),
+                            let incoming=std::mem::take(&mut typed);
+                            for ch in incoming.chars() {
+                                if let Some(event)=ibus_native::NativeKeyEvent::from_char(ch,mods){
+                                    match bus.process_ibus_key_event(event,focus){
+                                        Some((handled,signals))=>{
+                                            pending_composition.extend(signals);
+                                            if !handled{typed.push(ch);}
+                                        }
+                                        None=>typed.push(ch),
+                                    }
+                                }else{typed.push(ch);}
+                            }
                         }
+                    }
+                    helper_lost=bus.is_disconnected();
+                }
+                if helper_lost {
+                    win.native_ibus=None;
+                    if let Some(fi)=win.focused_input.as_mut() {
+                        // A dead IME may not leave a permanent editor lock.
+                        // Never commit a preedit that outlived its engine.
+                        fi.session.abandon_composition();
                     }
                 }
             }
