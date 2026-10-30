@@ -978,3 +978,58 @@ cell entry_value() ->:
             "{label}: expected explicit refined ABI refusal: {err}");
     }
 }
+
+#[test]
+fn external_c_calls_must_enforce_refined_u8_parameter_at_callee_entry() {
+    // A C consumer can call exported Aura cells directly, bypassing the
+    // Aura source-level caller and all IR RangeCheck call-site instructions.
+    // The callee itself must enforce Window=u8[10..20] before returning.
+    let source=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell entry_value() ->:
+    yield accept(20)
+"#;
+    let ast=aura_parse::parse_source(source).expect("valid Aura source parses");
+    let ir=lower_program(&ast).expect("source qualified and lowered");
+    validate_module(&ir).expect("source IR structurally valid");
+    assert_eq!(ir.refined_param_bounds.get("accept"),
+        Some(&vec![Some((10,20))]),"source interval preserved");
+    let artifacts=emit_module(&ir,None).expect("emit linked C with source contract");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(tmp.0.join("external_driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "#include <stdlib.h>\n",
+        "uint8_t accept(uint8_t);\n",
+        "int main(int argc, char **argv) {\n",
+        "  if (argc != 2) return 91;\n",
+        "  uint8_t value = (uint8_t)atoi(argv[1]);\n",
+        "  return accept(value) == value ? 0 : 92;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("external_refined_{}",&opt[1..]));
+        let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c"))
+            .arg(tmp.0.join("external_driver.c"))
+            .arg("-o").arg(&exe).output().expect("strict Clang exists");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+        for legal in ["10","20"] {
+            let run=Command::new(&exe).arg(legal).output().expect("run valid external C call");
+            assert!(run.status.success(),"{opt}: legal {legal} rejected: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+        for illegal in ["9","21","255"] {
+            let run=Command::new(&exe).arg(illegal).output().expect("run invalid external C call");
+            assert!(!run.status.success(),
+                "{opt}: foreign C call with {illegal} illegally bypassed Window[10..20]");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt}: invalid external C value {illegal} must hit Aura callee range guard: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
