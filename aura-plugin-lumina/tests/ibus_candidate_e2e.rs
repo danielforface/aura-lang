@@ -117,8 +117,14 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
         "real physical XTest Down must change Pinyin candidate cursor");
     assert!(after_events>events,"engine candidate update must be real, not local counter");
     // Blur while a different candidate is selected: no automatic commit.
-    xdo(&["mousemove","--window",id,"700","410"]);xdo(&["click","1"]);
-    assert!(frames(&p,&app,&mut c,6).is_empty());
+    xdo(&["mousemove","--window",id,"700","410"]);
+    xdo(&["mousedown","1"]);
+    let mut blur_callbacks=frames(&p,&app,&mut c,5);
+    xdo(&["mouseup","1"]);
+    blur_callbacks.extend(frames(&p,&app,&mut c,5));
+    eprintln!("LUMINA_CANDIDATE_LIVE_BLUR callbacks={blur_callbacks:?} editor={:?} lookup={:?}",
+        p.diagnostic_composition(941),p.diagnostic_native_ibus_candidates());
+    assert!(blur_callbacks.is_empty());
     assert!(p.diagnostic_native_ibus_candidates().is_none(),
         "FocusOut must discard the engine lookup table");
     assert!(p.diagnostic_composition(941).is_none(),
