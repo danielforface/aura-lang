@@ -150,7 +150,7 @@ struct IbusCandidateFont {
 }
 /// Real native IBus lookup candidates are an overlay, never edit-session text.
 /// Use an explicit bounded font atlas; do not draw missing CJK glyphs as tofu.
-#[cfg(target_os="linux")]
+#[cfg(all(feature="raylib",target_os="linux"))]
 fn prepare_ibus_candidate_font(
     rl:&mut RaylibHandle,thread:&RaylibThread,
     cache:&mut Option<IbusCandidateFont>,
@@ -177,7 +177,7 @@ fn prepare_ibus_candidate_font(
         Err(_)=>*cache=None,
     }
 }
-#[cfg(target_os="linux")]
+#[cfg(all(feature="raylib",target_os="linux"))]
 fn ibus_candidate_bounds(
     target:layout::Bounds,viewport:layout::Bounds,rows:usize,
 )->Option<Rectangle>{
@@ -191,7 +191,7 @@ fn ibus_candidate_bounds(
     Some(Rectangle::new(target.x.max(0.0).min(viewport.width-width),
         y,width,height))
 }
-#[cfg(target_os="linux")]
+#[cfg(all(feature="raylib",target_os="linux"))]
 fn paint_ibus_candidates(
     d:&mut RaylibDrawHandle,panel:Rectangle,
     page:&ibus_native::IbusCandidatePage,font:Option<&IbusCandidateFont>,
