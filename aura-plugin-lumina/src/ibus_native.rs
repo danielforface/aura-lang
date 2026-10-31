@@ -87,6 +87,7 @@ pub(crate) struct NativeIbus{
     pub(crate) release_acks:usize,
     pub(crate) shifted_acks:usize,
     pub(crate) candidate_events:usize,
+    pub(crate) candidate_click_acks:usize,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
 }
 fn decode_hex(input:&str)->Option<String>{
@@ -150,7 +151,7 @@ impl NativeIbus{
         Some(Self{child,input,output,focus:None,serial:0,
             composing:false,disconnected:false,engine_events:0,
             key_acks:0,release_acks:0,shifted_acks:0,
-            candidate_events:0,candidate_page:None})
+            candidate_events:0,candidate_click_acks:0,candidate_page:None})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -206,6 +207,47 @@ impl NativeIbus{
     }
     pub(crate) fn has_composition(&self)->bool{self.composing}
     pub(crate) fn candidate_snapshot(&self)->Option<IbusCandidatePage>{self.candidate_page.clone()}
+    /// A popup mouse click is translated into bounded *real* engine navigation
+    /// and a physical-equivalent Space key. No synthetic CommitText/Undo event.
+    /// libibus IBusInputContext exposes no direct candidate_clicked client API;
+    /// mouse selection through the daemon's panel interface is not claimed.
+    pub(crate) fn select_candidate_via_engine(
+        &mut self,callback_id:u64,absolute:usize
+    )->Option<Vec<CompositionEvent>> {
+        let page=self.candidate_snapshot()?;
+        if self.focus!=Some(callback_id)||page.callback_id!=callback_id||
+            absolute<page.page_start||
+            absolute>=page.page_start.checked_add(page.candidates.len())? {
+            return None;
+        }
+        let expected=page.candidates.get(absolute-page.page_start)?.clone();
+        let mut out=Vec::new();
+        // Select at most eight visible rows; do not silently wander across
+        // unbounded engine lookup pages or trust the screen alone.
+        for _ in 0..8 {
+            let current=self.candidate_snapshot()?;
+            if current.callback_id!=callback_id{return None;}
+            if current.cursor==absolute{break;}
+            let keysym=if current.cursor<absolute{0xff54}else{0xff52};
+            let (handled,events)=self.process_ibus_key_event(
+                NativeKeyEvent{keysym,modifiers:0,released:false},Some(callback_id))?;
+            out.extend(events);
+            let after=self.candidate_snapshot()?;
+            if !handled||after.cursor==current.cursor{return None;}
+        }
+        let selected=self.candidate_snapshot()?;
+        if selected.cursor!=absolute ||
+            selected.candidates.get(absolute.checked_sub(selected.page_start)?)!=Some(&expected){
+            return None;
+        }
+        let (handled,events)=self.process_ibus_key_event(
+            NativeKeyEvent{keysym:0x20,modifiers:0,released:false},Some(callback_id))?;
+        let committed=events.iter().any(|e|matches!(e,CompositionEvent::Commit{..}));
+        out.extend(events);
+        if !handled || !committed || self.candidate_page.is_some(){return None;}
+        self.candidate_click_acks=self.candidate_click_acks.saturating_add(1);
+        Some(out)
+    }
     fn add(&mut self,event:CompositionEvent,output:&mut Vec<CompositionEvent>){
         if output.len()<MAX_LINES_PER_KEY{output.push(event);}
     }
