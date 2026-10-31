@@ -44,6 +44,35 @@ impl NativeKeyEvent{
          (self.keysym>=0x0100_0100 && self.keysym<=0x0110_ffff))
     }
 }
+/// Engine-owned lookup table snapshot; never an authoritative EditSession edit.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct IbusCandidatePage{
+    pub(crate) callback_id:u64,
+    pub(crate) cursor:usize,
+    pub(crate) page_start:usize,
+    pub(crate) total:usize,
+    pub(crate) candidates:Vec<String>,
+}
+fn parse_lookup_frame(line:&str,callback_id:u64)->Option<Option<IbusCandidatePage>>{
+    if line=="L\t0"{return Some(None);}
+    let mut fields=line.split('\t');
+    if fields.next()!=Some("L") || fields.next()!=Some("1"){return None;}
+    let cursor=fields.next()?.parse::<usize>().ok()?;
+    let page_start=fields.next()?.parse::<usize>().ok()?;
+    let total=fields.next()?.parse::<usize>().ok()?;
+    if total==0||total>100000||cursor>=total||page_start>cursor{return None;}
+    let encoded:Vec<&str>=fields.collect();
+    if encoded.is_empty()||encoded.len()>8||page_start.checked_add(encoded.len())?>total||
+        cursor>=page_start.saturating_add(16){return None;}
+    let mut candidates=Vec::with_capacity(encoded.len());
+    for raw in encoded{
+        if raw.len()>256 || raw.is_empty(){return None;}
+        let v=decode_hex(raw)?;
+        if v.is_empty() || v.chars().any(|c|c.is_control()){return None;}
+        candidates.push(v);
+    }
+    Some(Some(IbusCandidatePage{callback_id,cursor,page_start,total,candidates}))
+}
 pub(crate) struct NativeIbus{
     child:Child,
     input:ChildStdin,
@@ -57,6 +86,8 @@ pub(crate) struct NativeIbus{
     pub(crate) key_acks:usize,
     pub(crate) release_acks:usize,
     pub(crate) shifted_acks:usize,
+    pub(crate) candidate_events:usize,
+    pub(crate) candidate_page:Option<IbusCandidatePage>,
 }
 fn decode_hex(input:&str)->Option<String>{
     if input.len()%2!=0 || input.len()>MAX_TEXT_BYTES*2{return None;}
@@ -118,7 +149,8 @@ impl NativeIbus{
         }
         Some(Self{child,input,output,focus:None,serial:0,
             composing:false,disconnected:false,engine_events:0,
-            key_acks:0,release_acks:0,shifted_acks:0})
+            key_acks:0,release_acks:0,shifted_acks:0,
+            candidate_events:0,candidate_page:None})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -143,7 +175,7 @@ impl NativeIbus{
             // Some IBus engines emit hide-preedit during FocusOut/FocusIn.
             // Such events belong to the OLD focus generation and must not
             // be delivered to the newly focused native TextInput.
-            if line=="H"||line.starts_with("P\t")||line.starts_with("C\t"){
+            if line=="H"||line.starts_with("P\t")||line.starts_with("C\t")||line.starts_with("L\t"){
                 continue;
             }
             self.disconnected=true;return false;
@@ -160,6 +192,7 @@ impl NativeIbus{
             if !self.await_ack(){return false;}
         }
         self.composing=false;
+        self.candidate_page=None;
         self.focus=None;
         if let Some(id)=target{
             if !self.send("F1"){return false;}
@@ -172,6 +205,7 @@ impl NativeIbus{
         self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
     }
     pub(crate) fn has_composition(&self)->bool{self.composing}
+    pub(crate) fn candidate_snapshot(&self)->Option<IbusCandidatePage>{self.candidate_page.clone()}
     fn add(&mut self,event:CompositionEvent,output:&mut Vec<CompositionEvent>){
         if output.len()<MAX_LINES_PER_KEY{output.push(event);}
     }
@@ -205,7 +239,7 @@ impl NativeIbus{
                 }
                 break;
             }
-            if line=="H"||line.starts_with("P\t")||line.starts_with("C\t"){
+            if line=="H"||line.starts_with("P\t")||line.starts_with("C\t")||line.starts_with("L\t"){
                 lines.push(line);
             }else{self.disconnected=true;return Some((true,Vec::new()));}
         }
@@ -215,7 +249,21 @@ impl NativeIbus{
         let committed=lines.iter().any(|s|s.starts_with("C\t"));
         let mut out=Vec::new();
         for l in lines{
-            if l=="H"{
+            if l.starts_with("L\t"){
+                match parse_lookup_frame(&l,cb){
+                    Some(Some(page))=>{
+                        self.candidate_events=self.candidate_events.saturating_add(1);
+                        self.candidate_page=Some(page);
+                        consumed=true;
+                    },
+                    Some(None)=>{self.candidate_page=None;},
+                    None=>{
+                        self.disconnected=true;
+                        self.candidate_page=None;
+                        return Some((true,Vec::new()));
+                    },
+                }
+            }else if l=="H"{
                 if !committed&&self.composing {
                     let seq=self.new_serial()?;
                     self.add(CompositionEvent::Cancel{callback_id:cb,sequence:seq},&mut out);
@@ -231,6 +279,7 @@ impl NativeIbus{
                 self.add(CompositionEvent::Commit{callback_id:cb,sequence:seq,text},&mut out);
                 self.engine_events=self.engine_events.saturating_add(1);
                 self.composing=false;consumed=true;
+                self.candidate_page=None;
             }else if let Some(rem)=l.strip_prefix("P\t"){
                 let mut fields=rem.split('\t');
                 let Some(hex)=fields.next()else{continue;};
@@ -281,5 +330,18 @@ mod tests{
         assert!(NativeKeyEvent::from_char('\n',0).is_none());
         assert!(!NativeKeyEvent{keysym:65,modifiers:0x80,released:false}.valid());
         assert!(NativeKeyEvent{keysym:0xff52,modifiers:0,released:true}.valid());
+    }
+    #[test]fn candidate_frame_bounds_unicode_and_focus_ownership(){
+        let page=parse_lookup_frame("L\t1\t2\t0\t4\te4bda0\te5a5bd",936).unwrap().unwrap();
+        assert_eq!((page.callback_id,page.cursor,page.page_start,page.total),
+            (936,2,0,4));
+        assert_eq!(page.candidates,vec!["你","好"]);
+        assert_eq!(parse_lookup_frame("L\t0",936),Some(None));
+        assert_eq!(parse_lookup_frame("L\t1\t2\t0\t4\tff",936),None);
+        assert_eq!(parse_lookup_frame("L\t1\t4\t0\t4\te4bda0",936),None);
+        assert_eq!(parse_lookup_frame("L\t1\t0\t0\t1\t",936),None);
+        assert_eq!(parse_lookup_frame("L\t1\t0\t0\t1\te4bda0\te5a5bd",936),None);
+        assert_eq!(parse_lookup_frame(&format!("L\t1\t0\t0\t1\t{}",
+            "e4bda0".repeat(60)),936),None);
     }
 }

@@ -48,6 +48,46 @@ static void update_preedit(IBusInputContext *ctx,IBusText *t,
 static void hide_preedit(IBusInputContext *ctx,gpointer ud) {
     (void)ctx;(void)ud;puts("H");fflush(stdout);
 }
+/* All lookup data below originate from the active IBus engine signal.
+ * Hard cap: 8 candidates/page, 128 UTF-8 bytes/candidate, 4096-byte frame.
+ * Never emit a fabricated candidate or an unbounded external text payload. */
+static void hide_lookup(IBusInputContext *ctx,gpointer ud) {
+    (void)ctx;(void)ud;puts("L\t0");fflush(stdout);
+}
+static void update_lookup(IBusInputContext *ctx,IBusLookupTable *table,
+    gboolean visible,gpointer ud) {
+    (void)ctx;(void)ud;
+    if(!visible || !table){hide_lookup(ctx,ud);return;}
+    guint total=ibus_lookup_table_get_number_of_candidates(table);
+    guint size=ibus_lookup_table_get_page_size(table);
+    guint cursor=ibus_lookup_table_get_cursor_pos(table);
+    if(total==0 || total>100000 || size==0 || size>16 || cursor>=total) {
+        hide_lookup(ctx,ud);return;
+    }
+    guint first=(cursor/size)*size;
+    guint end=first+size;
+    if(end>total)end=total;
+    /* Keep real engine selection in the visible eight-row window, even
+     * when the source IME has a nine/sixteen-candidate page. */
+    if(cursor-first>=8)first=cursor-7;
+    guint limit=end-first;
+    if(limit>8)limit=8;
+    /* Reject a page rather than silently truncating unsupported candidate
+     * strings or pretending to offer complete candidate selection. */
+    for(guint i=0;i<limit;i++){
+        IBusText *v=ibus_lookup_table_get_candidate(table,first+i);
+        if(!v || !v->text || strlen(v->text)>128 ||
+           !g_utf8_validate(v->text,-1,NULL)){hide_lookup(ctx,ud);return;}
+    }
+    printf("L\t1\t%u\t%u\t%u",cursor,first,total);
+    for(guint i=0;i<limit;i++){
+        IBusText *v=ibus_lookup_table_get_candidate(table,first+i);
+        printf("\t");hex_print(v->text);
+    }
+    printf("\n");fflush(stdout);
+    fprintf(stderr,"LUMINA_IBUS_LIVE_LOOKUP total=%u cursor=%u page_start=%u shown=%u\n",
+        total,cursor,first,limit);
+}
 static void pump_ms(unsigned ms){
     for(unsigned i=0;i<ms;i++){
         while(g_main_context_iteration(NULL,FALSE)){}
@@ -67,7 +107,9 @@ int main(int argc,char**argv) {
     g_signal_connect(ic,"update-preedit-text",G_CALLBACK(update_preedit),NULL);
     g_signal_connect(ic,"commit-text",G_CALLBACK(commit_text),NULL);
     g_signal_connect(ic,"hide-preedit-text",G_CALLBACK(hide_preedit),NULL);
-    ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT);
+    g_signal_connect(ic,"update-lookup-table",G_CALLBACK(update_lookup),NULL);
+    g_signal_connect(ic,"hide-lookup-table",G_CALLBACK(hide_lookup),NULL);
+    ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT | IBUS_CAP_LOOKUP_TABLE);
     ibus_input_context_set_engine(ic,argv[1]);
     pump_ms(350);
     IBusEngineDesc *initial=ibus_input_context_get_engine(ic);

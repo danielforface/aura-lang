@@ -45,7 +45,7 @@ jobs:
       - name: Install software-display and native Raylib prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum dbus-x11
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
       - name: Raylib-enabled library unit tests including typed IBus keysym and protocol bounds
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -58,7 +58,7 @@ jobs:
         run: |
           bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-helper"
           xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
-            ibus-daemon --daemonize --xim --panel disable
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
             gsettings set org.freedesktop.ibus.engine.hangul switch-keys "Hangul"
             gsettings set org.freedesktop.ibus.general use-global-engine true
@@ -74,6 +74,20 @@ jobs:
             export LUMINA_IBUS_TEST_HANGUL_SWITCH="1"
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_input_semantics_e2e -- --nocapture --test-threads=1
+            echo "LUMINA_IBUS_SELECT_CANDIDATE_ENGINE"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            echo "LUMINA_IBUS_COMPONENT_DETAILS:"
+            test -f /usr/share/ibus/component/libpinyin.xml
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            echo "LUMINA_IBUS_PINYIN_REGISTERED:"
+            ibus list-engine | grep -i -A 3 -B 1 pinyin || true
+            ibus engine libpinyin || true
+            echo "LUMINA_IBUS_ACTIVE_CANDIDATE_ENGINE=$(ibus engine)"
+            test "$(ibus engine)" = "libpinyin" || { echo "LUMINA_PINYIN_ENGINE_NOT_ACTIVE"; exit 19; }
+            export LUMINA_IBUS_CANDIDATE_FONT_PATH="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
+            export LUMINA_IBUS_ENGINE="libpinyin"
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_candidate_e2e -- --nocapture --test-threads=1
           '
 
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
