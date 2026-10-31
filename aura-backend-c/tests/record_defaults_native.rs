@@ -1137,3 +1137,71 @@ cell entry_value() ->:
     emit_module_with_source_contract(&ast,&baseline,None)
         .expect("source-bound C path preserves valid refined native ABI");
 }
+
+#[test]
+fn trusted_source_refined_function_return_must_reject_forged_body_before_narrowing() {
+    // The source return type of echo(n: Window) is inferred as Window[10..20].
+    // FunctionIR.ret holds the ABI U8 but the original interval is lost.
+    // A body modification after source qualification must not let 21 (or
+    // 277, which narrows to 21) escape silently through the C return ABI.
+    let src=r#"
+type Window = u8[10..20]
+cell echo(n: Window) ->:
+    yield n
+"#;
+    let ast=aura_parse::parse_source(src).expect("valid refined return source parses");
+    let original=lower_program(&ast).expect("legal source lowers to native IR");
+    validate_module(&original).expect("legal original IR validates");
+    assert_eq!(original.functions.get("echo").unwrap().ret,aura_ir::Type::U8,
+        "qualified refined return must preserve U8 ABI");
+    emit_module_with_source_contract(&ast,&original,None)
+        .expect("unmodified source-bound function must emit");
+    for bad in [21_u64,277] {
+        let mut forged=original.clone();
+        let f=forged.functions.get_mut("echo").expect("exported echo exists");
+        let block=f.blocks.iter_mut().find(|b|
+            matches!(b.term,aura_ir::Terminator::Return(Some(_))))
+            .expect("return block exists");
+        let returned=aura_ir::ValueId(900_001);
+        block.insts.push(aura_ir::Inst {
+            span:block.span, dest:Some(returned),
+            kind:aura_ir::InstKind::BindStrand {
+                name:"forged_return".into(),
+                expr:aura_ir::RValue::ConstU32(bad),
+            },
+        });
+        block.term=aura_ir::Terminator::Return(Some(returned));
+        validate_module(&forged).expect("mutated body still structurally valid");
+        let artifacts=match emit_module_with_source_contract(&ast,&forged,None) {
+            Err(err) => {
+                assert!(err.message.contains("return") || err.message.contains("refin") ||
+                    err.message.contains("source") || err.message.contains("range"),
+                    "unexpected fail-closed diagnostic: {err}");
+                continue;
+            }
+            Ok(artifacts) => artifacts,
+        };
+        let tmp=Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"),concat!(
+            "#include <stdint.h>\n",
+            "uint8_t echo(uint8_t);\n",
+            "int main(void) { (void)echo(10); return 0; }\n"
+        )).unwrap();
+        for opt in ["-O0","-O2"] {
+            let exe=tmp.0.join(format!("refined_bad_return_{}",&opt[1..]));
+            let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
+                .arg("-o").arg(&exe).output().expect("strict Clang available");
+            assert!(build.status.success(),"{opt}: {}\n{}",
+                String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+            let run=Command::new(&exe).output().expect("execute forged return native");
+            assert!(!run.status.success(),
+                "{opt}: forged return {bad} escaped the Window[10..20] source contract");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt}: forged return {bad} must be rejected by native range guard: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
