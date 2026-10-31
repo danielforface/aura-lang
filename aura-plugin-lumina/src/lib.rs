@@ -215,6 +215,23 @@ fn paint_ibus_candidates(
         }
     }
 }
+/// A displayed candidate is clickable only inside its actual glyph row,
+/// within the committed previous GPU frame geometry. Never clip-hit the
+/// background padding or rows not sent by the real engine.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn candidate_row_at(panel:Rectangle,page:&ibus_native::IbusCandidatePage,
+    mouse:Vector2)->Option<usize>{
+    let xx=mouse.x-panel.x;let yy=mouse.y-panel.y;
+    if !xx.is_finite()||!yy.is_finite()||
+        xx<4.0||xx>=panel.width-4.0||yy<6.0{return None;}
+    let row=(yy-6.0)/32.0;
+    if row<0.0 || row>=page.candidates.len() as f32 {return None;}
+    let idx=row.floor() as usize;
+    if (yy-6.0)-(idx as f32)*32.0>=30.0{return None;}
+    let absolute=page.page_start.checked_add(idx)?;
+    if absolute>=page.total{return None;}
+    Some(absolute)
+}
 #[cfg(feature = "raylib")]
 struct LuminaWindow {
     // Rust drops struct fields in declaration order. All GPU objects MUST be
@@ -902,6 +919,11 @@ impl AuraLuminaPlugin {
         Some((b.x,b.y,b.width,b.height))
     }
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_clicks(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.candidate_click_acks)
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_candidate_glyph_pixels(&self)->Option<usize>{
         let borrowed=self.window.borrow();
         let win=borrowed.as_ref()?;
@@ -1190,7 +1212,23 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 _=>false,
             });
             reconcile_input_sessions(win,&focus_order,&revisions);
-            let click_cb = if clicked {
+            // The popup is overlaid outside the TextInput rectangle. Consume
+            // its hit before ordinary layout hit testing would blur the IME.
+            #[cfg(target_os="linux")]
+            let candidate_row_clicked=if clicked {
+                match (win.native_ibus.as_ref().and_then(|bus|bus.candidate_snapshot()),
+                       win.last_candidate_bounds,
+                       win.focused_input.as_ref().map(|fi|fi.on_change)) {
+                    (Some(page),Some(panel),Some(cb)) if page.callback_id==cb=>
+                        candidate_row_at(panel,&page,mouse).map(|row|(cb,row)),
+                    _=>None,
+                }
+            }else{None};
+            #[cfg(target_os="linux")]
+            let candidate_click_consumed=candidate_row_clicked.is_some();
+            #[cfg(not(target_os="linux"))]
+            let candidate_click_consumed=false;
+            let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
                         switch_input(win, None);Some(id)
@@ -1250,6 +1288,14 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             #[cfg(target_os="linux")]
             {
                 let mut helper_lost=false;
+                if let (Some((cb,row)),Some(bus))=
+                    (candidate_row_clicked,win.native_ibus.as_mut()){
+                    // No fake composition events: only engine-generated
+                    // navigation and CommitText can change EditSession.
+                    if let Some(events)=bus.select_candidate_via_engine(cb,row){
+                        pending_composition.extend(events);
+                    }
+                }
                 if let Some(bus)=win.native_ibus.as_mut(){
                     let focus=win.focused_input.as_ref().map(|f|f.on_change);
                     // If an external value_revision rebased the editor while
