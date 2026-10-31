@@ -900,6 +900,33 @@ impl AuraLuminaPlugin {
         let b=borrowed.as_ref()?.last_candidate_bounds?;
         Some((b.x,b.y,b.width,b.height))
     }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_glyph_pixels(&self)->Option<usize>{
+        let borrowed=self.window.borrow();
+        let win=borrowed.as_ref()?;
+        let area=win.last_candidate_bounds?;
+        let font=win.candidate_font.as_ref()?;
+        let page=win.native_ibus.as_ref()?.candidate_snapshot()?;
+        if !page.candidates.iter().enumerate().all(|(i,s)|{
+            font_atlas::covers(&font.glyphs,
+                &format!("{}  {}",page.page_start+i+1,s))
+        }){return None;}
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),
+            win.rl.get_screen_height(),win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut white=0usize;
+        // Bounds are clipped to the popup; cap GPU readback work to 360x270.
+        for dy in 0..((area.height as i32).min(270)){
+            for dx in 12..((area.width as i32).min(360)-10){
+                let (px,py)=m.logical_to_framebuffer(area.x+dx as f32,
+                    area.y+dy as f32)?;
+                if px>=image.width() || py>=image.height(){return None;}
+                let color=image.get_color(px,py);
+                if color.r>185 && color.g>185 && color.b>185{white+=1;}
+            }
+        }
+        Some(white)
+    }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
