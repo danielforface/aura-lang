@@ -1205,3 +1205,49 @@ cell echo(n: Window) ->:
         }
     }
 }
+
+#[test]
+fn trusted_refined_return_metadata_is_source_anchored_and_valid_native_roundtrips() {
+    let src=r#"
+type Window = u8[10..20]
+cell echo(n: Window) ->:
+    yield n
+"#;
+    let ast=aura_parse::parse_source(src).expect("valid source");
+    let original=lower_program(&ast).expect("source lowers");
+    assert_eq!(original.refined_return_bounds.get("echo"),Some(&(10,20)),
+        "source-refined return interval must survive native lowering");
+    validate_module(&original).expect("baseline valid IR");
+    for mutation in ["remove return bounds","widen return bounds"] {
+        let mut forged=original.clone();
+        if mutation=="remove return bounds" {
+            forged.refined_return_bounds.remove("echo");
+        } else {
+            forged.refined_return_bounds.insert("echo".into(),(0,255));
+        }
+        validate_module(&forged).expect("only return metadata changed");
+        let err=emit_module_with_source_contract(&ast,&forged,None).err()
+            .expect("trusted source rejects missing or rewritten refined return bounds");
+        assert!(err.message.contains("refined source return contract"),"{err}");
+    }
+    let result=emit_module_with_source_contract(&ast,&original,None)
+        .expect("valid refined return ABI is source-qualified");
+    let temp=Scratch::new();
+    fs::write(temp.0.join("aura_runtime.h"),result.runtime_h).unwrap();
+    fs::write(temp.0.join("module.c"),&result.module_c).unwrap();
+    fs::write(temp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "uint8_t echo(uint8_t);\n",
+        "int main(void) { return (echo(10)==10 && echo(20)==20) ? 0 : 1; }\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=temp.0.join(format!("refined_return_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&temp.0).arg(temp.0.join("module.c")).arg(temp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("Clang available");
+        assert!(built.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),result.module_c);
+        let ran=Command::new(&exe).output().expect("run native refined roundtrip");
+        assert!(ran.status.success(),"{opt}: {}",String::from_utf8_lossy(&ran.stderr));
+    }
+}
