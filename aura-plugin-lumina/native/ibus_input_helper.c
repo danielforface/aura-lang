@@ -65,8 +65,12 @@ static void update_lookup(IBusInputContext *ctx,IBusLookupTable *table,
         hide_lookup(ctx,ud);return;
     }
     guint first=(cursor/size)*size;
-    guint limit=total-first;
-    if(limit>size)limit=size;
+    guint end=first+size;
+    if(end>total)end=total;
+    /* Keep real engine selection in the visible eight-row window, even
+     * when the source IME has a nine/sixteen-candidate page. */
+    if(cursor-first>=8)first=cursor-7;
+    guint limit=end-first;
     if(limit>8)limit=8;
     /* Reject a page rather than silently truncating unsupported candidate
      * strings or pretending to offer complete candidate selection. */
