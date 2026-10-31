@@ -82,8 +82,9 @@ jobs:
             sleep 2
             echo "LUMINA_IBUS_PINYIN_REGISTERED:"
             ibus list-engine | grep -i -A 3 -B 1 pinyin || true
-            ibus engine libpinyin || { echo "LUMINA_PINYIN_ENGINE_NOT_ACTIVATED"; ibus engine; exit 19; }
+            ibus engine libpinyin || true
             echo "LUMINA_IBUS_ACTIVE_CANDIDATE_ENGINE=$(ibus engine)"
+            test "$(ibus engine)" = "libpinyin" || { echo "LUMINA_PINYIN_ENGINE_NOT_ACTIVE"; exit 19; }
             export LUMINA_IBUS_CANDIDATE_FONT_PATH="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
             export LUMINA_IBUS_ENGINE="libpinyin"
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_candidate_e2e -- --nocapture --test-threads=1
