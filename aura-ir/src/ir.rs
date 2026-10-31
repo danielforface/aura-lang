@@ -112,6 +112,9 @@ pub struct ModuleIR {
     /// instructions, which may be edited after lowering.
     /// The C boundary verifies that each call-site guard is a subset.
     pub refined_param_bounds: BTreeMap<String, Vec<Option<(u64, u64)>>>,
+    /// Source-checked refined yield intervals, independent of scalar return
+    /// ABI width and mutable executable return instructions.
+    pub refined_return_bounds: BTreeMap<String, (u64, u64)>,
 }
 
 impl ModuleIR {
@@ -121,6 +124,7 @@ impl ModuleIR {
             externs: BTreeMap::new(),
             record_layouts: BTreeMap::new(),
             refined_param_bounds: BTreeMap::new(),
+            refined_return_bounds: BTreeMap::new(),
         }
     }
 }

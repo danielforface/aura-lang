@@ -789,6 +789,16 @@ impl Checker {
             }).collect())
     }
 
+    /// A refined yield retains its checked interval although native IR.ret
+    /// keeps only the concrete scalar return ABI.
+    pub(crate) fn function_refined_return_range(&self, name: &str) -> Option<(u64, u64)> {
+        self.functions.get(name).and_then(|sig| match &sig.ret {
+            Type::ConstrainedRange { base, lo, hi } if base_type(base).is_integer() =>
+                Some((*lo, *hi)),
+            _ => None,
+        })
+    }
+
     pub fn function_param_names(&self, name: &str) -> Option<Vec<String>> {
         self.functions.get(name).map(|sig| {
             sig.params

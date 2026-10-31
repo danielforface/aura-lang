@@ -36,6 +36,12 @@ pub fn emit_module_with_source_contract(
     let trusted = aura_core::lower_program(original_source).map_err(|e| CBackendError {
         message: format!("trusted source requalification failed: {e}"),
     })?;
+    if module.refined_return_bounds != trusted.refined_return_bounds {
+        return Err(CBackendError {
+            message: format!("refined source return contract mismatch: supplied={:?}; trusted={:?}",
+                module.refined_return_bounds, trusted.refined_return_bounds),
+        });
+    }
     // No missing, added or modified per-parameter source interval may pass.
     // All supplied ModuleIR metadata is untrusted until this comparison.
     if module.refined_param_bounds != trusted.refined_param_bounds {
@@ -475,7 +481,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
             continue;
         }
         emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions,
-            &module.refined_param_bounds)?;
+            &module.refined_param_bounds, &module.refined_return_bounds)?;
         out.push('\n');
     }
 
@@ -484,7 +490,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
         emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions,
-            &module.refined_param_bounds)?;
+            &module.refined_param_bounds, &module.refined_return_bounds)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -564,6 +570,7 @@ fn emit_function(
     record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
     functions: &BTreeMap<String, FunctionIR>,
     source_refined_param_bounds: &BTreeMap<String, Vec<Option<(u64, u64)>>>,
+    source_refined_return_bounds: &BTreeMap<String, (u64, u64)>,
 ) -> Result<(), CBackendError> {
     emit_function_signature(out, f, record_layouts, &f.name)?;
     out.push_str(" {\n");
@@ -1425,6 +1432,53 @@ fn emit_function(
                     })?;
                     c_name
                 };
+                // A source-qualified refined return must be tested against
+                // the unconverted SSA value. Checking after the C return
+                // cast would permit U32(277) -> U8(21) truncation.
+                if let Some((lo, hi)) = source_refined_return_bounds.get(
+                    if f.name == "aura_main" { "main" } else { &f.name }
+                ) {
+                    let (actual, value_name) = values.get(v).ok_or_else(|| CBackendError {
+                        message: format!("refined return '{}' has no scalar SSA v{}", f.name, v.0),
+                    })?;
+                    let (max, wide_return) = match map_type_to_ctype(&f.ret) {
+                        CType::U8 => (u8::MAX as u64, false),
+                        CType::U16 => (u16::MAX as u64, false),
+                        CType::U32 => (u32::MAX as u64, false),
+                        CType::U64 | CType::USize => (u64::MAX, true),
+                        CType::I8 => (i8::MAX as u64, false),
+                        CType::I16 => (i16::MAX as u64, false),
+                        CType::I32 => (i32::MAX as u64, false),
+                        CType::I64 | CType::ISize => (i64::MAX as u64, true),
+                        other => return Err(CBackendError {
+                            message: format!("unqualified refined return '{}' ABI {:?}", f.name, other),
+                        }),
+                    };
+                    if lo > hi || *hi > max {
+                        return Err(CBackendError {
+                            message: format!("refined return '{}' range [{lo}..{hi}] exceeds ABI", f.name),
+                        });
+                    }
+                    let wide_value = matches!(actual, CType::U64 | CType::USize | CType::I64 | CType::ISize);
+                    if !matches!(actual, CType::U8 | CType::U16 | CType::U32 |
+                        CType::U64 | CType::USize | CType::I8 | CType::I16 |
+                        CType::I32 | CType::I64 | CType::ISize)
+                    {
+                        return Err(CBackendError {
+                            message: format!("unqualified refined return '{}' scalar {:?}", f.name, actual),
+                        });
+                    }
+                    let label = escape_c_string(&format!("{}.return", f.name));
+                    if wide_value || wide_return {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U64((uint64_t)({value_name}), {lo}ULL, {hi}ULL, \"{label}\");\n"
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U32((uint32_t)({value_name}), {lo}u, {hi}u, \"{label}\");\n"
+                        ));
+                    }
+                }
                 out.push_str("  return ");
                 out.push_str(name);
                 out.push_str(";\n");
@@ -1921,6 +1975,7 @@ mod emit_tests {
             externs: BTreeMap::new(),
             record_layouts: BTreeMap::new(),
             refined_param_bounds: BTreeMap::new(),
+            refined_return_bounds: BTreeMap::new(),
         };
 
         let dummy_span: Span = (0, 0).into();

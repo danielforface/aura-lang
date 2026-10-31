@@ -143,6 +143,9 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
                 if let Some(bounds) = checker.function_refined_arg_ranges(&f.name) {
                     module.refined_param_bounds.insert(f.name.clone(), bounds);
                 }
+                if let Some(bounds) = checker.function_refined_return_range(&f.name) {
+                    module.refined_return_bounds.insert(f.name.clone(), bounds);
+                }
                 module.functions.insert(f.name.clone(), f);
             }
             Stmt::FlowBlock(fb) => {
