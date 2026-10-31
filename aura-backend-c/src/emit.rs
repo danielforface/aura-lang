@@ -970,21 +970,44 @@ fn emit_function(
                 }
 
                 InstKind::RangeCheckU32 { value, lo, hi } | InstKind::RangeCheck { value, lo, hi } => {
-                    if let Some((ct, name)) = values.get(value) {
-                        // The emitted guard runs before the call and is the
-                        // authority for narrowing a U32 argument to U8.
-                        if *ct == CType::U32 && lo <= hi {
-                            current_block_ranges.insert(*value, (*lo, *hi));
+                    let (ct, name) = values.get(value).ok_or_else(|| CBackendError {
+                        message: format!("range guard has no typed SSA operand v{}", value.0),
+                    })?;
+                    if lo > hi {
+                        return Err(CBackendError {
+                            message: format!("inverted range guard [{lo}..{hi}] for SSA v{}", value.0),
+                        });
+                    }
+                    // A source-refined call on U64 must never use a U32
+                    // helper: high bits of the operand AND bounds are part
+                    // of the contract. Preserve the same-block guard proof
+                    // for both 32-bit and 64-bit scalar call operands.
+                    let wide = match ct {
+                        CType::U8 | CType::U16 | CType::U32 |
+                        CType::I8 | CType::I16 | CType::I32 => {
+                            if *hi > u32::MAX as u64 {
+                                return Err(CBackendError {
+                                    message: format!("u32 range guard bound {hi} exceeds 32-bit ABI"),
+                                });
+                            }
+                            false
                         }
-                        out.push_str("  AURA_RANGE_CHECK_U32(");
-                        out.push_str(name);
-                        out.push_str(", ");
-                        out.push_str(&format!("{lo}u"));
-                        out.push_str(", ");
-                        out.push_str(&format!("{hi}u"));
-                        out.push_str(", \"");
-                        out.push_str(name);
-                        out.push_str("\");\n");
+                        CType::U64 | CType::USize | CType::I64 | CType::ISize => true,
+                        other => return Err(CBackendError {
+                            message: format!("unqualified range guard operand {:?} for SSA v{}", other, value.0),
+                        }),
+                    };
+                    current_block_ranges.insert(*value, (*lo, *hi));
+                    if wide {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U64((uint64_t)({name}), {lo}ULL, {hi}ULL, \"{}\");\n",
+                            escape_c_string(name)
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U32((uint32_t)({name}), {lo}u, {hi}u, \"{}\");\n",
+                            escape_c_string(name)
+                        ));
                     }
                 }
 
