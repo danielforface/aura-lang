@@ -45,7 +45,7 @@ jobs:
       - name: Install software-display and native Raylib prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum dbus-x11
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
       - name: Raylib-enabled library unit tests including typed IBus keysym and protocol bounds
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -74,6 +74,12 @@ jobs:
             export LUMINA_IBUS_TEST_HANGUL_SWITCH="1"
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_input_semantics_e2e -- --nocapture --test-threads=1
+            echo "LUMINA_IBUS_SELECT_CANDIDATE_ENGINE"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            ibus engine libpinyin
+            echo "LUMINA_IBUS_ACTIVE_CANDIDATE_ENGINE=$(ibus engine)"
+            export LUMINA_IBUS_ENGINE="libpinyin"
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_candidate_e2e -- --nocapture --test-threads=1
           '
 
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
