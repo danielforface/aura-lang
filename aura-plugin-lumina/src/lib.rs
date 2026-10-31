@@ -1286,6 +1286,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                 (KeyboardKey::KEY_UP,0xff52),
                                 (KeyboardKey::KEY_RIGHT,0xff53),
                                 (KeyboardKey::KEY_DOWN,0xff54),
+                                (KeyboardKey::KEY_PAGE_UP,0xff55),
+                                (KeyboardKey::KEY_PAGE_DOWN,0xff56),
                                 (KeyboardKey::KEY_HOME,0xff50),
                                 (KeyboardKey::KEY_END,0xff57),
                                 (KeyboardKey::KEY_ENTER,0xff0d),
