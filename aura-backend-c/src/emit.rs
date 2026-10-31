@@ -1432,6 +1432,7 @@ fn emit_function(
                     })?;
                     c_name
                 };
+                let mut return_expression = name.to_string();
                 // A source-qualified refined return must be tested against
                 // the unconverted SSA value. Checking after the C return
                 // cast would permit U32(277) -> U8(21) truncation.
@@ -1468,6 +1469,14 @@ fn emit_function(
                             message: format!("unqualified refined return '{}' scalar {:?}", f.name, actual),
                         });
                     }
+                    // Emit a *deliberate* cast only after the preceding
+                    // runtime guard. Without the cast, Clang -Werror correctly
+                    // rejects a constant U32(277) -> U8 conversion at compile
+                    // time before we can exercise Aura's own range boundary.
+                    if *actual != map_type_to_ctype(&f.ret) {
+                        let target = map_ctype_decl(map_type_to_ctype(&f.ret));
+                        return_expression = format!("(({target})({value_name}))");
+                    }
                     let label = escape_c_string(&format!("{}.return", f.name));
                     if wide_value || wide_return {
                         out.push_str(&format!(
@@ -1480,7 +1489,7 @@ fn emit_function(
                     }
                 }
                 out.push_str("  return ");
-                out.push_str(name);
+                out.push_str(&return_expression);
                 out.push_str(";\n");
             }
             Terminator::Return(None) => {
