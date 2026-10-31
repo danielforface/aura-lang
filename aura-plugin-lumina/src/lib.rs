@@ -806,6 +806,17 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|(bus.key_acks,bus.release_acks,bus.shifted_acks))
     }
+    /// Actual live engine lookup signal, not fabricated candidate text.
+    /// Snapshot belongs to a focused callback and is NEVER an EditSession edit.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidates(&self)
+        ->Option<(u64,usize,usize,usize,Vec<String>,usize)> {
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let page=bus.candidate_snapshot()?;
+        Some((page.callback_id,page.cursor,page.page_start,
+            page.total,page.candidates,bus.candidate_events))
+    }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
