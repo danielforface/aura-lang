@@ -1467,7 +1467,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             {
                 let candidate_bounds=candidate_page.as_ref().and_then(|page|
                     find_input_by_callback(tree,&planned_layout,page.callback_id)
-                    .and_then(|(_,plan)|ibus_candidate_bounds(plan.bounds,viewport,
+                    .and_then(|(_,plan)|ibus_candidate_bounds(plan.bounds,
+                        layout::Bounds::new(0.0,0.0,viewport.width,viewport.height),
                         page.candidates.len())));
                 win.last_candidate_bounds=candidate_bounds;
                 prepare_ibus_candidate_font(&mut win.rl,&win.thread,
