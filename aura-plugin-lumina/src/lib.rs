@@ -142,6 +142,79 @@ impl CompositionEvent {
 }
 
 #[cfg(feature = "raylib")]
+#[cfg(target_os="linux")]
+struct IbusCandidateFont {
+    source:String,
+    glyphs:String,
+    font:Font,
+}
+/// Real native IBus lookup candidates are an overlay, never edit-session text.
+/// Use an explicit bounded font atlas; do not draw missing CJK glyphs as tofu.
+#[cfg(target_os="linux")]
+fn prepare_ibus_candidate_font(
+    rl:&mut RaylibHandle,thread:&RaylibThread,
+    cache:&mut Option<IbusCandidateFont>,
+    page:Option<&ibus_native::IbusCandidatePage>,
+) {
+    let Some(page)=page else{return;};
+    let Ok(source)=std::env::var("LUMINA_IBUS_CANDIDATE_FONT_PATH") else {
+        *cache=None;return;
+    };
+    let admissible=std::fs::metadata(&source).is_ok_and(|m|
+        m.is_file() && m.len()>0 && m.len()<=font_atlas::MAX_FONT_FILE_BYTES);
+    if !admissible{*cache=None;return;}
+    let labels:Vec<String>=page.candidates.iter().enumerate()
+        .map(|(i,text)|format!("{}  {}",page.page_start+i+1,text)).collect();
+    let refs:Vec<&str>=labels.iter().map(String::as_str).collect();
+    let existing=cache.as_ref().filter(|f|f.source==source)
+        .map(|f|f.glyphs.as_str()).unwrap_or("");
+    let Some(glyphs)=font_atlas::glyph_request(existing,&refs) else {
+        *cache=None;return;
+    };
+    if cache.as_ref().is_some_and(|f|f.source==source && f.glyphs==glyphs){return;}
+    match rl.load_font_ex(thread,&source,22,Some(glyphs.as_str())){
+        Ok(font)=>*cache=Some(IbusCandidateFont{source,glyphs,font}),
+        Err(_)=>*cache=None,
+    }
+}
+#[cfg(target_os="linux")]
+fn ibus_candidate_bounds(
+    target:layout::Bounds,viewport:layout::Bounds,rows:usize,
+)->Option<Rectangle>{
+    if rows==0||rows>8||viewport.width<100.0||viewport.height<65.0{return None;}
+    let width=viewport.width.min(360.0);
+    let height=12.0+rows as f32*32.0;
+    let below=target.y+target.height+4.0;
+    let y=if below+height<=viewport.height {below}
+        else if target.y>=height+4.0 {target.y-height-4.0}
+        else{return None};
+    Some(Rectangle::new(target.x.max(0.0).min(viewport.width-width),
+        y,width,height))
+}
+#[cfg(target_os="linux")]
+fn paint_ibus_candidates(
+    d:&mut RaylibDrawHandle,panel:Rectangle,
+    page:&ibus_native::IbusCandidatePage,font:Option<&IbusCandidateFont>,
+){
+    d.draw_rectangle_rec(panel,Color::new(18,26,38,255));
+    d.draw_rectangle_lines_ex(panel,1.0,Color::new(70,87,111,255));
+    let mut scissor=d.begin_scissor_mode(
+        panel.x.ceil() as i32,panel.y.ceil() as i32,
+        panel.width.floor() as i32,panel.height.floor() as i32);
+    for (i,text) in page.candidates.iter().enumerate(){
+        let row_y=panel.y+6.0+32.0*i as f32;
+        if page.cursor==page.page_start+i {
+            scissor.draw_rectangle_rec(Rectangle::new(panel.x+4.0,row_y,
+                (panel.width-8.0).max(0.0),30.0),
+                Color::new(35,92,142,255));
+        }
+        let label=format!("{}  {}",page.page_start+i+1,text);
+        if let Some(f)=font.filter(|font|font_atlas::covers(&font.glyphs,&label)){
+            scissor.draw_text_ex(&f.font,&label,
+                Vector2::new(panel.x+12.0,row_y+4.0),22.0,0.0,Color::RAYWHITE);
+        }
+    }
+}
 struct LuminaWindow {
     // Rust drops struct fields in declaration order. All GPU objects MUST be
     // released while the native Raylib/OpenGL context is still alive.
@@ -150,6 +223,10 @@ struct LuminaWindow {
     textures: HashMap<String, Texture2D>,
     fonts: HashMap<String,LoadedUnicodeFont>,
     shaped_textures: HashMap<String,shaped_gpu::PreparedGlyphText>,
+    #[cfg(target_os="linux")]
+    candidate_font:Option<IbusCandidateFont>,
+    #[cfg(target_os="linux")]
+    last_candidate_bounds:Option<Rectangle>,
     #[cfg(target_os="linux")]
     native_ibus: Option<ibus_native::NativeIbus>,
     sdf: RoundedRectShader,
@@ -817,6 +894,12 @@ impl AuraLuminaPlugin {
         Some((page.callback_id,page.cursor,page.page_start,
             page.total,page.candidates,bus.candidate_events))
     }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_bounds(&self)->Option<(f32,f32,f32,f32)>{
+        let borrowed=self.window.borrow();
+        let b=borrowed.as_ref()?.last_candidate_bounds?;
+        Some((b.x,b.y,b.width,b.height))
+    }
 
     /// Pixel-position sensitive framebuffer digest. Counts only text-red
     /// pixels (not background); different visual forms produce distinct
@@ -989,6 +1072,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
                     shaped_textures: HashMap::new(),
+                    #[cfg(target_os="linux")]
+                    candidate_font:None,
+                    #[cfg(target_os="linux")]
+                    last_candidate_bounds:None,
                     #[cfg(target_os="linux")]
                     native_ibus: ibus_native::NativeIbus::connect(),
                 });
@@ -1343,6 +1430,21 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let requests=collect_shaped_requests(tree,&planned_layout,
                 &win.focused_input,&win.input_sessions);
             shaped_gpu::prepare(&mut win.rl,&win.thread,&mut win.shaped_textures,&requests);
+            #[cfg(target_os="linux")]
+            let candidate_page=win.native_ibus.as_ref()
+                .and_then(|bus|bus.candidate_snapshot())
+                .filter(|page|win.focused_input.as_ref()
+                    .is_some_and(|fi|fi.on_change==page.callback_id));
+            #[cfg(target_os="linux")]
+            {
+                let candidate_bounds=candidate_page.as_ref().and_then(|page|
+                    find_input_by_callback(tree,&planned_layout,page.callback_id)
+                    .and_then(|(_,plan)|ibus_candidate_bounds(plan.bounds,viewport,
+                        page.candidates.len())));
+                win.last_candidate_bounds=candidate_bounds;
+                prepare_ibus_candidate_font(&mut win.rl,&win.thread,
+                    &mut win.candidate_font,candidate_page.as_ref());
+            }
             let text_views=measure_input_visuals(
                 &win.rl,tree,&planned_layout,&focus_order,
                 &mut win.focused_input,&mut win.input_sessions,&win.fonts,&win.shaped_textures);
@@ -1359,6 +1461,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
+                #[cfg(target_os="linux")]
+                if let (Some(page),Some(panel))=
+                    (candidate_page.as_ref(),win.last_candidate_bounds){
+                    paint_ibus_candidates(&mut d,panel,page,win.candidate_font.as_ref());
+                }
             }
             fb.clicked_callback_id = click_cb;
 
