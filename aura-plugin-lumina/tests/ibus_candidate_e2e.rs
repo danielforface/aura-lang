@@ -130,3 +130,122 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_composition(941).is_none(),
         "FocusOut must also discard engine preedit");
 }
+
+#[test]fn real_pinyin_candidate_mouse_click_commits_selected_engine_text(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",""),("on_change","cb:942"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let window=windows.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",window]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i","h","a","o"] {
+        assert!(key(&p,&app,&mut c,ch).is_empty(),
+            "real Pinyin must not commit a preedit while typing");
+    }
+    let (cb,cursor,start,_,candidates,_)=p.diagnostic_native_ibus_candidates()
+        .expect("live Pinyin engine must emit candidate table");
+    assert_eq!(cb,942);
+    assert_eq!(cursor,0);
+    assert_eq!(start,0);
+    assert!(candidates.len()>=2);
+    let expected=candidates[1].clone();
+    let (px,py,pw,ph)=p.diagnostic_native_ibus_candidate_bounds()
+        .expect("real rendered popup");
+    assert!(pw>150.0 && ph>70.0);
+    let at_x=(px+22.0).round() as i32;
+    let at_y=(py+6.0+32.0+14.0).round() as i32;
+    xdo(&["mousemove","--window",window,&at_x.to_string(),&at_y.to_string()]);
+    xdo(&["mousedown","1"]);
+    let mut callbacks=frames(&p,&app,&mut c,5);
+    xdo(&["mouseup","1"]);
+    callbacks.extend(frames(&p,&app,&mut c,5));
+    eprintln!("LUMINA_IBUS_P20_MOUSE clicked=1 selected={expected:?} callbacks={callbacks:?} remaining={:?} ack={:?}",
+        p.diagnostic_native_ibus_candidates(),p.diagnostic_native_ibus_candidate_clicks());
+    assert_eq!(callbacks.len(),1,"a real candidate mouse click must commit once");
+    assert_eq!(callbacks[0].callback_id,942);
+    assert_eq!(callbacks[0].text,expected,
+        "only the real engine's second candidate may be committed");
+    assert_eq!(p.diagnostic_native_ibus_candidate_clicks(),Some(1));
+    assert!(p.diagnostic_native_ibus_candidates().is_none());
+}
+#[test]fn real_pinyin_page_navigation_uses_native_ibus_key_and_updates_lookup(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",""),("on_change","cb:943"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let window=windows.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",window]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i","h","a","o"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    let (_,old_cursor,old_start,total,old_items,old_events)=
+        p.diagnostic_native_ibus_candidates().expect("original live page");
+    assert!(total>10&&old_items.len()>=3);
+    assert!(key(&p,&app,&mut c,"Next").is_empty(),
+        "page navigation must never commit text into editor");
+    let (_,new_cursor,new_start,new_total,new_items,new_events)=
+        p.diagnostic_native_ibus_candidates().expect("real page-down engine update");
+    eprintln!("LUMINA_IBUS_P20_PAGE_DOWN old=({old_cursor},{old_start},{old_items:?},{old_events}) new=({new_cursor},{new_start},{new_items:?},{new_events})");
+    assert!(new_total>0 && new_cursor<new_total);
+    // The live engine may recompute candidate totals when a page changes.
+    // Never require 130 old predictions to remain 130 after PageDown.
+    assert!(new_events>old_events,"live engine must update lookup on PageDown");
+    assert!(new_start>old_start||new_cursor>old_cursor,
+        "physical PageDown must advance real libpinyin candidates");
+    assert!(key(&p,&app,&mut c,"Prior").is_empty());
+    let (_,back_cursor,back_start,_,_,back_events)=p.diagnostic_native_ibus_candidates()
+        .expect("live IBus page-up update");
+    eprintln!("LUMINA_IBUS_P20_PAGE_UP cursor={back_cursor} first={back_start} updates={back_events}");
+    assert!(back_events>new_events);
+    assert_eq!(back_start,old_start,"PageUp should return to first engine page");
+    assert!(back_cursor<=old_items.len(),"live cursor returned into first page");
+}
+
+#[test]fn real_pinyin_stale_lookup_click_after_host_revision_does_not_commit(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value","A"),("value_revision","1"),("on_change","cb:944"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let window=windows.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",window]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    assert!(p.diagnostic_native_ibus_candidates().is_some());
+    let (px,py,_,_)=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    // Authority changes immediately before XTest mouse click is sampled.
+    // The prior candidate snapshot is stale and must NEVER commit into B.
+    app.children[0].set_prop("value","B");
+    app.children[0].set_prop("value_revision","2");
+    let xx=(px+22.0).round() as i32;
+    let yy=(py+6.0+32.0+14.0).round() as i32;
+    xdo(&["mousemove","--window",window,&xx.to_string(),&yy.to_string()]);
+    xdo(&["mousedown","1"]);
+    let mut events=frames(&p,&app,&mut c,5);
+    xdo(&["mouseup","1"]);
+    events.extend(frames(&p,&app,&mut c,5));
+    eprintln!("LUMINA_IBUS_P20_REBASE_STALE_CLICK events={events:?} lookup={:?} clicks={:?} composition={:?}",
+        p.diagnostic_native_ibus_candidates(),p.diagnostic_native_ibus_candidate_clicks(),
+        p.diagnostic_composition(944));
+    assert!(events.iter().all(|e|e.callback_id!=944));
+    assert_eq!(p.diagnostic_native_ibus_candidate_clicks(),Some(0));
+    assert!(p.diagnostic_native_ibus_candidates().is_none());
+    assert!(p.diagnostic_composition(944).is_none());
+}
