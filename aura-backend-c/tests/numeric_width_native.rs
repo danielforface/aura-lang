@@ -7,15 +7,20 @@ use aura_ir::{
     BasicBlock, BinOp, BlockId, ExecutionHint, FunctionIR, Inst, InstKind,
     ModuleIR, Param, Terminator, Type, UnaryOp, ValueId,
 };
-use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf, process::Command, sync::atomic::{AtomicU64, Ordering}, time::{SystemTime, UNIX_EPOCH}};
 
 enum Arithmetic { Binary(BinOp), Unary(UnaryOp) }
+
+// Parallel Cargo tests can sample the same clock nanosecond in one process.
+// A per-process sequence prevents two RAII Scratch instances deleting each other's artifacts.
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 struct Scratch { root: PathBuf }
 impl Scratch {
     fn new() -> Self {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("aura-q02-native-{}-{nonce}", std::process::id()));
+        let seq = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("aura-q02-native-{}-{nonce}-{seq}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         Self { root }
     }

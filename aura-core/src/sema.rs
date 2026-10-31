@@ -776,6 +776,29 @@ impl Checker {
         self.functions.get(name).map(|sig| &sig.ret)
     }
 
+    // The lowerer uses exactly this source-checked contract to insert an
+    // executable range guard before narrowing an argument to a native ABI.
+    pub(crate) fn function_refined_arg_ranges(
+        &self, name: &str
+    ) -> Option<Vec<Option<(u64, u64)>>> {
+        self.functions.get(name).map(|sig| sig.params.iter()
+            .map(|p| match &p.ty {
+                Type::ConstrainedRange { base, lo, hi }
+                    if base_type(base).is_integer() => Some((*lo, *hi)),
+                _ => None,
+            }).collect())
+    }
+
+    /// A refined yield retains its checked interval although native IR.ret
+    /// keeps only the concrete scalar return ABI.
+    pub(crate) fn function_refined_return_range(&self, name: &str) -> Option<(u64, u64)> {
+        self.functions.get(name).and_then(|sig| match &sig.ret {
+            Type::ConstrainedRange { base, lo, hi } if base_type(base).is_integer() =>
+                Some((*lo, *hi)),
+            _ => None,
+        })
+    }
+
     pub fn function_param_names(&self, name: &str) -> Option<Vec<String>> {
         self.functions.get(name).map(|sig| {
             sig.params
@@ -790,6 +813,79 @@ impl Checker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), SemanticError> {
+        // TypeAlias, Record and Enum all occupy the same source type namespace:
+        // resolve_type_ref consults their registries in a fixed order. Before
+        // mutating any registry, reject ambiguity even when no type is used.
+        let mut source_type_names: HashMap<String, &'static str> = HashMap::new();
+        for stmt in &program.stmts {
+            let declaration = match stmt {
+                Stmt::TypeAlias(alias) => Some((&alias.name, "TypeAlias")),
+                Stmt::RecordDef(record) => Some((&record.name, "Record")),
+                Stmt::EnumDef(enumeration) => Some((&enumeration.name, "Enum")),
+                _ => None,
+            };
+            if let Some((name, kind)) = declaration {
+                if let Some(previous) = source_type_names.insert(name.node.clone(), kind) {
+                    let message = if previous == "Record" && kind == "Record" {
+                        format!("duplicate nominal Record type declaration '{}'", name.node)
+                    } else {
+                        format!(
+                            "duplicate type declaration '{}': {} conflicts with earlier {}",
+                            name.node, kind, previous
+                        )
+                    };
+                    return Err(SemanticError { message, span: name.span });
+                }
+            }
+        }
+
+
+        // Q03: qualify simple monomorphic alias graphs even when unused.
+        // Reject cycles and targets with no locally known declaration before
+        // first-pass alias resolution could preserve an invalid Named type.
+        // Generic/refined/imported alias proof is a separate qualification.
+        let mono_aliases: HashMap<&str, &aura_ast::TypeAlias> = program.stmts.iter()
+            .filter_map(|s| match s {
+                Stmt::TypeAlias(a) if a.params.is_empty() &&
+                    a.target.args.is_empty() && a.target.range.is_none()
+                    => Some((a.name.node.as_str(), a)),
+                _ => None,
+            }).collect();
+        let has_imports = program.stmts.iter().any(|s| matches!(s, Stmt::Import(_)));
+        for alias in mono_aliases.values() {
+            let mut seen = HashSet::new();
+            let mut current = alias.name.node.as_str();
+            loop {
+                if !seen.insert(current) {
+                    return Err(SemanticError {
+                        message: format!("cyclic monomorphic TypeAlias '{}' via '{}'",
+                            alias.name.node, current),
+                        span: alias.name.span,
+                    });
+                }
+                let def = mono_aliases[current];
+                let target = def.target.name.node.as_str();
+                if mono_aliases.contains_key(target) {
+                    current = target;
+                    continue;
+                }
+                if source_type_names.contains_key(target) || has_imports ||
+                    matches!(target,
+                        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
+                        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+                        "Int" | "f32" | "f64" | "bool" | "char" | "str" |
+                        "String" | "Tensor" | "Style" | "Unit" | "Model")
+                {
+                    break;
+                }
+                return Err(SemanticError {
+                    message: format!("unknown monomorphic TypeAlias '{}' target '{}'",
+                        def.name.node, target),
+                    span: def.target.span,
+                });
+            }
+        }
+
         // First pass: register type aliases and cell headers.
         for stmt in &program.stmts {
             match stmt {
@@ -802,9 +898,32 @@ impl Checker {
                 }
                 Stmt::TypeAlias(ta) => {
                     if ta.params.is_empty() {
-                        let ty = self.resolve_type_ref(&ta.target)?;
-                        self.type_aliases
-                            .insert(ta.name.node.clone(), AliasEntry::Mono(ty));
+                        // Resolve valid forward monomorphic alias dependencies
+                        // in terminal-first order. Without this, Top=Middle
+                        // before Middle=u8 is stored as Named(Middle), losing
+                        // numeric width before Record and native lowering.
+                        // The source-graph preflight already excludes cycles.
+                        if !self.type_aliases.contains_key(&ta.name.node) {
+                            let mut pending = vec![ta];
+                            while let Some(dep) = mono_aliases.get(
+                                pending.last().expect("nonempty alias chain")
+                                    .target.name.node.as_str()
+                            ) {
+                                if self.type_aliases.contains_key(&dep.name.node) {
+                                    break;
+                                }
+                                pending.push(*dep);
+                            }
+                            for def in pending.into_iter().rev() {
+                                if self.type_aliases.contains_key(&def.name.node) {
+                                    continue;
+                                }
+                                let ty = self.resolve_type_ref(&def.target)?;
+                                self.type_aliases.insert(
+                                    def.name.node.clone(), AliasEntry::Mono(ty)
+                                );
+                            }
+                        }
                     } else {
                         let def = TypeAliasDef {
                             params: ta
@@ -822,6 +941,18 @@ impl Checker {
                     }
                 }
                 Stmt::RecordDef(r) => {
+                    // A nominal type name must have exactly one source schema.
+                    // Overwriting a prior Record definition makes the Checker,
+                    // IR layout and no-Z3 runtime disagree on field ABI.
+                    if self.record_defs.contains_key(&r.name.node) {
+                        return Err(SemanticError {
+                            message: format!(
+                                "duplicate nominal Record type declaration '{}'",
+                                r.name.node
+                            ),
+                            span: r.name.span,
+                        });
+                    }
                     self.record_defs.insert(r.name.node.clone(), r.clone());
                     self.define_type_placeholder(&r.name)?;
                 }
@@ -841,6 +972,33 @@ impl Checker {
                 }
                 Stmt::UnsafeBlock(_) => {}
                 _ => {}
+            }
+        }
+
+        // Declaration qualification is independent of whether a Record is
+        // constructed or whether a particular default is overridden. The old
+        // use-site-only check silently accepted malformed unused schemas and
+        // allowed duplicate field names to be overwritten in layout maps.
+        for stmt in &program.stmts {
+            let Stmt::RecordDef(def) = stmt else { continue };
+            let mut seen = HashSet::new();
+            for field in &def.fields {
+                if !seen.insert(field.name.node.as_str()) {
+                    return Err(SemanticError {
+                        message: format!(
+                            "duplicate field '{}' in Record declaration '{}'",
+                            field.name.node, def.name.node
+                        ),
+                        span: field.name.span,
+                    });
+                }
+                // Generic defaults require instantiated substitutions and
+                // are not part of this concrete scalar Record ABI slice.
+                if !def.params.is_empty() { continue; }
+                let Some(value) = &field.default else { continue };
+                let required = self.resolve_type_ref(&field.ty)?;
+                self.check_qualified_record_default(&required, value,
+                    &mut vec![def.name.node.clone()])?;
             }
         }
 
@@ -879,6 +1037,9 @@ impl Checker {
                 }
                 Stmt::Assign(a) => {
                     self.check_assign(a)?;
+                }
+                Stmt::FieldAssign(a) => {
+                    self.check_field_assign(a)?;
                 }
                 Stmt::If(i) => {
                     self.check_if(i)?;
@@ -1012,6 +1173,7 @@ impl Checker {
                     let _ = self.infer_expr(&p.expr)?;
                 }
                 Stmt::Assign(a) => self.check_assign(a)?,
+                Stmt::FieldAssign(a) => self.check_field_assign(a)?,
                 Stmt::If(i) => self.check_if(i)?,
                 Stmt::Match(m) => self.check_match(m)?,
                 Stmt::While(w) => self.check_while(w)?,
@@ -1171,6 +1333,15 @@ impl Checker {
 
         let final_ty = if let Some(annot) = &sd.ty {
             let expected = self.resolve_type_ref(annot)?;
+            // An explicit integer type annotation is a representation
+            // contract, not permission to erase a proven out-of-range U32
+            // value. Preserve the same width guarantee as Record field
+            // construction before a narrow local can launder its provenance.
+            // The current U32 lowering does not qualify negative signed
+            // values; reject them at this boundary until signed IR parity.
+            self.check_record_integer_literal_width(&expected, &sd.expr)?;
+            self.check_record_integer_inferred_range(&expected, &expr_ty, &sd.expr)?;
+            self.check_known_refined_integer_bounds(&expected, &expr_ty, &sd.expr)?;
 
             // If there is a `where` clause, we treat it as a refinement for type tracking,
             // but we don't require proving it here (the verifier is the hard gate).
@@ -1204,6 +1375,116 @@ impl Checker {
         self.define_val(&sd.name, final_ty, sd.mutable)
     }
 
+    fn check_field_assign(&mut self, a: &aura_ast::FieldAssignStmt) -> Result<(), SemanticError> {
+        let Some(target_ty) = self.lookup_val(&a.target.node) else {
+            return Err(SemanticError {
+                message: format!("unknown identifier '{}'", a.target.node),
+                span: a.target.span,
+            });
+        };
+        self.cap.ensure_alive(&a.target.node, a.target.span)?;
+        if !self.is_mutable(&a.target.node) {
+            return Err(SemanticError {
+                message: format!("cannot assign to immutable val '{}'", a.target.node),
+                span: a.target.span,
+            });
+        }
+        let Type::Named(mut record_name) = base_type(&target_ty).clone() else {
+            return Err(SemanticError {
+                message: format!(
+                    "field assignment target '{}' must be a concrete Record",
+                    a.target.node
+                ),
+                span: a.target.span,
+            });
+        };
+
+        let path = std::iter::once(&a.field)
+            .chain(a.nested.iter())
+            .collect::<Vec<_>>();
+        // A mutable root is rebound exactly once with a functional SSA
+        // update; intermediate Record fields need not be independently
+        // mutable, but every traversed type must be concrete and nominal.
+        for (index, component) in path.iter().enumerate() {
+            let Some(def) = self.record_defs.get(&record_name) else {
+                return Err(SemanticError {
+                    message: format!(
+                        "nested field assignment path requires concrete Record '{}'",
+                        record_name
+                    ),
+                    span: component.span,
+                });
+            };
+            if !def.params.is_empty() {
+                return Err(SemanticError {
+                    message: format!(
+                        "generic Record '{}' field assignment is unqualified",
+                        record_name
+                    ),
+                    span: component.span,
+                });
+            }
+            let Some(field) = def.fields.iter()
+                .find(|f| f.name.node == component.node) else {
+                return Err(SemanticError {
+                    message: format!(
+                        "unknown field '{}' for record '{}'",
+                        component.node, record_name
+                    ),
+                    span: component.span,
+                });
+            };
+            let expected = self.resolve_type_ref(&field.ty)?;
+            if index + 1 != path.len() {
+                let Type::Named(child_name) = expected else {
+                    return Err(SemanticError {
+                        message: format!(
+                            "nested field assignment path through '{}.{}' requires a concrete Record",
+                            record_name, component.node
+                        ),
+                        span: component.span,
+                    });
+                };
+                if !self.record_defs.get(&child_name)
+                    .is_some_and(|child| child.params.is_empty())
+                {
+                    return Err(SemanticError {
+                        message: format!(
+                            "nested field assignment path through '{}.{}' requires a concrete Record",
+                            record_name, component.node
+                        ),
+                        span: component.span,
+                    });
+                }
+                record_name = child_name;
+                continue;
+            }
+
+            let scalar = matches!(expected, Type::Bool | Type::Char | Type::U8 | Type::U16 |
+                Type::U32 | Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                Type::I64 | Type::F32 | Type::F64)
+                || matches!(&expected, Type::ConstrainedRange { base, .. }
+                    if base_type(base).is_integer());
+            let nominal_child = matches!(&expected, Type::Named(name)
+                if self.record_defs.get(name).is_some_and(|inner| inner.params.is_empty()));
+            if !scalar && !nominal_child {
+                return Err(SemanticError {
+                    message: format!(
+                        "unqualified non-scalar Record field assignment '{}.{}'",
+                        a.target.node, component.node
+                    ),
+                    span: component.span,
+                });
+            }
+            self.check_record_integer_literal_width(&expected, &a.expr)?;
+            let actual = self.infer_expr(&a.expr)?;
+            self.check_record_integer_inferred_range(&expected, &actual, &a.expr)?;
+            self.check_known_refined_integer_bounds(&expected, &actual, &a.expr)?;
+            return self.check_assignable(&expected, &actual, &a.expr);
+        }
+        unreachable!("FieldAssign always has at least one field");
+    }
+
     fn check_assign(&mut self, assign: &AssignStmt) -> Result<(), SemanticError> {
         let Some(target_ty) = self.lookup_val(&assign.target.node) else {
             return Err(SemanticError {
@@ -1224,6 +1505,12 @@ impl Checker {
         }
 
         let rhs_ty = self.infer_expr(&assign.expr)?;
+        // Maintain narrow typed-local invariants on reassignment too. Without
+        // this, a safe declaration can later acquire an unrepresentable value
+        // before being passed to a typed Record or another consumer.
+        self.check_record_integer_literal_width(&target_ty, &assign.expr)?;
+        self.check_record_integer_inferred_range(&target_ty, &rhs_ty, &assign.expr)?;
+        self.check_known_refined_integer_bounds(&target_ty, &rhs_ty, &assign.expr)?;
         // Mutation aliasing rule (MVP): assigning from a resource identifier moves it.
         if let ExprKind::Ident(src) = &assign.expr.kind {
             if src.node != assign.target.node && self.is_non_copy_type(&rhs_ty) {
@@ -1445,6 +1732,249 @@ impl Checker {
         }
         let _ = self.check_block(&while_stmt.body)?;
         Ok(())
+    }
+
+    // A u32-constrained integer literal may be assignable by numeric-base
+    // compatibility yet unrepresentable in a narrower Record ABI field.
+    // Refuse that implicit truncation at every Record-specific write site.
+    // Do not broaden generic numeric conversion rules outside Q03.
+    fn check_record_integer_literal_width(
+        &self,
+        required: &Type,
+        value: &Expr,
+    ) -> Result<(), SemanticError> {
+        // Unary negation currently lowers through the unsigned U32 IR path.
+        // For Record values it cannot be treated as a signed literal without
+        // proving Oracle, AVM and native C agreement. Refuse it locally
+        // rather than accepting a wrapped unsigned value.
+        if required.is_integer()
+            && matches!(&value.kind, ExprKind::Unary { op: UnaryOp::Neg, .. })
+        {
+            return Err(SemanticError {
+                message: "unqualified negative Record integer expression".to_string(),
+                span: value.span,
+            });
+        }
+        let ExprKind::IntLit(n) = &value.kind else { return Ok(()); };
+        let max = match required {
+            Type::U8 => u8::MAX as u64,
+            Type::U16 => u16::MAX as u64,
+            Type::U32 => u32::MAX as u64,
+            Type::U64 => u64::MAX,
+            Type::I8 => i8::MAX as u64,
+            Type::I16 => i16::MAX as u64,
+            Type::I32 => i32::MAX as u64,
+            Type::I64 => i64::MAX as u64,
+            _ => return Ok(()),
+        };
+        if *n > max {
+            return Err(SemanticError {
+                message: format!(
+                    "Record integer literal {} out of range for {}",
+                    n, required.display()
+                ),
+                span: value.span,
+            });
+        }
+        Ok(())
+    }
+
+    // A Record initializer can refer to an inferred local whose type is a
+    // constrained U32 interval. The existing generic numeric compatibility
+    // deliberately permits cross-width numeric values, but this Record ABI
+    // must not truncate a range that exceeds its declared field width.
+    // Keep this guard scoped to Record field construction/updates.
+    fn check_record_integer_inferred_range(
+        &self,
+        required: &Type,
+        actual: &Type,
+        value: &Expr,
+    ) -> Result<(), SemanticError> {
+        let upper = match required {
+            Type::U8 => u8::MAX as u64,
+            Type::U16 => u16::MAX as u64,
+            Type::U32 => u32::MAX as u64,
+            Type::U64 => u64::MAX,
+            Type::I8 => i8::MAX as u64,
+            Type::I16 => i16::MAX as u64,
+            Type::I32 => i32::MAX as u64,
+            Type::I64 => i64::MAX as u64,
+            _ => return Ok(()),
+        };
+        if let Type::ConstrainedRange { lo, hi, .. } = actual {
+            if *lo > upper || *hi > upper {
+                return Err(SemanticError {
+                    message: format!(
+                        "Record integer inferred range [{lo}..{hi}] out of range for {}",
+                        required.display()
+                    ),
+                    span: value.span,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    // Source-proven interval qualification for explicitly refined integer
+    // locals and their mutations. The current Q03 backend erases refinement
+    // metadata to the concrete integer ABI, so retaining an impossible value
+    // would make static and executable meaning disagree. This does NOT prove
+    // arbitrary dynamic expressions or negative signed integer execution.
+    fn check_known_refined_integer_bounds(
+        &self,
+        required: &Type,
+        actual: &Type,
+        rhs: &Expr,
+    ) -> Result<(), SemanticError> {
+        let Type::ConstrainedRange { lo, hi, base } = required else {
+            return Ok(());
+        };
+        if !base_type(base).is_integer() {
+            return Ok(());
+        }
+        if matches!(&rhs.kind, ExprKind::Unary { op: UnaryOp::Neg, .. }) {
+            return Err(SemanticError {
+                message: "unqualified negative refined integer expression".to_string(),
+                span: rhs.span,
+            });
+        }
+        if let Type::ConstrainedRange { lo: actual_lo, hi: actual_hi, .. } = actual {
+            if actual_lo >= lo && actual_hi <= hi {
+                return Ok(());
+            }
+            return Err(SemanticError {
+                message: format!(
+                    "refined integer value range [{actual_lo}..{actual_hi}] outside required range [{lo}..{hi}]"
+                ),
+                span: rhs.span,
+            });
+        }
+        // A refined binding may only claim a value proven in-range, not an
+        // unrelated unconstrained integer later narrowed by the C backend.
+        Err(SemanticError {
+            message: format!(
+                "unqualified refined integer source range for {} (requires [{lo}..{hi}])",
+                required.display()
+            ),
+            span: rhs.span,
+        })
+    }
+
+    // Q03 qualified *source* Record defaults: scalar constants and finite,
+    // nongeneric nominal Record literals composed solely of qualified values.
+    // This checks the entire tree at declaration time (even when unused),
+    // and again on missing-field materialization. No dynamic expressions,
+    // implicit captured locals, structural Record coercions or cycles.
+    fn check_qualified_record_default(
+        &mut self,
+        required: &Type,
+        value: &Expr,
+        active: &mut Vec<String>,
+    ) -> Result<(), SemanticError> {
+        match &value.kind {
+            _ if match &value.kind {
+                ExprKind::IntLit(_) => true,
+                ExprKind::Ident(id) => id.node == "true" || id.node == "false",
+                _ => false,
+            } => {
+                if !matches!(required,
+                    Type::Bool | Type::U8 | Type::U16 | Type::U32 |
+                    Type::U64 | Type::I8 | Type::I16 | Type::I32 |
+                    Type::I64 | Type::F32 | Type::F64 | Type::Char)
+                    && !matches!(required, Type::ConstrainedRange { base, .. }
+                        if base_type(base).is_integer())
+                {
+                    return Err(SemanticError {
+                        message: "unqualified non-scalar Record default".to_string(),
+                        span: value.span,
+                    });
+                }
+                self.check_record_integer_literal_width(required, value)?;
+                let actual = self.infer_expr(value)?;
+                self.check_known_refined_integer_bounds(required, &actual, value)?;
+                self.check_assignable(required, &actual, value)
+            }
+            ExprKind::RecordLit { name, fields } => {
+                let Type::Named(expected) = required else {
+                    return Err(SemanticError {
+                        message: format!(
+                            "type mismatch: nominal Record default '{}' is not assignable to {}",
+                            name.node, required.display()
+                        ),
+                        span: value.span,
+                    });
+                };
+                if expected != &name.node {
+                    return Err(SemanticError {
+                        message: format!(
+                            "type mismatch: nominal Record default '{}' expected '{}'",
+                            name.node, expected
+                        ),
+                        span: name.span,
+                    });
+                }
+                let def = self.record_defs.get(&name.node).cloned().ok_or_else(|| SemanticError {
+                    message: format!("unknown default Record type '{}'", name.node),
+                    span: name.span,
+                })?;
+                if !def.params.is_empty() {
+                    return Err(SemanticError {
+                        message: format!("unqualified generic Record default '{}'", name.node),
+                        span: value.span,
+                    });
+                }
+                if active.iter().any(|current| current == &name.node) {
+                    return Err(SemanticError {
+                        message: format!("cyclic nominal Record default involving '{}'", name.node),
+                        span: value.span,
+                    });
+                }
+                active.push(name.node.clone());
+                let mut seen = HashSet::new();
+                for (field_name, field_value) in fields {
+                    if !seen.insert(field_name.node.as_str()) {
+                        return Err(SemanticError {
+                            message: format!(
+                                "duplicate initializer '{}' in Record default '{}'",
+                                field_name.node, name.node
+                            ),
+                            span: field_name.span,
+                        });
+                    }
+                    let Some(field) = def.fields.iter().find(|f| f.name.node == field_name.node) else {
+                        return Err(SemanticError {
+                            message: format!(
+                                "unknown field '{}' for Record default '{}'",
+                                field_name.node, name.node
+                            ),
+                            span: field_name.span,
+                        });
+                    };
+                    let ty = self.resolve_type_ref(&field.ty)?;
+                    self.check_qualified_record_default(&ty, field_value, active)?;
+                }
+                for field in &def.fields {
+                    if seen.contains(field.name.node.as_str()) { continue; }
+                    let Some(default) = &field.default else {
+                        return Err(SemanticError {
+                            message: format!(
+                                "missing required field '{}' for Record default '{}'",
+                                field.name.node, name.node
+                            ),
+                            span: value.span,
+                        });
+                    };
+                    let ty = self.resolve_type_ref(&field.ty)?;
+                    self.check_qualified_record_default(&ty, default, active)?;
+                }
+                active.pop();
+                Ok(())
+            }
+            _ => Err(SemanticError {
+                message: "unqualified nonliteral Record default".to_string(),
+                span: value.span,
+            }),
+        }
     }
 
     fn check_assignable(&self, expected: &Type, actual: &Type, rhs: &Expr) -> Result<(), SemanticError> {
@@ -1702,7 +2232,10 @@ impl Checker {
                     } else {
                         self.resolve_type_ref_with_type_params(fty_ref, &param_subst)?
                     };
+                    self.check_record_integer_literal_width(&expected_ty, v)?;
                     let actual_ty = self.infer_expr(v)?;
+                    self.check_record_integer_inferred_range(&expected_ty, &actual_ty, v)?;
+                    self.check_known_refined_integer_bounds(&expected_ty, &actual_ty, v)?;
 
                     // If a record field is initialized from a resource identifier, move it.
                     // This prevents creating implicit aliases to mutable resources.
@@ -1715,8 +2248,12 @@ impl Checker {
                     expected.remove(&k.node);
                 }
 
-                // Remaining fields must have defaults.
-                for (fname, (_ty_ref, has_default)) in expected {
+                // Remaining fields must have defaults. A *used* default
+                // must be typechecked before we lower it as an SSA initializer.
+                // Only source-local scalar constants are qualified in Q03:
+                // accepting a dynamic/nominal default would otherwise create
+                // unscoped runtime evaluation or an untyped C field.
+                for (fname, (ty_ref, has_default)) in expected {
                     if !has_default {
                         return Err(SemanticError {
                             message: format!(
@@ -1725,6 +2262,15 @@ impl Checker {
                             ),
                             span: expr.span,
                         });
+                    }
+                    if def.params.is_empty() {
+                        let value = def.fields.iter()
+                            .find(|field| field.name.node == fname)
+                            .and_then(|field| field.default.as_ref())
+                            .expect("checked source default must exist");
+                        let required = self.resolve_type_ref(&ty_ref)?;
+                        self.check_qualified_record_default(&required, value,
+                            &mut vec![name.node.clone()])?;
                     }
                 }
 
@@ -2076,9 +2622,17 @@ impl Checker {
                         });
                     }
 
-                    // Minimal type checking (range constraints may appear on expected params later).
+                    // User-call argument refinement is a source/ABI contract,
+                    // not a proof that the lowering stage may defer to Z3.
+                    // Require a statically proven interval before a call can
+                    // enter executable IR, regardless of defer_range_proofs.
                     for (i, (expected, arg)) in sig.params.iter().zip(all_args.iter()).enumerate() {
                         let actual = self.infer_expr(arg)?;
+                        self.check_known_refined_integer_bounds(&expected.ty, &actual, arg)
+                            .map_err(|mut e| {
+                                e.message = format!("arg {i}: {}", e.message);
+                                e
+                            })?;
                         self.check_assignable(&expected.ty, &actual, arg).map_err(|mut e| {
                             e.message = format!("arg {i}: {}", e.message);
                             e
@@ -2321,7 +2875,7 @@ impl Checker {
         id
     }
 
-    fn resolve_type_ref(&self, tr: &TypeRef) -> Result<Type, SemanticError> {
+    pub(crate) fn resolve_type_ref(&self, tr: &TypeRef) -> Result<Type, SemanticError> {
         let base = match tr.name.node.as_str() {
             "u8" => Type::U8,
             "u16" => Type::U16,
@@ -2434,7 +2988,44 @@ impl Checker {
                     span: range.span,
                 });
             }
-
+            // A refinement must be representable by its *resolved* base.
+            // In particular u8[0..300], bool[0..1] and widening an
+            // existing alias u8[10..20] into [10..21] cannot become valid
+            // source declarations just because the alias is unused.
+            // This bounded source domain is nonnegative; signed negatives
+            // require separate signed-literal IR/runtime qualification.
+            let domain = match &base {
+                Type::U8 => Some((0, u8::MAX as u64)),
+                Type::U16 => Some((0, u16::MAX as u64)),
+                Type::U32 => Some((0, u32::MAX as u64)),
+                Type::U64 | Type::U128 | Type::USize => Some((0, u64::MAX)),
+                Type::I8 => Some((0, i8::MAX as u64)),
+                Type::I16 => Some((0, i16::MAX as u64)),
+                Type::I32 => Some((0, i32::MAX as u64)),
+                Type::I64 | Type::I128 | Type::ISize =>
+                    Some((0, i64::MAX as u64)),
+                Type::ConstrainedRange { base: inner, lo: base_lo, hi: base_hi }
+                    if base_type(inner).is_integer() => Some((*base_lo, *base_hi)),
+                _ => None,
+            };
+            let Some((base_lo, base_hi)) = domain else {
+                return Err(SemanticError {
+                    message: format!(
+                        "refinement range requires a qualified integer base, got {}",
+                        base.display()
+                    ),
+                    span: range.span,
+                });
+            };
+            if lo < base_lo || hi > base_hi {
+                return Err(SemanticError {
+                    message: format!(
+                        "refinement range [{lo}..{hi}] out of base range [{base_lo}..{base_hi}] for {}",
+                        base.display()
+                    ),
+                    span: range.span,
+                });
+            }
             Ok(Type::ConstrainedRange {
                 base: Box::new(base),
                 lo,

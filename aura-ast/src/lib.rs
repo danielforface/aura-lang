@@ -55,6 +55,7 @@ pub enum Stmt {
     Render(RenderBlock),
     Prop(PropStmt),
     Assign(AssignStmt),
+    FieldAssign(FieldAssignStmt),
     If(IfStmt),
     Match(MatchStmt),
     While(WhileStmt),
@@ -278,6 +279,18 @@ pub struct Param {
 pub struct AssignStmt {
     pub span: Span,
     pub target: Ident,
+    pub expr: Expr,
+}
+
+/// Functional assignment to a concrete Record field path. The first
+/// component remains 'field' for flat source compatibility; 'nested' holds
+/// deeper child fields in lexical order (e.g. o.p.x: field=p, nested=[x]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldAssignStmt {
+    pub span: Span,
+    pub target: Ident,
+    pub field: Ident,
+    pub nested: Vec<Ident>,
     pub expr: Expr,
 }
 

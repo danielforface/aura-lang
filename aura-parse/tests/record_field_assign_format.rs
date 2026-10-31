@@ -1,0 +1,88 @@
+//! Format/parse round-trip must preserve FieldAssign as a distinct AST node.
+use aura_ast::{Stmt, ExprKind};
+
+#[test]
+fn mutable_record_field_assignment_roundtrip_preserves_target_and_rhs() {
+    let source = r#"
+type Point = record {
+    x: u32,
+    y: u32,
+}
+cell update() ->:
+    val mut p: Point = Point { x: 7, y: 13 }
+    p.x = 19
+    yield p.x
+"#;
+    let parsed = aura_parse::parse_source(source).expect("source parses");
+    let formatted = aura_parse::format_program(&parsed);
+    assert!(formatted.contains("p.x = 19"),
+        "formatter may not erase or misprint a Record field assignment: {formatted}");
+    let reparsed = aura_parse::parse_source(&formatted).expect("formatted source reparses");
+    let cell = reparsed.stmts.iter().find_map(|stmt|
+        if let Stmt::CellDef(cell) = stmt { Some(cell) } else { None }
+    ).expect("entry cell");
+    let fields: Vec<_> = cell.body.stmts.iter().filter_map(|stmt|
+        if let Stmt::FieldAssign(a) = stmt { Some(a) } else { None }
+    ).collect();
+    assert_eq!(fields.len(), 1, "must preserve distinct FieldAssign AST");
+    assert_eq!(fields[0].target.node, "p");
+    assert_eq!(fields[0].field.node, "x");
+    assert!(matches!(fields[0].expr.kind, ExprKind::IntLit(19)));
+}
+
+#[test]
+fn deeper_chained_field_assignment_retains_explicit_nested_ast_path() {
+    let source = r#"
+type Point = record { x: u32, y: u32 }
+cell main() ->:
+    val mut p: Point = Point { x: 7, y: 13 }
+    p.x.y = 19
+    yield p.x
+"#;
+    let ast=aura_parse::parse_source(source)
+        .expect("parser represents nested lvalues; Checker must reject scalar traversal");
+    let cell=ast.stmts.iter().find_map(|stmt| {
+        if let Stmt::CellDef(cell)=stmt {Some(cell)} else {None}
+    }).expect("cell");
+    let a=cell.body.stmts.iter().find_map(|stmt| {
+        if let Stmt::FieldAssign(a)=stmt {Some(a)} else {None}
+    }).expect("field assignment");
+    assert_eq!(a.field.node,"x");
+    assert_eq!(a.nested.iter().map(|n|n.node.as_str()).collect::<Vec<_>>(),
+        vec!["y"]);
+    let formatted=aura_parse::format_program(&ast);
+    assert!(formatted.contains("p.x.y = 19"));
+}
+
+#[test]
+fn nested_nominal_field_assignment_parses_and_survives_formatter_roundtrip() {
+    let source=r#"
+type Point = record { x: u32, y: u32 }
+type Outer = record { p: Point, tag: u32 }
+cell update() ->:
+    val mut o: Outer = Outer { p: Point { x: 7, y: 13 }, tag: 99 }
+    o.p.x = 19
+    yield o.p.x
+"#;
+    let ast=aura_parse::parse_source(source)
+        .expect("nested nominal assignment must be a real field-assign AST");
+    let formatted=aura_parse::format_program(&ast);
+    assert!(formatted.contains("o.p.x = 19"),
+        "formatter must preserve nested field path: {formatted}");
+    let reparsed=aura_parse::parse_source(&formatted)
+        .expect("nested field path must survive parse/format/parse");
+    let path = |p: &aura_ast::Program| p.stmts.iter().find_map(|stmt| {
+        if let Stmt::CellDef(cell)=stmt {
+            return cell.body.stmts.iter().find_map(|stmt| {
+                if let Stmt::FieldAssign(a)=stmt {
+                    return Some((a.target.node.clone(),a.field.node.clone(),
+                        a.nested.iter().map(|i| i.node.clone()).collect::<Vec<_>>()));
+                }
+                None
+            });
+        }
+        None
+    });
+    assert_eq!(path(&ast),path(&reparsed));
+    assert_eq!(path(&reparsed),Some(("o".into(),"p".into(),vec!["x".into()])));
+}

@@ -221,6 +221,19 @@ fn fmt_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             fmt_expr(out, &s.expr, Prec::Lowest);
             out.push('\n');
         }
+        Stmt::FieldAssign(s) => {
+            indent_line(out, indent);
+            out.push_str(&s.target.node);
+            out.push('.');
+            out.push_str(&s.field.node);
+            for component in &s.nested {
+                out.push('.');
+                out.push_str(&component.node);
+            }
+            out.push_str(" = ");
+            fmt_expr(out, &s.expr, Prec::Lowest);
+            out.push('\n');
+        }
         Stmt::If(s) => fmt_if(out, indent, s),
         Stmt::Match(s) => fmt_match(out, indent, s),
         Stmt::While(s) => fmt_while(out, indent, s),

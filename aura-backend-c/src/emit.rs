@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use aura_ir::{
     BinOp, BlockId, DebugSource, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp,
@@ -22,6 +22,65 @@ pub struct CArtifacts {
     pub module_c: String,
 }
 
+/// Produce C only after checking the source-declared ABI against independently
+/// re-lowered, trusted Aura source. Unlike the IR-only API, this detects a
+/// forged ModuleIR whose refined metadata and RangeCheck are both rewritten.
+/// The supplied AST must be the original trusted source, not parsed from a
+/// mutable IR payload. This is a *source-refinement ABI* check, not an
+/// authenticated signature or proof of arbitrary IR instruction provenance.
+pub fn emit_module_with_source_contract(
+    original_source: &aura_ast::Program,
+    module: &ModuleIR,
+    debug: Option<&DebugSource>,
+) -> Result<CArtifacts, CBackendError> {
+    let trusted = aura_core::lower_program(original_source).map_err(|e| CBackendError {
+        message: format!("trusted source requalification failed: {e}"),
+    })?;
+    if module.refined_return_bounds != trusted.refined_return_bounds {
+        return Err(CBackendError {
+            message: format!("refined source return contract mismatch: supplied={:?}; trusted={:?}",
+                module.refined_return_bounds, trusted.refined_return_bounds),
+        });
+    }
+    // No missing, added or modified per-parameter source interval may pass.
+    // All supplied ModuleIR metadata is untrusted until this comparison.
+    if module.refined_param_bounds != trusted.refined_param_bounds {
+        return Err(CBackendError {
+            message: format!(
+                "refined source contract mismatch: supplied={:?}; trusted={:?}",
+                module.refined_param_bounds, trusted.refined_param_bounds
+            ),
+        });
+    }
+    // Prevent a nominally matching source interval from being paired with
+    // an unrelated or rewritten exported signature.
+    if module.functions.len() != trusted.functions.len() ||
+        module.functions.keys().ne(trusted.functions.keys()) ||
+        module.record_layouts != trusted.record_layouts ||
+        module.externs != trusted.externs
+    {
+        return Err(CBackendError {
+            message: "trusted source contract mismatch: function, extern or Record ABI layout".into(),
+        });
+    }
+    for (name, supplied) in &module.functions {
+        let expected = trusted.functions.get(name).expect("checked function set");
+        if supplied.ret != expected.ret ||
+            supplied.params.len() != expected.params.len() ||
+            supplied.params.iter().zip(expected.params.iter())
+                .any(|(a,b)| a.name != b.name || a.ty != b.ty)
+        {
+            return Err(CBackendError {
+                message: format!("trusted source function ABI contract mismatch for '{name}'"),
+            });
+        }
+    }
+    emit_module(module, debug)
+}
+
+/// Emit an already-trusted IR module. This lower-level API has no original
+/// source anchor and CANNOT authenticate jointly rewritten refinement metadata
+/// plus guards. Public C/WASM builds use emit_module_with_source_contract.
 pub fn emit_module(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<CArtifacts, CBackendError> {
     let mut module = module.clone();
 
@@ -84,6 +143,15 @@ fn emit_runtime_h() -> String {
     out.push_str("    abort();\n");
     out.push_str("  }\n");
     out.push_str("}\n\n");
+    // A wider entry guard must not truncate 64-bit arguments into U32 before
+    // checking the declared interval (especially for an external C caller).
+    out.push_str("static inline void AURA_RANGE_CHECK_U64(uint64_t v, uint64_t lo, uint64_t hi, const char* what) {\n");
+    out.push_str("  if (v < lo || v > hi) {\n");
+    out.push_str("    fprintf(stderr, \"Aura range check failed for %s: %llu not in [%llu..%llu]\\n\", what, (unsigned long long)v, (unsigned long long)lo, (unsigned long long)hi);\n");
+    out.push_str("    fflush(stderr);\n");
+    out.push_str("    abort();\n");
+    out.push_str("  }\n");
+    out.push_str("}\n\n");
 
     out.push_str("// Builtins used by main.aura\n");
     out.push_str("static inline Tensor io_load_tensor(const char* path) {\n");
@@ -132,10 +200,274 @@ fn emit_runtime_h() -> String {
     out
 }
 
+// Encode user-facing names into collision-free, C-safe identifiers without
+// changing Record field ordering or accidentally using C reserved keywords.
+fn encoded_record_name(s: &str) -> String {
+    s.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+}
+fn record_type_symbol(s: &str) -> String {
+    format!("aura_record_{}", encoded_record_name(s))
+}
+fn record_field_symbol(s: &str) -> String {
+    format!("aura_f_{}", encoded_record_name(s))
+}
+fn record_field_ctype(ty: &Type) -> Option<CType> {
+    match ty {
+        Type::Bool => Some(CType::Bool),
+        Type::Char => Some(CType::Char),
+        Type::U8 => Some(CType::U8),
+        Type::U16 => Some(CType::U16),
+        Type::U32 => Some(CType::U32),
+        Type::U64 => Some(CType::U64),
+        Type::I8 => Some(CType::I8),
+        Type::I16 => Some(CType::I16),
+        Type::I32 => Some(CType::I32),
+        Type::I64 => Some(CType::I64),
+        Type::F32 => Some(CType::F32),
+        Type::F64 => Some(CType::F64),
+        _ => None,
+    }
+}
+// A Record field receives a scalar of its exact C type, or a narrower
+// integer converted from a statically proven U32 constant. Unknown runtime
+// values and computed expressions are never narrowed based on C's implicit
+// conversion rules. This is a proof local to IR SSA constant/copy provenance.
+fn qualified_record_scalar_value(
+    expected: CType,
+    actual: CType,
+    value: ValueId,
+    cname: &str,
+    known_u32_constants: &HashMap<ValueId, u64>,
+) -> Option<String> {
+    if expected == actual {
+        return Some(cname.to_string());
+    }
+    if actual != CType::U32 {
+        return None;
+    }
+    let max = match expected {
+        CType::U8 => u8::MAX as u64,
+        CType::U16 => u16::MAX as u64,
+        CType::U64 => u64::MAX,
+        CType::I8 => i8::MAX as u64,
+        CType::I16 => i16::MAX as u64,
+        CType::I32 => i32::MAX as u64,
+        CType::I64 => i64::MAX as u64,
+        _ => return None,
+    };
+    match known_u32_constants.get(&value) {
+        Some(n) if *n <= u32::MAX as u64 && *n <= max =>
+            Some(format!("({})({})", map_ctype_decl(expected), cname)),
+        _ => None,
+    }
+}
+// Each qualified nominal field retains its own type identity; a nested
+// Record is NEVER reduced to a scalar width or the generic Tensor ABI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RecordFieldCType {
+    Scalar(CType),
+    Nominal(String),
+}
+impl RecordFieldCType {
+    fn declaration(&self) -> String {
+        match self {
+            Self::Scalar(ct) => map_ctype_decl(*ct).to_string(),
+            Self::Nominal(name) => record_type_symbol(name),
+        }
+    }
+}
+fn qualified_record_fields(
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    record: &str,
+) -> Result<Vec<(String, RecordFieldCType)>, CBackendError> {
+    fn qualify(
+        layouts: &BTreeMap<String, Vec<(String, Type)>>,
+        record: &str,
+        stack: &mut Vec<String>,
+    ) -> Result<Vec<(String, RecordFieldCType)>, CBackendError> {
+        if stack.iter().any(|entry| entry == record) {
+            return Err(CBackendError {
+                message: format!("unqualified C Record by-value layout cycle: {} -> {record}",
+                    stack.join(" -> ")),
+            });
+        }
+        let fields = layouts.get(record).ok_or_else(|| CBackendError {
+            message: format!("unqualified C Record '{}' missing typed field layout", record),
+        })?;
+        if fields.is_empty() {
+            return Err(CBackendError {
+                message: format!("unqualified C Record '{}' empty layout not supported", record),
+            });
+        }
+        stack.push(record.to_string());
+        let mut result: Vec<(String, RecordFieldCType)> = Vec::with_capacity(fields.len());
+        for (name, ty) in fields {
+            if result.iter().any(|(existing, _)| existing == name) {
+                return Err(CBackendError { message:
+                    format!("unqualified C Record '{}' duplicate layout field '{}'", record, name) });
+            }
+            let field_type = if let Some(ct) = record_field_ctype(ty) {
+                RecordFieldCType::Scalar(ct)
+            } else if let Type::Opaque(nested) = ty {
+                if !layouts.contains_key(nested) {
+                    return Err(CBackendError { message: format!(
+                        "unqualified C Record '{}' field '{}' type {:?} unsupported",
+                        record, name, ty,
+                    ) });
+                }
+                qualify(layouts, nested, stack)?;
+                RecordFieldCType::Nominal(nested.clone())
+            } else if let Type::Record { name: nested, fields: actual_fields } = ty {
+                if layouts.get(nested) != Some(actual_fields) {
+                    return Err(CBackendError { message: format!(
+                        "unqualified C Record '{}' field '{}' nested layout mismatch '{}'",
+                        record, name, nested,
+                    ) });
+                }
+                qualify(layouts, nested, stack)?;
+                RecordFieldCType::Nominal(nested.clone())
+            } else {
+                return Err(CBackendError { message: format!(
+                    "unqualified C Record '{}' field '{}' type {:?} unsupported",
+                    record, name, ty,
+                ) });
+            };
+            result.push((name.clone(), field_type));
+        }
+        stack.pop();
+        Ok(result)
+    }
+    qualify(layouts, record, &mut Vec::new())
+}
+
+// Semantic record returns can recursively carry expanded Type::Record
+// fields while declaration layouts contain Type::Opaque nominal references.
+fn matching_record_layout_type(
+    declared: &Type, actual: &Type,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+) -> bool {
+    if declared == actual { return true; }
+    match (declared, actual) {
+        (Type::Opaque(expected), Type::Record { name, fields }) if expected == name => {
+            layouts.get(name).is_some_and(|layout|
+                layout.len() == fields.len() &&
+                layout.iter().zip(fields).all(|((a, at), (b, bt))|
+                    a == b && matching_record_layout_type(at, bt, layouts)))
+        }
+        _ => false,
+    }
+}
+fn emit_qualified_record_layout(
+    out: &mut String,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    name: &str,
+    emitted: &mut BTreeSet<String>,
+) -> Result<(), CBackendError> {
+    if emitted.contains(name) { return Ok(()); }
+    let fields = qualified_record_fields(layouts, name)?;
+    // A by-value nested C struct must be complete before the parent typedef.
+    for (_, ty) in &fields {
+        if let RecordFieldCType::Nominal(child) = ty {
+            emit_qualified_record_layout(out, layouts, child, emitted)?;
+        }
+    }
+    out.push_str("typedef struct {\n");
+    for (field, ty) in &fields {
+        out.push_str(&format!("  {} {};\n",
+            ty.declaration(), record_field_symbol(field)));
+    }
+    out.push_str(&format!("}} {};\n\n", record_type_symbol(name)));
+    emitted.insert(name.to_string());
+    Ok(())
+}
+
+fn qualified_record_abi_type(
+    ty: &Type,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+) -> Result<Option<String>, CBackendError> {
+    match ty {
+        Type::Record { name, fields } => {
+            let layout = layouts.get(name).ok_or_else(|| CBackendError {
+                message: format!("unqualified Record function ABI missing layout for '{name}'"),
+            })?;
+            qualified_record_fields(layouts, name)?;
+            if layout.len() != fields.len() ||
+               !layout.iter().zip(fields).all(|((a, at), (b, bt))|
+                   a == b && matching_record_layout_type(at, bt, layouts)) {
+                return Err(CBackendError {
+                    message: format!("unqualified Record function ABI layout mismatch for '{name}'"),
+                });
+            }
+            Ok(Some(name.clone()))
+        }
+        Type::Opaque(name) if layouts.contains_key(name) => {
+            qualified_record_fields(layouts, name)?;
+            Ok(Some(name.clone()))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn emit_function_signature(
+    out: &mut String,
+    f: &FunctionIR,
+    layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    name: &str,
+) -> Result<(), CBackendError> {
+    let returns_value = f.blocks.iter().any(|b| matches!(b.term, Terminator::Return(Some(_))));
+    if returns_value {
+        if let Some(record) = qualified_record_abi_type(&f.ret, layouts)? {
+            out.push_str(&record_type_symbol(&record));
+        } else {
+            out.push_str(map_ctype_decl(function_return_ctype(f)));
+        }
+    } else {
+        out.push_str("void");
+    }
+    out.push(' ');
+    out.push_str(&c_ident(name));
+    out.push('(');
+    if f.params.is_empty() {
+        out.push_str("void");
+    } else {
+        for (i, p) in f.params.iter().enumerate() {
+            if i > 0 { out.push_str(", "); }
+            if let Some(record) = qualified_record_abi_type(&p.ty, layouts)? {
+                out.push_str(&record_type_symbol(&record));
+            } else {
+                out.push_str(map_type(&p.ty));
+            }
+            out.push(' ');
+            out.push_str(&c_ident(&p.name));
+        }
+    }
+    out.push(')');
+    Ok(())
+}
+
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
+
+    // Emit only qualified nominal layouts, in dependency order. Unused
+    // unsupported declarations remain inert until they are actually used.
+    let mut emitted_records = BTreeSet::new();
+    for name in module.record_layouts.keys() {
+        if qualified_record_fields(&module.record_layouts, name).is_ok() {
+            emit_qualified_record_layout(&mut out, &module.record_layouts,
+                name, &mut emitted_records)?;
+        }
+    }
+
+    // Declare all functions before emitting bodies: calls may target a later
+    // source cell, including a function with a nominal struct return.
+    for (name, f) in &module.functions {
+        let symbol = if name == "main" { "aura_main" } else { name.as_str() };
+        emit_function_signature(&mut out, f, &module.record_layouts, symbol)?;
+        out.push_str(";\n");
+    }
+    out.push('\n');
 
     // Determine function return types by terminator shape (prototype).
     let mut ret_map: HashMap<String, CType> = HashMap::new();
@@ -148,7 +480,8 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map)?;
+        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions,
+            &module.refined_param_bounds, &module.refined_return_bounds)?;
         out.push('\n');
     }
 
@@ -156,7 +489,8 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map)?;
+        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions,
+            &module.refined_param_bounds, &module.refined_return_bounds)?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -228,26 +562,73 @@ fn function_return_ctype(f: &FunctionIR) -> CType {
     CType::Void
 }
 
-fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, ret_map: &HashMap<String, CType>) -> Result<(), CBackendError> {
-    let ret = function_return_ctype(f);
-    out.push_str(map_ctype_decl(ret));
-    out.push(' ');
+fn emit_function(
+    out: &mut String,
+    debug: Option<&DebugSource>,
+    f: &FunctionIR,
+    ret_map: &HashMap<String, CType>,
+    record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
+    functions: &BTreeMap<String, FunctionIR>,
+    source_refined_param_bounds: &BTreeMap<String, Vec<Option<(u64, u64)>>>,
+    source_refined_return_bounds: &BTreeMap<String, (u64, u64)>,
+) -> Result<(), CBackendError> {
+    emit_function_signature(out, f, record_layouts, &f.name)?;
+    out.push_str(" {\n");
 
-    out.push_str(&c_ident(&f.name));
-    out.push('(');
-    for (i, p) in f.params.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
+    // The *callee* is also a public C ABI trust boundary. Aura call sites
+    // have verified RangeCheck instructions, but an external C caller has
+    // none. Validate the Checker-resolved source contract upon every entry,
+    // before executing even the first basic block. Do not infer any contract
+    // from the integer ABI width alone.
+    if let Some(bounds) = source_refined_param_bounds.get(&f.name) {
+        if bounds.len() != f.params.len() {
+            return Err(CBackendError { message: format!(
+                "refined ABI entry '{}' metadata arity mismatch: {} vs {}",
+                f.name, bounds.len(), f.params.len()
+            ) });
         }
-        let cty = map_type(&p.ty);
-        out.push_str(cty);
-        out.push(' ');
-        out.push_str(&c_ident(&p.name));
+        for (idx, (param, interval)) in f.params.iter().zip(bounds.iter()).enumerate() {
+            let Some((lo, hi)) = interval else { continue };
+            let cty = map_type_to_ctype(&param.ty);
+            let (max, wide) = match cty {
+                CType::U8 => (u8::MAX as u64, false),
+                CType::U16 => (u16::MAX as u64, false),
+                CType::U32 => (u32::MAX as u64, false),
+                CType::I8 => (i8::MAX as u64, false),
+                CType::I16 => (i16::MAX as u64, false),
+                CType::I32 => (i32::MAX as u64, false),
+                CType::U64 | CType::USize => (u64::MAX, true),
+                CType::I64 | CType::ISize => (i64::MAX as u64, true),
+                _ => return Err(CBackendError { message: format!(
+                    "unqualified refined ABI entry '{}' parameter {} type {:?}",
+                    f.name, idx, cty
+                ) }),
+            };
+            if lo > hi || *hi > max {
+                return Err(CBackendError { message: format!(
+                    "refined ABI entry '{}' parameter {} range [{}..{}] exceeds {:?}",
+                    f.name, idx, lo, hi, cty
+                ) });
+            }
+            let arg = c_ident(&param.name);
+            let display = escape_c_string(&format!("{}.{}", f.name, param.name));
+            if wide {
+                out.push_str(&format!(
+                    "  AURA_RANGE_CHECK_U64((uint64_t)({arg}), {lo}ULL, {hi}ULL, \"{display}\");\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  AURA_RANGE_CHECK_U32((uint32_t)({arg}), {lo}u, {hi}u, \"{display}\");\n"
+                ));
+            }
+        }
     }
-    out.push_str(") {\n");
 
     // Value table: ValueId -> (ctype, generated C name)
     let mut values: HashMap<ValueId, (CType, String)> = HashMap::new();
+    // Nominal Record SSA lives in a separate typed namespace. Never pass
+    // a Record as a Tensor/Scalar to unqualified operations or ABI paths.
+    let mut records: HashMap<ValueId, (String, String)> = HashMap::new();
 
     // Preserve source-level names for AVM-compatible `{ident}` interpolation.
     let mut named_values: HashMap<String, (CType, String)> = HashMap::new();
@@ -257,9 +638,13 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
     let mut string_literals: HashMap<ValueId, String> = HashMap::new();
 
     for p in &f.params {
-        let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
-        named_values.insert(p.name.clone(), binding.clone());
-        values.insert(p.value, binding);
+        if let Some(record) = qualified_record_abi_type(&p.ty, record_layouts)? {
+            records.insert(p.value, (record, c_ident(&p.name)));
+        } else {
+            let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
+            named_values.insert(p.name.clone(), binding.clone());
+            values.insert(p.value, binding);
+        }
     }
 
     // Static SSA type prepass for supported value-producing instructions.
@@ -339,6 +724,120 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         if !progressed { break; }
     }
 
+    // Nominal Record SSA prepass. Unlike primitive CType inference, a Record
+    // must carry its exact declared name across copies, functional SetField
+    // updates, and join-block Phi nodes. Never infer it as Tensor from width
+    // or initializer shape. Fixed-point inference handles predecessor blocks
+    // appearing after a join in the serialized IR.
+    let mut known_record_types: HashMap<ValueId, String> = records.iter().map(|(id, (name, _))| (*id, name.clone())).collect();
+    for _ in 0..max_rounds {
+        let mut progressed = false;
+        for block in &f.blocks {
+            for inst in &block.insts {
+                let Some(dest) = inst.dest else { continue };
+                let inferred = match &inst.kind {
+                    InstKind::ConstructRecord { record_name, .. } => {
+                        // Missing or unqualified layouts cannot become a
+                        // nominal Record at Phi simply by supplying a name.
+                        qualified_record_fields(record_layouts, record_name)?;
+                        Some(record_name.clone())
+                    }
+                    InstKind::GetField { base, field_name } => {
+                        // A child Record projected from a parent is a new
+                        // nominal SSA producer too. The Phi type prepass runs
+                        // BEFORE emitting individual GetField instructions,
+                        // so it cannot rely on the runtime 'records' table.
+                        if let Some(parent) = known_record_types.get(base) {
+                            let fields = qualified_record_fields(record_layouts, parent)?;
+                            match fields.iter().find(|(name, _)| name == field_name) {
+                                Some((_, RecordFieldCType::Nominal(child))) => Some(child.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    InstKind::BindStrand { expr: RValue::Local(source), .. } =>
+                        known_record_types.get(source).cloned(),
+                    InstKind::SetField { base, .. } =>
+                        known_record_types.get(base).cloned(),
+                    // A Record returned by another function is a nominal SSA
+                    // producer too. Without this edge, a later if/else Phi
+                    // cannot resolve the type of values sourced from calls.
+                    InstKind::Call { callee, .. } => {
+                        if let Some(called) = functions.get(callee) {
+                            qualified_record_abi_type(&called.ret, record_layouts)?
+                        } else {
+                            None
+                        }
+                    }
+                    InstKind::Phi { incomings } if !incomings.is_empty() => {
+                        let incoming_names = incomings.iter()
+                            .map(|(_, incoming)| known_record_types.get(incoming).cloned())
+                            .collect::<Option<Vec<_>>>();
+                        incoming_names.and_then(|names| {
+                            names.first().cloned().filter(|name|
+                                names.iter().all(|candidate| candidate == name)
+                            )
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(record) = inferred {
+                    if let Some(scalar) = known_ssa_types.get(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified Record SSA v{} conflicts with scalar type {scalar:?}",
+                            dest.0,
+                        ) });
+                    }
+                    match known_record_types.get(&dest) {
+                        Some(previous) if previous != &record =>
+                            return Err(CBackendError { message: format!(
+                                "unqualified Record SSA v{} mixes '{}' and '{}'",
+                                dest.0, previous, record,
+                            ) }),
+                        Some(_) => {}
+                        None => { known_record_types.insert(dest, record); progressed = true; }
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+
+    // Qualified scalar Record narrowing from literal-derived locals needs
+    // provenance beyond CType: a typed U32 alone can represent unsafe values.
+    // Track ONLY SSA ConstU32 and pure Local copies, to a fixed point. No
+    // generic arithmetic, call, Phi, or mutable parameter is a proof of range.
+    let mut known_u32_constants: HashMap<ValueId, u64> = HashMap::new();
+    for _ in 0..max_rounds {
+        let mut progressed = false;
+        for block in &f.blocks {
+            for inst in &block.insts {
+                let Some(dest) = inst.dest else { continue };
+                let constant = match &inst.kind {
+                    InstKind::BindStrand { expr: RValue::ConstU32(n), .. }
+                        if *n <= u32::MAX as u64 => Some(*n),
+                    InstKind::BindStrand { expr: RValue::Local(source), .. } =>
+                        known_u32_constants.get(source).copied(),
+                    _ => None,
+                };
+                if let Some(n) = constant {
+                    if let Some(old) = known_u32_constants.insert(dest, n) {
+                        if old != n {
+                            return Err(CBackendError { message: format!(
+                                "conflicting inferred U32 constant at SSA v{}", dest.0,
+                            ) });
+                        }
+                    } else {
+                        progressed = true;
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+
     // A Phi is SSA-level typed storage whose writes occur on its incoming
     // predecessor edges. Declare it before all block labels so every goto
     // and edge assignment references an in-scope C variable.
@@ -347,18 +846,60 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
     // consistently; unresolved, cyclic or unmodeled producers fail closed.
     let mut phi_inj: HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>> = HashMap::new();
     let mut phi_decls: Vec<(ValueId, CType)> = Vec::new();
+    let mut record_phi_decls: Vec<(ValueId, String)> = Vec::new();
     for b in &f.blocks {
         for inst in &b.insts {
             if let InstKind::Phi { incomings } = &inst.kind {
                 let dest = inst.dest.ok_or_else(|| CBackendError {
                     message: "Phi instruction is missing its SSA destination".to_string(),
                 })?;
-                let mut unified: Option<CType> = None;
                 if incomings.is_empty() {
                     return Err(CBackendError {
                         message: format!("Phi v{} has no predecessor values", dest.0),
                     });
                 }
+                // All incoming values must be the SAME nominal Record. A
+                // scalar/Record mix or distinct Record names is a typed error,
+                // never a Tensor fallback or raw struct bitcast.
+                if incomings.iter().any(|(_, incoming)| known_record_types.contains_key(incoming)) {
+                    let mut nominal: Option<&str> = None;
+                    for (pred, incoming) in incomings {
+                        let incoming_name = known_record_types.get(incoming).ok_or_else(|| {
+                            CBackendError { message: format!(
+                                "unqualified Record Phi v{} missing nominal type of incoming v{}",
+                                dest.0, incoming.0,
+                            ) }
+                        })?;
+                        if let Some(previous) = nominal {
+                            if previous != incoming_name {
+                                return Err(CBackendError { message: format!(
+                                    "unqualified Record Phi v{} mixes nominal layouts '{}' and '{}'",
+                                    dest.0, previous, incoming_name,
+                                ) });
+                            }
+                        } else {
+                            nominal = Some(incoming_name);
+                        }
+                        if known_ssa_types.contains_key(incoming) {
+                            return Err(CBackendError { message: format!(
+                                "unqualified Record Phi v{} incoming v{} is also scalar",
+                                dest.0, incoming.0,
+                            ) });
+                        }
+                        phi_inj.entry((*pred, b.id)).or_default().push((dest, *incoming));
+                    }
+                    let record_name = nominal.expect("nonempty Record Phi");
+                    qualified_record_fields(record_layouts, record_name)?;
+                    if values.contains_key(&dest) || records.contains_key(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified Record Phi v{} duplicate SSA destination", dest.0,
+                        ) });
+                    }
+                    records.insert(dest, (record_name.to_string(), format!("v{}", dest.0)));
+                    record_phi_decls.push((dest, record_name.to_string()));
+                    continue;
+                }
+                let mut unified: Option<CType> = None;
                 for (pred, incoming) in incomings {
                     let incoming_type = known_ssa_types.get(incoming)
                         .copied()
@@ -397,6 +938,10 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         out.push_str(&format!("  {} v{};\n", map_ctype_decl(*ty), dest.0));
     }
 
+    for (dest, record) in &record_phi_decls {
+        out.push_str(&format!("  {} v{};\n", record_type_symbol(record), dest.0));
+    }
+
     // Emit an entry jump (we use gotos for CFG).
     out.push_str("  goto ");
     out.push_str(&bb_label(f.entry));
@@ -404,10 +949,16 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
     // Emit blocks
     for b in &f.blocks {
+        // Only a guard executed in this same basic block before the call
+        // authorizes an exact integer ABI narrowing. Never infer a proof
+        // from a different predecessor, an SSA type, or a source-level name.
+        let mut current_block_ranges: HashMap<ValueId, (u64, u64)> = HashMap::new();
         emit_line_directive(out, debug, b.span);
         out.push_str("\n");
         out.push_str(&bb_label(b.id));
-        out.push_str(":\n");
+        // C11 requires a label to precede a statement, not a declaration.
+        // Record and scalar SSA blocks may begin with variable declarations.
+        out.push_str(":\n  ;\n");
 
         for inst in &b.insts {
             emit_line_directive(out, debug, inst.span);
@@ -419,7 +970,12 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 }
 
                 InstKind::RangeCheckU32 { value, lo, hi } | InstKind::RangeCheck { value, lo, hi } => {
-                    if let Some((_ct, name)) = values.get(value) {
+                    if let Some((ct, name)) = values.get(value) {
+                        // The emitted guard runs before the call and is the
+                        // authority for narrowing a U32 argument to U8.
+                        if *ct == CType::U32 && lo <= hi {
+                            current_block_ranges.insert(*value, (*lo, *hi));
+                        }
                         out.push_str("  AURA_RANGE_CHECK_U32(");
                         out.push_str(name);
                         out.push_str(", ");
@@ -432,19 +988,152 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                     }
                 }
 
-                InstKind::ConstructRecord { .. }
-                | InstKind::GetField { .. }
-                | InstKind::SetField { .. } => {
-                    // There is no typed, ordered Record layout in ModuleIR yet.
-                    // Silently skipping these operations can return fabricated
-                    // values or a C artifact that cannot preserve Aura meaning.
-                    // Refuse until real typed struct/field codegen is qualified.
-                    return Err(CBackendError {
-                        message: format!(
-                            "unqualified C Record emission: unsupported instruction {:?} at source span {:?}; typed Record layout/field lowering required",
-                            &inst.kind, inst.span
-                        ),
-                    });
+                InstKind::ConstructRecord { record_name, fields } => {
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError { message:
+                            "unqualified C Record emission without SSA destination".into() });
+                    };
+                    let layout = qualified_record_fields(record_layouts, record_name)?;
+                    if fields.len() != layout.len() {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record '{}' field count mismatch: got {}, expected {}",
+                            record_name, fields.len(), layout.len()
+                        ) });
+                    }
+                    let mut initializers = Vec::new();
+                    for (field, expected) in &layout {
+                        let mut matching = fields.iter().filter(|(given, _)| given == field);
+                        let Some((_, value)) = matching.next() else {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' missing field '{}'", record_name, field
+                            ) });
+                        };
+                        if matching.next().is_some() {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' duplicate field '{}'", record_name, field
+                            ) });
+                        }
+                        let cname = match expected {
+                            RecordFieldCType::Scalar(ty) => match values.get(value) {
+                                Some((actual, cname)) => qualified_record_scalar_value(
+                                    *ty, *actual, *value, cname, &known_u32_constants,
+                                ).ok_or_else(|| CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' type mismatch {:?} != {:?} (no proven in-range constant)",
+                                    record_name, field, actual, ty,
+                                ) })?,
+                                None => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' unemitted SSA v{} or nominal Record supplied to scalar field",
+                                    record_name, field, value.0,
+                                ) }),
+                            },
+                            RecordFieldCType::Nominal(name) => match records.get(value) {
+                                Some((actual, cname)) if actual == name => cname.clone(),
+                                Some((actual, _)) => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' nominal mismatch '{}' != '{}'",
+                                    record_name, field, actual, name,
+                                ) }),
+                                None => return Err(CBackendError { message: format!(
+                                    "unqualified C Record '{}' field '{}' requires nominal '{}' at SSA v{}",
+                                    record_name, field, name, value.0,
+                                ) }),
+                            },
+                        };
+                        initializers.push(format!(".{} = {}", record_field_symbol(field), cname));
+                    }
+                    let cname = format!("v{}", dest.0);
+                    out.push_str(&format!(
+                        "  {} {} = {{ {} }};\n",
+                        record_type_symbol(record_name), cname, initializers.join(", ")
+                    ));
+                    records.insert(dest, (record_name.clone(), cname));
+                }
+                InstKind::GetField { base, field_name } => {
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError { message:
+                            "unqualified C Record GetField without SSA destination".into() });
+                    };
+                    let (record, cname) = records.get(base).ok_or_else(|| CBackendError {
+                        message: format!("unqualified C Record GetField from unavailable v{}", base.0),
+                    })?;
+                    let layout = qualified_record_fields(record_layouts, record)?;
+                    let (_, ty) = layout.iter().find(|(name, _)| name == field_name)
+                        .ok_or_else(|| CBackendError { message: format!(
+                            "unqualified C Record '{}' unknown field '{}'", record, field_name
+                        ) })?;
+                    let dest_name = format!("v{}", dest.0);
+                    out.push_str(&format!("  {} {} = {}.{};\n",
+                        ty.declaration(), dest_name, cname, record_field_symbol(field_name)));
+                    match ty {
+                        RecordFieldCType::Scalar(ct) => {
+                            values.insert(dest, (*ct, dest_name));
+                        }
+                        RecordFieldCType::Nominal(name) => {
+                            records.insert(dest, (name.clone(), dest_name));
+                        }
+                    }
+                }
+                InstKind::SetField { base, field_name, value } => {
+                    // This IR instruction is a functional update: the Oracle
+                    // creates a NEW Record value only when dest is Some.
+                    // Never overwrite the base SSA value (or aliases of it).
+                    let Some(dest) = inst.dest else {
+                        return Err(CBackendError {
+                            message: format!(
+                                "unqualified C Record SetField without result SSA at source span {:?}; refusing divergent in-place mutation",
+                                inst.span,
+                            ),
+                        });
+                    };
+                    if records.contains_key(&dest) || values.contains_key(&dest) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record SetField duplicate destination v{}", dest.0,
+                        ) });
+                    }
+                    let (record, original_name) = records.get(base).cloned().ok_or_else(|| {
+                        CBackendError { message: format!(
+                            "unqualified C Record SetField from unavailable base SSA v{}", base.0,
+                        ) }
+                    })?;
+                    let layout = qualified_record_fields(record_layouts, &record)?;
+                    let (_, expected) = layout.iter().find(|(field, _)| field == field_name)
+                        .ok_or_else(|| CBackendError { message: format!(
+                            "unqualified C Record '{}' unknown SetField '{}'", record, field_name,
+                        ) })?;
+                    let rhs = match expected {
+                        RecordFieldCType::Scalar(ty) => match values.get(value) {
+                            Some((actual, name)) => qualified_record_scalar_value(
+                                *ty, *actual, *value, name, &known_u32_constants,
+                            ).ok_or_else(|| CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' type mismatch {:?} != {:?} (no proven in-range constant)",
+                                record, field_name, actual, ty,
+                            ) })?,
+                            None => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' unavailable scalar SSA v{}",
+                                record, field_name, value.0,
+                            ) }),
+                        },
+                        RecordFieldCType::Nominal(expected_name) => match records.get(value) {
+                            Some((actual, name)) if actual == expected_name => name.clone(),
+                            Some((actual, _)) => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' nominal mismatch '{}' != '{}'",
+                                record, field_name, actual, expected_name,
+                            ) }),
+                            None => return Err(CBackendError { message: format!(
+                                "unqualified C Record '{}' SetField '{}' missing nominal '{}' at SSA v{}",
+                                record, field_name, expected_name, value.0,
+                            ) }),
+                        },
+                    };
+                    let updated_name = format!("v{}", dest.0);
+                    out.push_str(&format!(
+                        "  {} {} = {};\n",
+                        record_type_symbol(&record), updated_name, original_name,
+                    ));
+                    out.push_str(&format!(
+                        "  {}.{} = {};\n",
+                        updated_name, record_field_symbol(field_name), rhs,
+                    ));
+                    records.insert(dest, (record, updated_name));
                 }
 
                 InstKind::ConstructEnumVariant { .. }
@@ -464,6 +1153,17 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 InstKind::BindStrand { name, expr } => {
                     if let Some(dest) = inst.dest {
+                        // A Record local must preserve its nominal C struct
+                        // identity; do not cast/copy it through Tensor ABI.
+                        if let RValue::Local(source) = expr {
+                            if let Some((record, from)) = records.get(source).cloned() {
+                                let cname = format!("v{}", dest.0);
+                                out.push_str(&format!("  {} {} = {};\n",
+                                    record_type_symbol(&record), cname, from));
+                                records.insert(dest, (record, cname));
+                                continue;
+                            }
+                        }
                         // RValue::Local is an alias, so its C type must be the
                         // source value's type. The old prototype hard-coded
                         // Tensor here, which is incorrect for u32/bool/string.
@@ -565,18 +1265,140 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 }
 
                 InstKind::Call { callee, args } => {
+                    let mut call_values = values.clone();
+                    if let Some(target) = functions.get(callee) {
+                        if target.params.len() != args.len() {
+                            return Err(CBackendError { message: format!(
+                                "Record ABI call '{}' has wrong arity: expected {}, got {}",
+                                callee, target.params.len(), args.len(),
+                            ) });
+                        }
+                        let source_bounds = source_refined_param_bounds.get(callee);
+                        if let Some(bounds) = source_bounds {
+                            if bounds.len() != target.params.len() {
+                                return Err(CBackendError { message: format!(
+                                    "refined ABI metadata arity mismatch for '{callee}': {} vs {}",
+                                    bounds.len(), target.params.len()
+                                ) });
+                            }
+                        }
+                        for (i, (arg, expected)) in args.iter().zip(target.params.iter()).enumerate() {
+                            let declared_range = source_bounds
+                                .and_then(|b| b.get(i)).copied().flatten();
+                            // IR source contract and runtime guard are separate
+                            // authorities. For refined source parameters, the
+                            // executable same-block interval must lie entirely
+                            // within the original declared interval. A widened
+                            // or missing guard cannot certify the call even if
+                            // the constant fits the underlying primitive.
+                            if let Some((decl_lo, decl_hi)) = declared_range {
+                                let emitted_guard = current_block_ranges.get(arg).copied();
+                                if decl_lo > decl_hi ||
+                                    !emitted_guard.is_some_and(|(lo, hi)|
+                                        lo <= hi && lo >= decl_lo && hi <= decl_hi)
+                                {
+                                    return Err(CBackendError { message: format!(
+                                        "refined ABI call '{callee}' arg {i} range guard mismatch: source=[{decl_lo}..{decl_hi}], emitted={emitted_guard:?}"
+                                    ) });
+                                }
+                            }
+                            let expected_record = qualified_record_abi_type(&expected.ty, record_layouts)?;
+                            match expected_record {
+                                Some(name) => match records.get(arg) {
+                                    Some((actual, _)) if actual == &name => {}
+                                    _ => return Err(CBackendError { message: format!(
+                                        "Record ABI call '{}' arg {} expects nominal '{}', got {:?}",
+                                        callee, i, name, records.get(arg).map(|r| &r.0),
+                                    ) }),
+                                },
+                                None => {
+                                    if records.contains_key(arg) {
+                                        return Err(CBackendError { message: format!(
+                                            "Record ABI call '{}' arg {} passes Record to scalar parameter",
+                                            callee, i,
+                                        ) });
+                                    }
+                                    if let Some((actual, _)) = values.get(arg) {
+                                        let required = map_type_to_ctype(&expected.ty);
+                                        if *actual != required {
+                                            // A U32 constant fitting U8 is NOT itself
+                                            // proof of a stricter source refinement such
+                                            // as Window=u8[10..20]. Only an executable
+                                            // same-basic-block range guard can certify the
+                                            // narrowed call. This also rejects IR with a
+                                            // stripped proof, even if an SSA constant is
+                                            // numerically representable as U8.
+                                            let original = values.get(arg)
+                                                .expect("scalar operand checked").1.clone();
+                                            let range = current_block_ranges.get(arg);
+                                            let guarded_cast = if *actual == CType::U32 && required == CType::U8 &&
+                                                declared_range.is_some() &&
+                                                range.is_some_and(|(lo, hi)| *lo <= *hi && *hi <= u8::MAX as u64)
+                                            {
+                                                Some(format!("((uint8_t)({original}))"))
+                                            } else {
+                                                None
+                                            };
+                                            if let Some(cast) = guarded_cast {
+                                                call_values.insert(*arg, (required, cast));
+                                            } else {
+                                                return Err(CBackendError { message: format!(
+                                                    "Record ABI call '{}' arg {} scalar type mismatch {:?} != {:?}; same-block-guards={:?}",
+                                                    callee, i, actual, required, current_block_ranges,
+                                                ) });
+                                            }
+                                        }
+                                    } else {
+                                        return Err(CBackendError { message: format!(
+                                            "Record ABI call '{}' arg {} has unemitted scalar v{}",
+                                            callee, i, arg.0,
+                                        ) });
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(record) = qualified_record_abi_type(&target.ret, record_layouts)? {
+                            let arg_names = args.iter().map(|a| {
+                                records.get(a).map(|(_, n)| n.clone())
+                                    .or_else(|| call_values.get(a).map(|(_, n)| n.clone()))
+                                    .expect("all Record ABI call args checked")
+                            }).collect::<Vec<_>>();
+                            if let Some(dest) = inst.dest {
+                                if records.contains_key(&dest) || values.contains_key(&dest) {
+                                    return Err(CBackendError { message: format!(
+                                        "Record ABI call '{}' duplicates destination v{}", callee, dest.0,
+                                    ) });
+                                }
+                                let local = format!("v{}", dest.0);
+                                out.push_str(&format!("  {} {} = {}({});\n",
+                                    record_type_symbol(&record), local, c_ident(callee), arg_names.join(", ")));
+                                records.insert(dest, (record, local));
+                            } else {
+                                out.push_str(&format!("  {}({});\n", c_ident(callee), arg_names.join(", ")));
+                            }
+                            continue;
+                        }
+                    } else if args.iter().any(|arg| records.contains_key(arg)) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record argument in external/builtin call '{}'", callee
+                        ) });
+                    }
                     emit_call(
-                        out,
-                        inst.dest,
-                        callee,
-                        args,
-                        &mut values,
-                        ret_map,
-                        &string_literals,
-                        &named_values,
+                        out, inst.dest, callee, args, &mut call_values, &records, ret_map,
+                        &string_literals, &named_values,
                     );
+                    if let Some(dest) = inst.dest {
+                        if let Some(binding) = call_values.get(&dest).cloned() {
+                            values.insert(dest, binding);
+                        }
+                    }
                 }
                 InstKind::ComputeKernel { callee, args } => {
+                    if args.iter().any(|arg| records.contains_key(arg)) {
+                        return Err(CBackendError { message: format!(
+                            "unqualified C Record argument in kernel '{}'", callee
+                        ) });
+                    }
                     emit_kernel(out, inst.dest, callee, args, &mut values);
                 }
             }
@@ -585,24 +1407,96 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
         // Terminator
         match &b.term {
             Terminator::Return(Some(v)) => {
-                // An SSA value that was valid in the IR but never emitted as a
-                // C value is an unsupported instruction path, not a default
-                // Tensor zero. Returning a fabricated value is miscompilation.
-                let (_ct, name) = values.get(v).ok_or_else(|| CBackendError {
-                    message: format!(
-                        "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
-                        v.0, f.name, b.id.0, b.span,
-                    ),
-                })?;
+                let expected_record = qualified_record_abi_type(&f.ret, record_layouts)?;
+                let name = if let Some(expected) = expected_record {
+                    let (actual, c_name) = records.get(v).ok_or_else(|| CBackendError {
+                        message: format!("Record ABI return in '{}' is not emitted Record v{}", f.name, v.0),
+                    })?;
+                    if actual != &expected {
+                        return Err(CBackendError { message: format!(
+                            "Record ABI return in '{}' expects nominal '{}', got '{}'", f.name, expected, actual,
+                        ) });
+                    }
+                    c_name
+                } else {
+                    if records.contains_key(v) {
+                        return Err(CBackendError { message: format!(
+                            "Record ABI return in '{}' passes Record to non-Record result", f.name,
+                        ) });
+                    }
+                    let (_ct, c_name) = values.get(v).ok_or_else(|| CBackendError {
+                        message: format!(
+                            "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
+                            v.0, f.name, b.id.0, b.span,
+                        ),
+                    })?;
+                    c_name
+                };
+                let mut return_expression = name.to_string();
+                // A source-qualified refined return must be tested against
+                // the unconverted SSA value. Checking after the C return
+                // cast would permit U32(277) -> U8(21) truncation.
+                if let Some((lo, hi)) = source_refined_return_bounds.get(
+                    if f.name == "aura_main" { "main" } else { &f.name }
+                ) {
+                    let (actual, value_name) = values.get(v).ok_or_else(|| CBackendError {
+                        message: format!("refined return '{}' has no scalar SSA v{}", f.name, v.0),
+                    })?;
+                    let (max, wide_return) = match map_type_to_ctype(&f.ret) {
+                        CType::U8 => (u8::MAX as u64, false),
+                        CType::U16 => (u16::MAX as u64, false),
+                        CType::U32 => (u32::MAX as u64, false),
+                        CType::U64 | CType::USize => (u64::MAX, true),
+                        CType::I8 => (i8::MAX as u64, false),
+                        CType::I16 => (i16::MAX as u64, false),
+                        CType::I32 => (i32::MAX as u64, false),
+                        CType::I64 | CType::ISize => (i64::MAX as u64, true),
+                        other => return Err(CBackendError {
+                            message: format!("unqualified refined return '{}' ABI {:?}", f.name, other),
+                        }),
+                    };
+                    if lo > hi || *hi > max {
+                        return Err(CBackendError {
+                            message: format!("refined return '{}' range [{lo}..{hi}] exceeds ABI", f.name),
+                        });
+                    }
+                    let wide_value = matches!(actual, CType::U64 | CType::USize | CType::I64 | CType::ISize);
+                    if !matches!(actual, CType::U8 | CType::U16 | CType::U32 |
+                        CType::U64 | CType::USize | CType::I8 | CType::I16 |
+                        CType::I32 | CType::I64 | CType::ISize)
+                    {
+                        return Err(CBackendError {
+                            message: format!("unqualified refined return '{}' scalar {:?}", f.name, actual),
+                        });
+                    }
+                    // Emit a *deliberate* cast only after the preceding
+                    // runtime guard. Without the cast, Clang -Werror correctly
+                    // rejects a constant U32(277) -> U8 conversion at compile
+                    // time before we can exercise Aura's own range boundary.
+                    if *actual != map_type_to_ctype(&f.ret) {
+                        let target = map_ctype_decl(map_type_to_ctype(&f.ret));
+                        return_expression = format!("(({target})({value_name}))");
+                    }
+                    let label = escape_c_string(&format!("{}.return", f.name));
+                    if wide_value || wide_return {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U64((uint64_t)({value_name}), {lo}ULL, {hi}ULL, \"{label}\");\n"
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "  AURA_RANGE_CHECK_U32((uint32_t)({value_name}), {lo}u, {hi}u, \"{label}\");\n"
+                        ));
+                    }
+                }
                 out.push_str("  return ");
-                out.push_str(name);
+                out.push_str(&return_expression);
                 out.push_str(";\n");
             }
             Terminator::Return(None) => {
                 out.push_str("  return;\n");
             }
             Terminator::Br(t) => {
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *t);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *t);
                 out.push_str("  goto ");
                 out.push_str(&bb_label(*t));
                 out.push_str(";\n");
@@ -619,12 +1513,12 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
                 out.push_str("  if (");
                 out.push_str(&cn);
                 out.push_str(") {\n");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *then_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *then_bb);
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*then_bb));
                 out.push_str(";\n");
                 out.push_str("  } else {\n");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *else_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *else_bb);
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*else_bb));
                 out.push_str(";\n");
@@ -646,14 +1540,14 @@ fn emit_function(out: &mut String, debug: Option<&DebugSource>, f: &FunctionIR, 
 
                 for (k, bb2) in cases {
                     out.push_str(&format!("    case {}u: ", k));
-                    emit_phi_assigns(out, &phi_inj, &values, b.id, *bb2);
+                    emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *bb2);
                     out.push_str("goto ");
                     out.push_str(&bb_label(*bb2));
                     out.push_str(";\n");
                 }
 
                 out.push_str("    default: ");
-                emit_phi_assigns(out, &phi_inj, &values, b.id, *default_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *default_bb);
                 out.push_str("goto ");
                 out.push_str(&bb_label(*default_bb));
                 out.push_str(";\n");
@@ -786,6 +1680,7 @@ fn emit_call(
     callee: &str,
     args: &[ValueId],
     values: &mut HashMap<ValueId, (CType, String)>,
+    records: &HashMap<ValueId, (String, String)>,
     ret_map: &HashMap<String, CType>,
     string_literals: &HashMap<ValueId, String>,
     named_values: &HashMap<String, (CType, String)>,
@@ -819,7 +1714,12 @@ fn emit_call(
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&values.get(a).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("v{}", a.0)));
+            // Record formal parameters use their C identifier (e.g. p),
+            // not a fabricated SSA temporary. Preserve the nominal C ABI.
+            let emitted = values.get(a).map(|(_, n)| n.clone())
+                .or_else(|| records.get(a).map(|(_, n)| n.clone()))
+                .unwrap_or_else(|| format!("v{}", a.0));
+            out.push_str(&emitted);
         }
         out.push_str(");\n");
 
@@ -834,7 +1734,12 @@ fn emit_call(
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&values.get(a).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("v{}", a.0)));
+            // Record formal parameters use their C identifier (e.g. p),
+            // not a fabricated SSA temporary. Preserve the nominal C ABI.
+            let emitted = values.get(a).map(|(_, n)| n.clone())
+                .or_else(|| records.get(a).map(|(_, n)| n.clone()))
+                .unwrap_or_else(|| format!("v{}", a.0));
+            out.push_str(&emitted);
         }
         out.push_str(");\n");
     }
@@ -1014,15 +1919,18 @@ fn emit_phi_assigns(
     out: &mut String,
     phi_inj: &HashMap<(BlockId, BlockId), Vec<(ValueId, ValueId)>>,
     values: &HashMap<ValueId, (CType, String)>,
+    records: &HashMap<ValueId, (String, String)>,
     pred: BlockId,
     target: BlockId,
 ) {
     if let Some(assigns) = phi_inj.get(&(pred, target)) {
         for (dest, incoming) in assigns {
             let dn = format!("v{}", dest.0);
-            let sn = values
-                .get(incoming)
-                .map(|(_, n)| n.clone())
+            // Phi predecessor edges may carry named Record formals as
+            // well as local vN values. A fallback vN for a formal parameter
+            // would reference an undeclared variable, breaking native ABI.
+            let sn = values.get(incoming).map(|(_, n)| n.clone())
+                .or_else(|| records.get(incoming).map(|(_, n)| n.clone()))
                 .unwrap_or_else(|| format!("v{}", incoming.0));
             out.push_str("    ");
             out.push_str(&dn);
@@ -1074,6 +1982,9 @@ mod emit_tests {
         let mut module = ModuleIR {
             functions: BTreeMap::new(),
             externs: BTreeMap::new(),
+            record_layouts: BTreeMap::new(),
+            refined_param_bounds: BTreeMap::new(),
+            refined_return_bounds: BTreeMap::new(),
         };
 
         let dummy_span: Span = (0, 0).into();

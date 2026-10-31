@@ -1,0 +1,126 @@
+//! AURA-Q03-001 boundary tests: current local scalar Record native subset
+//! must not silently reinterpret mismatched, absent, nested or ABI layouts.
+use aura_backend_c::emit_module;
+use aura_ast::Span;
+use aura_ir::{
+    validate_module, BasicBlock, BlockId, ExecutionHint, FunctionIR, Inst,
+    InstKind, ModuleIR, Param, Terminator, Type, ValueId,
+};
+
+fn ir(field_layout: Vec<(String, Type)>, provided: Vec<(String, ValueId)>, ret: Type) -> ModuleIR {
+    let span: Span = (0, 0).into();
+    let mut m = ModuleIR::new();
+    m.record_layouts.insert("Point".into(), field_layout);
+    m.functions.insert("get_x".into(), FunctionIR {
+        name: "get_x".into(), span,
+        params: vec![
+            Param { name: "x".into(), ty: Type::U32, span, value: ValueId(0) },
+            Param { name: "y".into(), ty: Type::U32, span, value: ValueId(1) },
+        ],
+        ret, entry: BlockId(0),
+        blocks: vec![BasicBlock {
+            id: BlockId(0), span, hint: ExecutionHint::Sequential,
+            insts: vec![
+                Inst {
+                    span, dest: Some(ValueId(2)),
+                    kind: InstKind::ConstructRecord { record_name: "Point".into(), fields: provided },
+                },
+                Inst {
+                    span, dest: Some(ValueId(3)),
+                    kind: InstKind::GetField { base: ValueId(2), field_name: "x".into() },
+                },
+            ],
+            term: Terminator::Return(Some(ValueId(3))),
+        }],
+    });
+    m
+}
+fn error(m: ModuleIR, term: &str) {
+    validate_module(&m).expect("valid lightweight SSA fixture");
+    match emit_module(&m, None) {
+        Ok(o) => panic!("unsafe Record program claimed successful C emission: {}", o.module_c),
+        Err(e) => assert!(e.message.contains("Record") && e.message.contains(term),
+            "missing specific Record diagnostic {term:?}, actual: {e}"),
+    }
+}
+#[test]
+fn record_field_width_mismatch_cannot_be_implicitly_cast() {
+    error(ir(
+        vec![("x".into(), Type::U64), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::U32,
+    ), "type mismatch");
+}
+#[test]
+fn record_missing_field_cannot_be_zero_filled_by_c() {
+    error(ir(
+        vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0))],
+        Type::U32,
+    ), "field count mismatch");
+}
+#[test]
+fn record_nested_opaque_field_is_not_misrepresented_as_tensor() {
+    error(ir(
+        vec![("x".into(), Type::Opaque("Nested".into())), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::U32,
+    ), "unsupported");
+}
+#[test]
+fn record_function_return_must_match_emitted_record_value() {
+    error(ir(
+        vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::Record {
+            name: "Point".into(),
+            fields: vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        },
+    ), "return");
+}
+#[test]
+fn record_parameter_cannot_be_misused_as_a_scalar_constructor_field() {
+    let mut m = ir(
+        vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::U32,
+    );
+    m.functions.get_mut("get_x").unwrap().params[0].ty = Type::Opaque("Point".into());
+    error(m, "unemitted SSA");
+}
+
+fn functional_setfield_fixture(field_name: &str, replacement_type: Type) -> ModuleIR {
+    let span: Span = (0, 0).into();
+    let mut module = ir(
+        vec![("x".into(), Type::U32), ("y".into(), Type::U32)],
+        vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+        Type::U32,
+    );
+    let f = module.functions.get_mut("get_x").unwrap();
+    f.params.push(Param {
+        name: "replacement".into(), ty: replacement_type, span, value: ValueId(4),
+    });
+    // Introduce a NEW Record destination; the original remains at v2.
+    f.blocks[0].insts.insert(1, Inst {
+        span, dest: Some(ValueId(5)),
+        kind: InstKind::SetField {
+            base: ValueId(2),
+            field_name: field_name.into(),
+            value: ValueId(4),
+        },
+    });
+    f.blocks[0].insts[2].kind = InstKind::GetField {
+        base: ValueId(5), field_name: "x".into(),
+    };
+    module
+}
+
+#[test]
+fn functional_setfield_unknown_field_rejects_valid_ir_without_fabricated_c() {
+    error(functional_setfield_fixture("missing_field", Type::U32), "unknown SetField");
+}
+
+#[test]
+fn functional_setfield_u64_into_u32_rejects_implicit_truncation() {
+    error(functional_setfield_fixture("x", Type::U64), "type mismatch");
+}

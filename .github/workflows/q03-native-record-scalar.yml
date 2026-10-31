@@ -1,0 +1,115 @@
+name: Q03 Real typed local Record Native C
+on:
+  push:
+    branches: ['qual/Q03-001-native-record-scalar']
+  pull_request:
+    branches: ['qual/Q03-007-unemitted-c-return-truth']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-record-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real Aura Record C Clang O0/O2 compiled executable tests
+        run: cargo test --locked -p aura-backend-c --test record_native_execution -- --nocapture
+      - name: Real Record across if-else SSA Phi Clang O0 O2 (test first)
+        run: cargo test --locked -p aura-backend-c --test record_source_phi_native -- --nocapture
+      - name: Real source Record function ABI Oracle and native Clang O0 O2 (test first)
+        run: cargo test --locked -p aura-backend-c --test record_function_abi_native -- --nocapture
+      - name: Omitted scalar Record default values source Oracle and strict Clang O0 O2
+        run: cargo test --locked -p aura-backend-c --test record_defaults_native -- --nocapture
+      - name: Nested nominal Record value ABI and cycle guard (source Oracle Clang O0 O2)
+        run: cargo test --locked -p aura-backend-c --test record_nested_abi_native -- --nocapture
+      - name: Guard nominal Record Phi mismatches and scalar mixes
+        run: cargo test --locked -p aura-backend-c --test record_phi_guards -- --nocapture
+      - name: Record source field assignment parser and formatter round trip
+        run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
+      - name: True Aura source Record field assignment Native and checker negatives
+        run: cargo test --locked -p aura-backend-c --test record_source_field_assign_native -- --nocapture
+      - name: Functional Record SSA SetField Oracle and true native O0/O2
+        run: cargo test --locked -p aura-backend-c --test record_functional_update_native -- --nocapture
+      - name: Record SetField without destination must fail closed
+        run: cargo test --locked -p aura-backend-c --test record_setfield_oracle_boundary -- --nocapture
+      - name: Local Record negative field typing, missing layout and function ABI
+        run: cargo test --locked -p aura-backend-c --test record_layout_guards -- --nocapture
+      - name: Preserve previous Record, Enum and unemitted Return fail-closed regressions
+        run: |
+          cargo test --locked -p aura-backend-c --test record_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test record_source_backend_boundary -- --nocapture
+          cargo test --locked -p aura-backend-c --test enum_emission_truth -- --nocapture
+          cargo test --locked -p aura-backend-c --test unemitted_return_truth -- --nocapture
+      - name: Preserve C library and actual Clang executable scalar/Phi behavior
+        run: |
+          clang --version
+          cargo test --locked -p aura-backend-c --lib
+          cargo test --locked -p aura-backend-c --test numeric_width_native -- --nocapture
+          cargo test --locked -p aura-backend-c --test phi_join_native -- --nocapture
+      - name: Full IR and core regressions after typed Record IR changes
+        run: |
+          cargo test --locked -p aura-ir -- --nocapture
+          cargo test --locked -p aura-core -- --nocapture
+  public-cli-record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native CLI dependencies (do not block Record native tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Prepare pinned LSP Z3 0.8.1 CI-only compatibility preflight
+        run: |
+          cargo metadata --locked --format-version 1 > "${RUNNER_TEMP}/aura-z3-metadata.json"
+          python3 tools/qualification/prepare_z3_sys_ci.py "${RUNNER_TEMP}/aura-z3-metadata.json"
+      - name: Compile AST consumers including mandatory LSP Z3 dependency (CI-only preflight)
+        run: cargo check --locked --no-default-features -p aura-lsp -p aura-verify -p aura-interpret
+      - name: Public Aura CLI no-Z3 compilation
+        run: cargo check --locked -p aura --no-default-features
+      - name: Actual Aura check and C artifact build for Record
+        run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture
+      - name: AVM source Record functional field assignment without claiming proof
+        run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
+
+
+  record-avm-no-z3:
+    # Run source interpreter conformance independently of the heavyweight
+    # LSP vendored-Z3 preflight. This is execution only, never formal proof.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: AVM no-Z3 host audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Record source AVM user-defined function ABI and negative guards
+        run: cargo test --locked -p aura --no-default-features --test record_field_assign_avm -- --nocapture
+
+
+  record-public-cli-no-z3:
+    # Independent fast production-facing CLI check/build conformance.
+    # Do NOT remove the separate full LSP/pinned Z3 compatibility job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Public CLI host dependencies without LSP Z3 preflight
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - name: Real Aura no-Z3 check and C build flat and nested Record
+        run: cargo test --locked -p aura --no-default-features --test local_record_cli -- --nocapture

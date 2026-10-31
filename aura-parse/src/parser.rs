@@ -3,7 +3,7 @@
 use std::mem;
 
 use aura_ast::{
-    span_between, AssignStmt, BinOp, Block, CallArg, CellDef, ExternCell, Expr, ExprKind, FlowBlock,
+    span_between, AssignStmt, FieldAssignStmt, BinOp, Block, CallArg, CellDef, ExternCell, Expr, ExprKind, FlowBlock,
     FlowOp, Ident, IfStmt, ImportStmt, LayoutBlock, MatchArm, MatchStmt, Param, Pattern, Program,
     PropStmt, RangeConstraint, RenderBlock, Span, Stmt, StrandDef, TraitDef, TypeAlias, TypeArg,
     TypeRef, UnaryOp, WhileStmt, EnumDef, EnumFieldDef, EnumVariantDef, RecordDef, RecordFieldDef,
@@ -194,6 +194,13 @@ fn collect_binder_idents_in_block(block: &Block, rename: &mut HashMap<String, St
                     format!("{n}__m{}", *gensym_counter)
                 });
             }
+            Stmt::FieldAssign(a) => {
+                let n = a.target.node.clone();
+                rename.entry(n.clone()).or_insert_with(|| {
+                    *gensym_counter += 1;
+                    format!("{n}__m{}", *gensym_counter)
+                });
+            }
             Stmt::If(i) => {
                 collect_binder_idents_in_block(&i.then_block, rename, gensym_counter);
                 if let Some(e) = &i.else_block {
@@ -251,6 +258,13 @@ fn rewrite_stmt(stmt: &Stmt, subst: &HashMap<String, Expr>, rename: &HashMap<Str
             let expr = rewrite_expr(&a.expr, subst, rename);
             Stmt::Assign(AssignStmt { span: a.span, target, expr })
         }
+        Stmt::FieldAssign(a) => Stmt::FieldAssign(FieldAssignStmt {
+            span: a.span,
+            target: rewrite_ident(&a.target, subst, rename),
+            field: a.field.clone(),
+            nested: a.nested.clone(),
+            expr: rewrite_expr(&a.expr, subst, rename),
+        }),
         Stmt::Prop(p) => {
             let name = rewrite_ident(&p.name, subst, rename);
             let expr = rewrite_expr(&p.expr, subst, rename);
@@ -592,6 +606,8 @@ impl<'a> Parser<'a> {
                     Ok(Stmt::Prop(self.parse_prop_stmt()?))
                 } else if self.peek_kind_n(1).is_some_and(|k| matches!(k, TokenKind::Eq)) {
                     Ok(Stmt::Assign(self.parse_assign_stmt()?))
+                } else if self.is_field_assign_start() {
+                    Ok(Stmt::FieldAssign(self.parse_field_assign_stmt()?))
                 } else {
                     let expr = self.parse_expr()?;
                     self.expect_stmt_terminator()?;
@@ -1266,6 +1282,46 @@ impl<'a> Parser<'a> {
             break;
         }
         Ok(params)
+    }
+
+    // Recognize the complete Ident(.Ident)+ '=' lvalue without consuming
+    // tokens; method calls and standalone member expressions parse normally.
+    fn is_field_assign_start(&self) -> bool {
+        let mut at = 1usize;
+        for _ in 0..16 {
+            if !self.peek_kind_n(at).is_some_and(|k| matches!(k, TokenKind::Dot))
+                || !self.peek_kind_n(at + 1).is_some_and(|k| matches!(k, TokenKind::Ident(_)))
+            {
+                return false;
+            }
+            at += 2;
+            if self.peek_kind_n(at).is_some_and(|k| matches!(k, TokenKind::Eq)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn parse_field_assign_stmt(&mut self) -> Result<FieldAssignStmt, ParseError> {
+        let target = self.expect_ident()?;
+        self.expect(TokenKind::Dot)?;
+        let field = self.expect_ident()?;
+        let mut nested = Vec::new();
+        while self.at(TokenKind::Dot) {
+            if nested.len() >= 15 {
+                return Err(ParseError {
+                    message: "Record field assignment path exceeds 16 components".into(),
+                    span: self.peek_span().unwrap_or(target.span),
+                });
+            }
+            self.next();
+            nested.push(self.expect_ident()?);
+        }
+        self.expect(TokenKind::Eq)?;
+        let expr = self.parse_expr()?;
+        self.expect_stmt_terminator()?;
+        let span = join(target.span, expr.span);
+        Ok(FieldAssignStmt { span, target, field, nested, expr })
     }
 
     fn parse_assign_stmt(&mut self) -> Result<AssignStmt, ParseError> {
