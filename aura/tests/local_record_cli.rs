@@ -526,3 +526,29 @@ cell main() ->:
             "public Aura {:?} must build proven refined call: {output}",args);
     }
 }
+
+#[test]
+fn public_cli_accepts_high_u64_refined_inter_cell_abi_without_u32_truncation() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell echo_high(n: High) ->:
+    yield n
+cell bridge_high(n: High) ->:
+    yield echo_high(n)
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must preserve high u64 source guard without U32 truncation: {output}",
+            args);
+    }
+}
