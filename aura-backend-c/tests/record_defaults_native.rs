@@ -1251,3 +1251,59 @@ cell echo(n: Window) ->:
         assert!(ran.status.success(),"{opt}: {}",String::from_utf8_lossy(&ran.stderr));
     }
 }
+
+#[test]
+fn high_u64_refinement_internal_call_checks_full_width_before_native_abi() {
+    // Values differ only in bits above U32, so a U32 range check cannot
+    // establish the source interval and must never substitute for a U64 guard.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell echo_high(n: High) ->:
+    yield n
+cell bridge_high(n: High) ->:
+    yield echo_high(n)
+"#;
+    let ast=aura_parse::parse_source(src).expect("source supports high u64 bounds");
+    let ir=lower_program(&ast).expect("high u64 refinement should pass Checker/lowering");
+    validate_module(&ir).expect("high u64 IR validates");
+    assert_eq!(ir.refined_param_bounds.get("echo_high"),
+        Some(&vec![Some((4294967296,4294967316))]));
+    assert_eq!(ir.refined_return_bounds.get("echo_high"),
+        Some(&(4294967296,4294967316)));
+    let artifacts=emit_module_with_source_contract(&ast,&ir,None)
+        .expect("source-qualified C must preserve full 64-bit internal call guard");
+    let temp=Scratch::new();
+    fs::write(temp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(temp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(temp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n",
+        "#include <stdlib.h>\n",
+        "uint64_t bridge_high(uint64_t);\n",
+        "int main(int argc, char **argv) {\n",
+        "  if (argc != 2) return 91;\n",
+        "  uint64_t n = (uint64_t)strtoull(argv[1], NULL, 10);\n",
+        "  return bridge_high(n)==n ? 0 : 92;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=temp.0.join(format!("high_u64_call_{}",&opt[1..]));
+        let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&temp.0).arg(temp.0.join("module.c")).arg(temp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("Clang available");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+        for valid in ["4294967296","4294967316"] {
+            let run=Command::new(&exe).arg(valid).output().expect("run legal high u64");
+            assert!(run.status.success(),"{opt}: valid {valid}: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+        for invalid in ["4294967295","4294967317","8589934604"] {
+            let run=Command::new(&exe).arg(invalid).output().expect("run illegal high u64");
+            assert!(!run.status.success(),
+                "{opt}: invalid {invalid} escaped high-u64 source refinement");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt}: invalid {invalid} did not reach Aura range guard: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
