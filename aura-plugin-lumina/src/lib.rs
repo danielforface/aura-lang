@@ -215,6 +215,7 @@ fn paint_ibus_candidates(
         }
     }
 }
+#[cfg(feature = "raylib")]
 struct LuminaWindow {
     // Rust drops struct fields in declaration order. All GPU objects MUST be
     // released while the native Raylib/OpenGL context is still alive.
