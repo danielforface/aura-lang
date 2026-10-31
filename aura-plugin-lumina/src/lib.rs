@@ -1218,7 +1218,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let candidate_row_clicked=if clicked {
                 match (win.native_ibus.as_ref().and_then(|bus|bus.candidate_snapshot()),
                        win.last_candidate_bounds,
-                       win.focused_input.as_ref().map(|fi|fi.on_change)) {
+                       win.focused_input.as_ref().filter(|fi|fi.session.composing())
+                           .map(|fi|fi.on_change)) {
                     (Some(page),Some(panel),Some(cb)) if page.callback_id==cb=>
                         candidate_row_at(panel,&page,mouse).map(|row|(cb,row)),
                     _=>None,
