@@ -87,3 +87,40 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_native_ibus_candidates().is_none(),
         "candidate table must be hidden after real commit");
 }
+
+#[test]fn real_pinyin_candidate_arrow_selection_and_blur_never_auto_commit(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",""),("on_change","cb:941"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    assert!(key(&p,&app,&mut c,"n").is_empty());
+    assert!(key(&p,&app,&mut c,"i").is_empty());
+    let (_,before,_,_,_,events)=p.diagnostic_native_ibus_candidates()
+        .expect("actual Pinyin lookup before navigation");
+    assert!(events>0);
+    assert!(key(&p,&app,&mut c,"Down").is_empty(),
+        "native candidate cursor movement is not a text Commit");
+    let (_,selected,start,total,items,after_events)=p.diagnostic_native_ibus_candidates()
+        .expect("engine must still own lookup after navigation");
+    eprintln!("LUMINA_CANDIDATE_LIVE_NAV before={before} selected={selected} start={start} total={total} shown={items:?} engine_events={after_events}");
+    assert!(selected<total && selected>=start && selected<start+items.len());
+    assert_ne!(selected,before,
+        "real physical XTest Down must change Pinyin candidate cursor");
+    assert!(after_events>events,"engine candidate update must be real, not local counter");
+    // Blur while a different candidate is selected: no automatic commit.
+    xdo(&["mousemove","700","410"]);xdo(&["click","1"]);
+    assert!(frames(&p,&app,&mut c,6).is_empty());
+    assert!(p.diagnostic_native_ibus_candidates().is_none(),
+        "FocusOut must discard the engine lookup table");
+    assert!(p.diagnostic_composition(941).is_none(),
+        "FocusOut must also discard engine preedit");
+}
