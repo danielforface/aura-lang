@@ -60,6 +60,23 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(!items.is_empty() && items.len()<=8);
     assert!(items.iter().all(|s|!s.is_empty() && s.len()<=128));
     eprintln!("LUMINA_CANDIDATE_LIVE_PROOF count={total} selected={cursor} page_start={start} items={items:?} engine_updates={events}");
+    let (px,py,pw,ph)=p.diagnostic_native_ibus_candidate_bounds()
+        .expect("real candidate page must have a non-overlapping, window-bounded popup");
+    eprintln!("LUMINA_CANDIDATE_LIVE_GPU_GEOMETRY x={px} y={py} w={pw} h={ph}");
+    assert!(pw>=100.0 && ph>=44.0 && px>=0.0 && py>=0.0);
+    assert!(px+pw<=760.0 && py+ph<=520.0);
+    if cursor>=start && cursor-start<items.len(){
+        let tint=p.diagnostic_capture_pixel(
+            px+8.0,py+6.0+(cursor-start) as f32*32.0+14.0)
+            .expect("native selection highlight sample");
+        eprintln!("LUMINA_CANDIDATE_LIVE_GPU_HIGHLIGHT {tint:?}");
+        assert!(tint.b>tint.g && tint.g>tint.r,
+            "actual native candidate highlight must be blue");
+    }
+    let glyphs=p.diagnostic_native_ibus_candidate_glyph_pixels()
+        .expect("real CJK font atlas must be available for candidate popup");
+    eprintln!("LUMINA_CANDIDATE_LIVE_GPU_GLYPH_PIXELS {glyphs}");
+    assert!(glyphs>10,"real CJK candidates must draw visible glyph pixels");
 
     callbacks.extend(key(&p,&app,&mut c,"space"));
     callbacks.extend(frames(&p,&app,&mut c,5));
