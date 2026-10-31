@@ -212,3 +212,40 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert_eq!(back_start,old_start,"PageUp should return to first engine page");
     assert!(back_cursor<=old_items.len(),"live cursor returned into first page");
 }
+
+#[test]fn real_pinyin_stale_lookup_click_after_host_revision_does_not_commit(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value","A"),("value_revision","1"),("on_change","cb:944"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let window=windows.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",window]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    assert!(p.diagnostic_native_ibus_candidates().is_some());
+    let (px,py,_,_)=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    // Authority changes immediately before XTest mouse click is sampled.
+    // The prior candidate snapshot is stale and must NEVER commit into B.
+    app.children[0].set_prop("value","B");
+    app.children[0].set_prop("value_revision","2");
+    let xx=(px+22.0).round() as i32;
+    let yy=(py+6.0+32.0+14.0).round() as i32;
+    xdo(&["mousemove","--window",window,&xx.to_string(),&yy.to_string()]);
+    xdo(&["mousedown","1"]);
+    let mut events=frames(&p,&app,&mut c,5);
+    xdo(&["mouseup","1"]);
+    events.extend(frames(&p,&app,&mut c,5));
+    eprintln!("LUMINA_IBUS_P20_REBASE_STALE_CLICK events={events:?} lookup={:?} clicks={:?} composition={:?}",
+        p.diagnostic_native_ibus_candidates(),p.diagnostic_native_ibus_candidate_clicks(),
+        p.diagnostic_composition(944));
+    assert!(events.iter().all(|e|e.callback_id!=944));
+    assert_eq!(p.diagnostic_native_ibus_candidate_clicks(),Some(0));
+    assert!(p.diagnostic_native_ibus_candidates().is_none());
+    assert!(p.diagnostic_composition(944).is_none());
+}
