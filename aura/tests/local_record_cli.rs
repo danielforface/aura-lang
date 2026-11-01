@@ -552,3 +552,37 @@ cell main() ->:
             args);
     }
 }
+
+#[test]
+fn public_cli_builds_high_u64_refined_phi_from_user_call_results() {
+    // The public source-bound C build must handle a join Phi whose two
+    // incoming U64 SSA values come from actual user-cell Calls, not from
+    // direct arguments or an IR-only fixture.
+    let source=r#"
+type High = u64[4294967296..4294967316]
+cell identity_high(n: High) ->:
+    yield n
+cell choose_calls(flag: bool, first: High, second: High) ->:
+    val mut chosen: High = first
+    if flag:
+        chosen = identity_high(second)
+    else:
+        chosen = identity_high(first)
+    yield chosen
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must accept source-qualified high-u64 Call Phi: {output}",
+            args);
+    }
+}
