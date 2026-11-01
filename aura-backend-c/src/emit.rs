@@ -702,6 +702,28 @@ fn emit_function(
                         .and_then(|ts| {
                             ts.first().copied().filter(|first| ts.iter().all(|ty| ty == first))
                         }),
+                    // A user-cell Call is a typed SSA producer. Its result
+                    // may be an incoming value of a join-block Phi even when
+                    // the Call appears in a successor block in serialized IR.
+                    // Use the exact declared source-lowered return ABI; never
+                    // infer scalar U32 by default, and keep nominal Records
+                    // exclusively on the independent Record-type path.
+                    InstKind::Call { callee, .. } => {
+                        if let Some(called) = functions.get(callee) {
+                            if qualified_record_abi_type(&called.ret, record_layouts)?.is_some() {
+                                None
+                            } else {
+                                let ty = map_type_to_ctype(&called.ret);
+                                if matches!(ty, CType::Void | CType::Tensor) {
+                                    None
+                                } else {
+                                    Some(ty)
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
                 if let Some(ty) = inferred {
