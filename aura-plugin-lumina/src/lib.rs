@@ -179,17 +179,18 @@ fn prepare_ibus_candidate_font(
 }
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn ibus_candidate_bounds(
-    target:layout::Bounds,viewport:layout::Bounds,rows:usize,
+    candidate_caret_anchor:Rectangle,viewport:layout::Bounds,rows:usize,
 )->Option<Rectangle>{
     if rows==0||rows>8||viewport.width<100.0||viewport.height<65.0{return None;}
     let width=viewport.width.min(360.0);
     let height=12.0+rows as f32*32.0;
-    let below=target.y+target.height+4.0;
+    let below=candidate_caret_anchor.y+candidate_caret_anchor.height+4.0;
     let y=if below+height<=viewport.height {below}
-        else if target.y>=height+4.0 {target.y-height-4.0}
-        else{return None};
-    Some(Rectangle::new(target.x.max(0.0).min(viewport.width-width),
-        y,width,height))
+        else if candidate_caret_anchor.y>=height+4.0 {
+            candidate_caret_anchor.y-height-4.0
+        }else{return None};
+    Some(Rectangle::new(candidate_caret_anchor.x.max(0.0)
+        .min(viewport.width-width),y,width,height))
 }
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn paint_ibus_candidates(
@@ -232,6 +233,41 @@ fn candidate_row_at(panel:Rectangle,page:&ibus_native::IbusCandidatePage,
     if absolute>=page.total{return None;}
     Some(absolute)
 }
+#[cfg(all(feature="raylib",target_os="linux"))]
+#[derive(Clone,Copy)]
+struct NativeCaretPosition {
+    local:Rectangle,
+    screen:(u32,u32,u32,u32),
+}
+/// Derive the real on-screen clipped and scrolled caret from the same
+/// native text viewport measurement used for GPU text and selection.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn native_ibus_caret_rect(
+    target:layout::Bounds,clip:layout::Bounds,
+    visual:&text_viewport::Visual,viewport:layout::Bounds,
+    window_position:Vector2,scale_x:f32,scale_y:f32,
+)->Option<NativeCaretPosition>{
+    if !visual.caret_valid || !window_position.x.is_finite() ||
+        !window_position.y.is_finite() || !scale_x.is_finite() ||
+        !scale_y.is_finite() || scale_x<=0.0 || scale_y<=0.0 ||
+        scale_x>8.0 || scale_y>8.0 {return None;}
+    let content=text_viewport::content_bounds(target);
+    let visible=content.intersect(clip).intersect(viewport);
+    if visible.is_empty() || visible.width<2.0 || visible.height<12.0 {return None;}
+    let caret_x=visual.caret_screen(content).clamp(
+        visible.x+1.0,visible.x+visible.width-1.0);
+    let caret_y=(visible.y+visible.height-11.0).max(visible.y);
+    let local=Rectangle::new(caret_x,caret_y,1.0,10.0);
+    let sx=(window_position.x+local.x*scale_x).round();
+    let sy=(window_position.y+local.y*scale_y).round();
+    let sw=scale_x.ceil().max(1.0);
+    let sh=(local.height*scale_y).ceil().max(1.0);
+    if sx<0.0||sy<0.0||sx+sw>32768.0||sy+sh>32768.0{
+        return None;
+    }
+    Some(NativeCaretPosition{local,
+        screen:(sx as u32,sy as u32,sw as u32,sh as u32)})
+}
 #[cfg(feature = "raylib")]
 struct LuminaWindow {
     // Rust drops struct fields in declaration order. All GPU objects MUST be
@@ -245,6 +281,8 @@ struct LuminaWindow {
     candidate_font:Option<IbusCandidateFont>,
     #[cfg(target_os="linux")]
     last_candidate_bounds:Option<Rectangle>,
+    #[cfg(target_os="linux")]
+    last_native_caret:Option<Rectangle>,
     #[cfg(target_os="linux")]
     native_ibus: Option<ibus_native::NativeIbus>,
     sdf: RoundedRectShader,
@@ -923,6 +961,20 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|bus.candidate_click_acks)
     }
+    /// Actual acknowledged libibus absolute screen rectangle; diagnostic only.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_cursor_location(&self)
+        ->Option<((u32,u32,u32,u32),usize)>{
+        let w=self.window.borrow();
+        let bus=w.as_ref()?.native_ibus.as_ref()?;
+        Some((bus.cursor_location?,bus.cursor_location_acks))
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_caret_logical(&self)->Option<(f32,f32,f32,f32)>{
+        let w=self.window.borrow();
+        let c=w.as_ref()?.last_native_caret?;
+        Some((c.x,c.y,c.width,c.height))
+    }
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_candidate_glyph_pixels(&self)->Option<usize>{
         let borrowed=self.window.borrow();
@@ -1126,6 +1178,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     candidate_font:None,
                     #[cfg(target_os="linux")]
                     last_candidate_bounds:None,
+                    #[cfg(target_os="linux")]
+                    last_native_caret:None,
                     #[cfg(target_os="linux")]
                     native_ibus: ibus_native::NativeIbus::connect(),
                 });
@@ -1512,21 +1566,33 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 .and_then(|bus|bus.candidate_snapshot())
                 .filter(|page|win.focused_input.as_ref()
                     .is_some_and(|fi|fi.on_change==page.callback_id));
-            #[cfg(target_os="linux")]
-            {
-                let candidate_bounds=candidate_page.as_ref().and_then(|page|
-                    find_input_by_callback(tree,&planned_layout,page.callback_id)
-                    .and_then(|(_,plan)|ibus_candidate_bounds(plan.bounds,
-                        layout::Bounds::new(0.0,0.0,viewport.width,viewport.height),
-                        page.candidates.len())));
-                win.last_candidate_bounds=candidate_bounds;
-                prepare_ibus_candidate_font(&mut win.rl,&win.thread,
-                    &mut win.candidate_font,candidate_page.as_ref());
-            }
             let text_views=measure_input_visuals(
                 &win.rl,tree,&planned_layout,&focus_order,
                 &mut win.focused_input,&mut win.input_sessions,&win.fonts,&win.shaped_textures);
             win.last_text_views=text_views.clone();
+            #[cfg(target_os="linux")]
+            {
+                let vp=layout::Bounds::new(0.0,0.0,viewport.width,viewport.height);
+                let cursor_position=win.focused_input.as_ref()
+                    .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change)
+                        .and_then(|(_,plan)|text_views.get(&fi.on_change)
+                            .and_then(|visual|native_ibus_caret_rect(
+                                plan.bounds,plan.clip,visual,vp,
+                                win.rl.get_window_position(),frame.scale_x,frame.scale_y))
+                            .map(|position|(fi.on_change,position))));
+                win.last_native_caret=cursor_position.map(|(_,position)|position.local);
+                if let (Some((callback_id,position)),Some(bus))=
+                    (cursor_position,win.native_ibus.as_mut()){
+                    let _=bus.set_cursor_location(callback_id,position.screen);
+                }
+                win.last_candidate_bounds=candidate_page.as_ref()
+                    .and_then(|page|cursor_position
+                        .filter(|(cb,_)|*cb==page.callback_id)
+                        .and_then(|(_,position)|ibus_candidate_bounds(
+                            position.local,vp,page.candidates.len())));
+                prepare_ibus_candidate_font(&mut win.rl,&win.thread,
+                    &mut win.candidate_font,candidate_page.as_ref());
+            }
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
