@@ -88,6 +88,8 @@ pub(crate) struct NativeIbus{
     pub(crate) shifted_acks:usize,
     pub(crate) candidate_events:usize,
     pub(crate) candidate_click_acks:usize,
+    pub(crate) cursor_location_acks:usize,
+    pub(crate) cursor_location:Option<(u32,u32,u32,u32)>,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
 }
 fn decode_hex(input:&str)->Option<String>{
@@ -151,7 +153,8 @@ impl NativeIbus{
         Some(Self{child,input,output,focus:None,serial:0,
             composing:false,disconnected:false,engine_events:0,
             key_acks:0,release_acks:0,shifted_acks:0,
-            candidate_events:0,candidate_click_acks:0,candidate_page:None})
+            candidate_events:0,candidate_click_acks:0,candidate_page:None,
+            cursor_location_acks:0,cursor_location:None})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -194,6 +197,7 @@ impl NativeIbus{
         }
         self.composing=false;
         self.candidate_page=None;
+        self.cursor_location=None;
         self.focus=None;
         if let Some(id)=target{
             if !self.send("F1"){return false;}
@@ -204,6 +208,27 @@ impl NativeIbus{
     }
     pub(crate) fn is_disconnected(&mut self)->bool{
         self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
+    }
+    /// Native IBus expects SCREEN coords, never logical window-local coords.
+    /// Reject invalid/out-of-screen rectangles before the strictly decoded
+    /// helper command; cache an acknowledged location only within this focus.
+    pub(crate) fn set_cursor_location(
+        &mut self, callback_id:u64,rect:(u32,u32,u32,u32)
+    )->bool {
+        if self.disconnected||self.focus!=Some(callback_id){return false;}
+        let (x,y,w,h)=rect;
+        if x>32767||y>32767||w==0||h==0||w>128||h>128||
+            x.checked_add(w).is_none_or(|right|right>32768)||
+            y.checked_add(h).is_none_or(|bottom|bottom>32768) {
+            return false;
+        }
+        if self.cursor_location==Some(rect){return true;}
+        if !self.send(&format!("G\t{x}\t{y}\t{w}\t{h}")) || !self.await_ack(){
+            return false;
+        }
+        self.cursor_location=Some(rect);
+        self.cursor_location_acks=self.cursor_location_acks.saturating_add(1);
+        true
     }
     pub(crate) fn has_composition(&self)->bool{self.composing}
     pub(crate) fn candidate_snapshot(&self)->Option<IbusCandidatePage>{self.candidate_page.clone()}
@@ -372,6 +397,20 @@ mod tests{
         assert!(NativeKeyEvent::from_char('\n',0).is_none());
         assert!(!NativeKeyEvent{keysym:65,modifiers:0x80,released:false}.valid());
         assert!(NativeKeyEvent{keysym:0xff52,modifiers:0,released:true}.valid());
+    }
+    #[test]fn cursor_location_geometry_fail_closed_and_is_focus_owned(){
+        // Direct static parser tests belong to the C helper. Rust bounds
+        // are deliberately much smaller than the IBus signed gint range.
+        let acceptable=|x:u32,y:u32,w:u32,h:u32|{
+            x<=32767&&y<=32767&&w>0&&h>0&&w<=128&&h<=128&&
+            x.checked_add(w).is_some_and(|v|v<=32768)&&
+            y.checked_add(h).is_some_and(|v|v<=32768)
+        };
+        assert!(acceptable(220,84,1,18));
+        assert!(!acceptable(220,84,0,18));
+        assert!(!acceptable(220,84,1,129));
+        assert!(!acceptable(32768,84,1,18));
+        assert!(!acceptable(32767,84,2,18));
     }
     #[test]fn candidate_frame_bounds_unicode_and_focus_ownership(){
         let page=parse_lookup_frame("L\t1\t2\t0\t4\te4bda0\te5a5bd",936).unwrap().unwrap();
