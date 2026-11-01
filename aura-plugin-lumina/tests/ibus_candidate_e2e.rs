@@ -249,3 +249,74 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_native_ibus_candidates().is_none());
     assert!(p.diagnostic_composition(944).is_none());
 }
+
+#[test]fn real_pinyin_caret_location_scroll_and_popup_anchor(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"libpinyin");
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    let long="W".repeat(100);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",&long),("value_revision","1"),("on_change","cb:945"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let win=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=win.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    assert!(p.diagnostic_native_ibus_candidates().is_some());
+    let (screen,acks)=p.diagnostic_native_ibus_cursor_location()
+        .expect("actual IBus set_cursor_location ACK");
+    assert!(acks>=1 && screen.2>=1 && screen.3>=1);
+    let (cx,cy,cw,ch)=p.diagnostic_native_ibus_caret_logical().unwrap();
+    let visual=p.diagnostic_text_visual(945,32.0,396.0).unwrap();
+    let (px,py,pw,ph)=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    eprintln!("LUMINA_IBUS_P21_CARET_SCROLL location={screen:?} ack={acks} logical=({cx},{cy},{cw},{ch}) scroll={} measured_caret={} measured_screen={} popup=({px},{py},{pw},{ph})",
+        visual.scroll_x,visual.measured_caret,visual.caret_screen_x);
+    assert!(visual.scroll_x>100.0,"long native TextInput must horizontally scroll");
+    assert!((cx-visual.caret_screen_x).abs()<3.0,
+        "popup must use measured scrolled caret not raw grapheme index");
+    assert!((px-cx.clamp(0.0,760.0-360.0)).abs()<=2.0);
+    assert!((py-(cy+ch+4.0)).abs()<=2.0);
+    assert!(p.diagnostic_native_ibus_candidate_glyph_pixels().unwrap()>10);
+    // Move the same focused field while composing; IBus screen rectangle
+    // and native popup must follow, without authority edit or ghost commit.
+    app.children[0].set_prop("y","145");
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let (moved,moved_acks)=p.diagnostic_native_ibus_cursor_location().unwrap();
+    let (_,new_y,_,_)=p.diagnostic_native_ibus_caret_logical().unwrap();
+    let (_,popup_y,_,_)=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    eprintln!("LUMINA_IBUS_P21_CARET_MOVE previous={screen:?} moved={moved:?} ACKS={acks}->{moved_acks} local_y={cy}->{new_y} popup_y={popup_y}");
+    assert!(moved_acks>acks);
+    assert!(moved.1>screen.1+100,"real IBus screen Y must follow window-local geometry");
+    assert!(new_y>cy+100.0 && popup_y>py+100.0);
+    assert!(p.diagnostic_native_ibus_candidates().is_some());
+}
+#[test]fn real_pinyin_popup_flips_above_visible_caret_near_bottom_edge(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","405"),("width","420"),("height","70"),
+        ("value",""),("on_change","cb:946"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    xdo(&["windowfocus","--sync",window.lines().next().unwrap()]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    let (cx,cy,_,_)=p.diagnostic_native_ibus_caret_logical().unwrap();
+    let (x,y,w,h)=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    let (screen,ack)=p.diagnostic_native_ibus_cursor_location().unwrap();
+    eprintln!("LUMINA_IBUS_P21_BOTTOM_EDGE caret=({cx},{cy}) popup=({x},{y},{w},{h}) native_screen={screen:?} ack={ack}");
+    assert!(ack>=1);
+    assert!(y+h<cy,"popup must flip above caret with no offscreen rendering");
+    assert!(y>=0.0&&x>=0.0&&x+w<=760.0);
+    assert!(p.diagnostic_native_ibus_candidate_glyph_pixels().unwrap()>10);
+    assert!(key(&p,&app,&mut c,"space").iter()
+        .all(|e|e.callback_id==946),"real engine remains functional at bottom edge");
+}
