@@ -1307,3 +1307,77 @@ cell bridge_high(n: High) ->:
         }
     }
 }
+
+#[test]
+fn high_u64_refinement_through_if_else_phi_preserves_native_return_and_rejects_invalid_inputs() {
+    // A legal high-u64 interval must survive both branches of an SSA Phi:
+    // the generated native C must *not* truncate high 32 bits, regardless
+    // of whether true or false supplies the returned refined value.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell select_high(flag: bool, first: High, second: High) ->:
+    val mut chosen: High = first
+    if flag:
+        chosen = second
+    else:
+        chosen = first
+    yield chosen
+"#;
+    let ast=aura_parse::parse_source(src).expect("valid high-u64 if/else source");
+    let ir=lower_program(&ast).expect("high-u64 conditional return lowers");
+    validate_module(&ir).expect("high-u64 Phi validates");
+    assert_eq!(ir.refined_return_bounds.get("select_high"),
+        Some(&(4294967296,4294967316)),
+        "source-inferred return interval must survive if/else Phi");
+    assert!(ir.functions["select_high"].blocks.iter().flat_map(|b| &b.insts)
+        .any(|inst| matches!(inst.kind,aura_ir::InstKind::Phi{..})),
+        "test must genuinely execute a join-block SSA Phi");
+    let artifacts=emit_module_with_source_contract(&ast,&ir,None)
+        .expect("trusted source high-u64 Phi must generate valid native C");
+    let scratch=Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n#include <stdlib.h>\n",
+        "uint64_t select_high(bool,uint64_t,uint64_t);\n",
+        "int main(int argc, char **argv) {\n",
+        "  if (argc != 4) return 91;\n",
+        "  bool flag=(bool)atoi(argv[1]);\n",
+        "  uint64_t first=(uint64_t)strtoull(argv[2],NULL,10);\n",
+        "  uint64_t second=(uint64_t)strtoull(argv[3],NULL,10);\n",
+        "  uint64_t selected=select_high(flag,first,second);\n",
+        "  return selected==(flag ? second : first) ? 0 : 92;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=scratch.0.join(format!("high_u64_phi_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("strict Clang available");
+        assert!(built.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        for (flag,first,second) in [
+            ("0","4294967296","4294967316"),
+            ("1","4294967296","4294967316"),
+            ("0","4294967316","4294967296"),
+            ("1","4294967316","4294967296"),
+        ] {
+            let run=Command::new(&exe).args([flag,first,second]).output().expect("run legal u64 Phi");
+            assert!(run.status.success(),"{opt}: flag={flag} first={first} second={second}: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+        for (flag,first,second) in [
+            ("0","4294967295","4294967316"),
+            ("1","4294967296","4294967317"),
+            ("0","8589934604","4294967316"),
+            ("1","4294967296","8589934604"),
+        ] {
+            let run=Command::new(&exe).args([flag,first,second]).output().expect("run invalid u64 Phi");
+            assert!(!run.status.success(),"{opt}: out-of-range input falsely accepted");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt}: expected source boundary range abort: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
