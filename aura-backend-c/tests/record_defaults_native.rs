@@ -1381,3 +1381,60 @@ cell select_high(flag: bool, first: High, second: High) ->:
         }
     }
 }
+
+#[test]
+fn high_u64_phi_of_user_call_results_has_typed_native_abi_and_refined_return() {
+    // Both arms create fresh SSA values via *user Call* instructions.
+    // Inferring Phi only from parameters/const/local values cannot type
+    // these incoming U64 Call results before C emission starts.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell identity_high(n: High) ->:
+    yield n
+cell choose_calls(flag: bool, first: High, second: High) ->:
+    val mut chosen: High = first
+    if flag:
+        chosen = identity_high(second)
+    else:
+        chosen = identity_high(first)
+    yield chosen
+"#;
+    let ast=aura_parse::parse_source(src).expect("real refined high-u64 source");
+    let ir=lower_program(&ast).expect("source-qualified high-u64 call-Phi lowers");
+    validate_module(&ir).expect("call-produced SSA Phi validates");
+    assert_eq!(ir.refined_return_bounds.get("choose_calls"),
+        Some(&(4294967296,4294967316)));
+    let f=&ir.functions["choose_calls"];
+    assert!(f.blocks.iter().flat_map(|b| &b.insts)
+        .any(|i| matches!(i.kind,aura_ir::InstKind::Phi{..})),
+        "must have SSA join Phi");
+    assert!(f.blocks.iter().flat_map(|b| &b.insts)
+        .filter(|i| matches!(i.kind,aura_ir::InstKind::Call{..})).count()>=2,
+        "both incoming branch values must originate from user-cell calls");
+    let artifacts=emit_module_with_source_contract(&ast,&ir,None)
+        .expect("C emitter must infer U64 types for user-call sourced Phi");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),artifacts.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n",
+        "uint64_t choose_calls(bool,uint64_t,uint64_t);\n",
+        "int main(void) {\n",
+        "  return (choose_calls(false,4294967296ULL,4294967316ULL)==4294967296ULL &&\n",
+        "          choose_calls(true,4294967296ULL,4294967316ULL)==4294967316ULL &&\n",
+        "          choose_calls(false,4294967316ULL,4294967296ULL)==4294967316ULL &&\n",
+        "          choose_calls(true,4294967316ULL,4294967296ULL)==4294967296ULL) ? 0 : 99;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("high_call_phi_{}",&opt[1..]));
+        let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("strict Clang available");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifacts.module_c);
+        let run=Command::new(&exe).output().expect("execute C high-u64 Call Phi");
+        assert!(run.status.success(),"{opt}: {}",
+            String::from_utf8_lossy(&run.stderr));
+    }
+}
