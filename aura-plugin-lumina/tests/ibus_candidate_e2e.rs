@@ -320,3 +320,39 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(key(&p,&app,&mut c,"space").iter()
         .all(|e|e.callback_id==946),"real engine remains functional at bottom edge");
 }
+
+#[test]fn real_pinyin_x11_window_move_updates_absolute_ibus_cursor_origin(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",""),("on_change","cb:947"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let wins=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=wins.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    for ch in ["n","i"]{assert!(key(&p,&app,&mut c,ch).is_empty());}
+    let (before,acks)=p.diagnostic_native_ibus_cursor_location()
+        .expect("genuine IBus native cursor location");
+    let caret=p.diagnostic_native_ibus_caret_logical().unwrap();
+    let popup=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    xdo(&["windowmove","--sync",id,"120","85"]);
+    assert!(frames(&p,&app,&mut c,8).is_empty());
+    let (after,ack_after)=p.diagnostic_native_ibus_cursor_location().unwrap();
+    let caret_after=p.diagnostic_native_ibus_caret_logical().unwrap();
+    let popup_after=p.diagnostic_native_ibus_candidate_bounds().unwrap();
+    eprintln!("LUMINA_IBUS_P21_WINDOW_MOVE before={before:?} after={after:?} ACK={acks}->{ack_after} caret={caret:?}->{caret_after:?} popup={popup:?}->{popup_after:?}");
+    assert!(ack_after>acks,"moving the X11 window must resend real libibus screen coords");
+    assert!(after.0>before.0+70 && after.1>before.1+40,
+        "IBus cursor origin must include real X11 window translation");
+    assert_eq!(caret,caret_after,"window move cannot change logical caret");
+    assert_eq!(popup,popup_after,"window move cannot change local popup geometry");
+    assert!(p.diagnostic_native_ibus_candidate_glyph_pixels().unwrap()>10);
+    // Existing candidate selection remains engine-owned after X11 translation.
+    assert!(key(&p,&app,&mut c,"space").iter()
+        .any(|e|e.callback_id==947 && !e.text.is_empty()));
+}
