@@ -1438,3 +1438,49 @@ cell choose_calls(flag: bool, first: High, second: High) ->:
             String::from_utf8_lossy(&run.stderr));
     }
 }
+
+#[test]
+fn forged_scalar_call_phi_mixing_u64_and_u32_is_rejected_without_implicit_cast() {
+    // The new Call return-type prepass must not accept a forged Phi that
+    // combines a source-refined U64 return with a U32-returning function.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell identity_high(n: High) ->:
+    yield n
+cell narrow(n: u64) ->:
+    yield 7
+cell choose_calls(flag: bool, first: High, second: High) ->:
+    val mut chosen: High = first
+    if flag:
+        chosen = identity_high(second)
+    else:
+        chosen = identity_high(first)
+    yield chosen
+"#;
+    let ast=aura_parse::parse_source(src).expect("both real Aura signatures parse");
+    let original=lower_program(&ast).expect("unmodified source qualifies and lowers");
+    validate_module(&original).expect("baseline IR structurally valid");
+    emit_module_with_source_contract(&ast,&original,None)
+        .expect("source-valid U64-call Phi is a legal native ABI");
+    let mut forged=original.clone();
+    let fun=forged.functions.get_mut("choose_calls").expect("user function");
+    let mut altered=false;
+    for inst in fun.blocks.iter_mut().flat_map(|b| b.insts.iter_mut()) {
+        if let aura_ir::InstKind::Call { callee, .. }=&mut inst.kind {
+            if callee=="identity_high" && !altered {
+                *callee="narrow".into();
+                altered=true;
+            }
+        }
+    }
+    assert!(altered,"must really rewrite a Phi incoming Call return ABI");
+    // The structural validator may independently reject the mismatch.
+    // If not, C emission MUST refuse rather than cast a U32 value into U64.
+    if validate_module(&forged).is_ok() {
+        let err=emit_module_with_source_contract(&ast,&forged,None).err()
+            .expect("C emitter must not merge U32 and U64 Call SSA in one Phi");
+        assert!(err.message.contains("Phi") && (err.message.contains("type") ||
+                    err.message.contains("incompatible") || err.message.contains("U32")),
+            "expected precise fail-closed scalar Phi ABI diagnostic, got {err}");
+    }
+}
