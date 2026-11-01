@@ -3,7 +3,7 @@
  * to a live daemon engine, not from an injected test stub.
  * Protocol: stdout READY; input F1,F0 or K<TAB>keysym<TAB>mods<TAB>released<TAB>code; output
  * P<TAB>hexUTF8<TAB>Unicode-scalar-caret, C<TAB>hexUTF8,
- * H, then R<TAB>handled, or A (focus acknowledgement).
+ * H, then R<TAB>handled, or A (focus acknowledgement).\n * G<TAB>screen_x<TAB>screen_y<TAB>width<TAB>height sets genuine IBus cursor rectangle, A acknowledges.
  * The Rust side validates every line and applies strict timeouts/bounds.
  */
 #include <ibus.h>
@@ -146,6 +146,25 @@ int main(int argc,char**argv) {
             ibus_input_context_focus_out(ic);
             ibus_input_context_reset(ic);
             pump_ms(40);puts("A");continue;
+        }
+        if(!strncmp(line,"G\t",2)){
+            char *cursor=line+2;
+            unsigned long x,y,w,h;
+            if(!dec_field(&cursor,&x,0) ||
+               !dec_field(&cursor,&y,0) ||
+               !dec_field(&cursor,&w,0) ||
+               !dec_field(&cursor,&h,1) ||
+               x>32767UL || y>32767UL || w==0 || h==0 ||
+               w>128UL || h>128UL || x+w>32768UL || y+h>32768UL){
+                puts("FATAL invalid_cursor_frame");break;
+            }
+            /* Genuine GTK/IBus screen-coordinate cursor location, not a
+             * host-local candidate or fabricated daemon callback. */
+            ibus_input_context_set_cursor_location(ic,(gint)x,(gint)y,(gint)w,(gint)h);
+            pump_ms(10);
+            fprintf(stderr,"LUMINA_IBUS_CURSOR_LOCATION x=%lu y=%lu w=%lu h=%lu\n",
+                x,y,w,h);
+            puts("A");continue;
         }
         if(!strncmp(line,"K\t",2)){
             char *cursor=line+2;
