@@ -92,12 +92,12 @@ static void update_lookup(IBusInputContext *ctx,IBusLookupTable *table,
  * A delete request is delivered as bounded advisory D frame to Rust;
  * phase 22 forbids applying it until transaction/selection proof exists. */
 static void request_surrounding(IBusInputContext *ctx,gpointer data) {
-    (void)data;
+    (void)ctx;(void)data;
     fprintf(stderr,"LUMINA_IBUS_REQUIRE_SURROUNDING\n");
     puts("N");fflush(stdout);
 }
 static void delete_surrounding(IBusInputContext *ctx,gint offset,guint count,gpointer data) {
-    (void)data;
+    (void)ctx;(void)data;
     fprintf(stderr,"LUMINA_IBUS_DELETE_REQUEST offset=%d count=%u (not applied)\n",
         offset,count);
     printf("D\t%d\t%u\n",offset,count);fflush(stdout);
