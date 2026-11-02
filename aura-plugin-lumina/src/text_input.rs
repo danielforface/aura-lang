@@ -121,6 +121,19 @@ impl EditSession {
             preedit:None, last_composition_sequence:0, authority_epoch:0 }
     }
     pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
+    /// Shaped/BiDi GPU hit-testing must pass through this method rather
+    /// than assigning caret/anchor directly, so stale IME deletion tokens
+    /// are invalidated even if the user navigates away and back.
+    pub(crate) fn set_visual_caret(&mut self,grapheme:usize,extend:bool)->bool{
+        if self.composing(){return false;}
+        let next=grapheme.min(grapheme_count(&self.buffer));
+        let old=(self.caret,self.anchor);
+        self.caret=next;
+        if !extend{self.anchor=next;}
+        if old!=(self.caret,self.anchor){self.advance_authority_epoch();}
+        old!=(self.caret,self.anchor)
+    }
+
     fn advance_authority_epoch(&mut self){
         self.authority_epoch=self.authority_epoch.saturating_add(1);
     }
