@@ -358,6 +358,20 @@ impl EditSession {
 
 #[cfg(test)]
 mod tests {
+    #[test]fn gpu_visual_caret_roundtrip_cannot_reuse_stale_delete_snapshot(){
+        let mut s=EditSession::new("ABCDE".into());
+        let (old,original)=(s.authority_epoch(),s.buffer.clone());
+        assert!(s.set_visual_caret(2,false));
+        assert!(s.set_visual_caret(5,false));
+        assert!(!s.delete_surrounding_if_snapshot(old,&original,5,5,-1,1),
+            "same old caret after visual roundtrip does not revive old token");
+        assert_eq!(s.buffer,"ABCDE");
+        assert_eq!(s.undo_len(),0);
+        assert!(s.set_visual_caret(3,true));
+        assert!(!s.delete_surrounding_if_snapshot(s.authority_epoch(),&original,
+            s.caret,s.anchor,-1,1),"selection must reject deletion");
+        assert_eq!(s.buffer,"ABCDE");
+    }
     #[test]fn native_delete_exact_epoch_is_single_atomic_undo(){
         let mut s=EditSession::new("A🇮🇱e\u{301}Z".into());
         let prior=s.buffer.clone();
