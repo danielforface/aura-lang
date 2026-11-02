@@ -586,3 +586,38 @@ cell main() ->:
             args);
     }
 }
+
+#[test]
+fn public_cli_builds_high_u64_refined_nested_if_phi_with_chained_cell_calls() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell id_high(n: High) ->:
+    yield n
+cell mid_high(n: High) ->:
+    yield id_high(n)
+cell nested_high(a: bool, b: bool, first: High, second: High, third: High) ->:
+    val mut selected: High = first
+    if a:
+        if b:
+            selected = mid_high(second)
+        else:
+            selected = id_high(third)
+    else:
+        selected = mid_high(first)
+    yield selected
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must preserve nested source-qualified high-u64 Phi: {output}",args);
+    }
+}
