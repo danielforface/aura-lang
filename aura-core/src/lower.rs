@@ -456,6 +456,10 @@ impl<'c> Lowerer<'c> {
         if !self.has_terminator() {
             self.set_terminator(Terminator::Br(join_bb));
         }
+        // A nested control-flow statement may leave the active block at its
+        // own join, not the initial 'then_bb'. Phi incoming edges must name
+        // the *actual* predecessor whose terminator reaches join_bb.
+        let then_exit_bb = self.current_block_id().unwrap_or(then_bb);
         let then_locals = self.locals.clone();
 
         // else
@@ -467,12 +471,15 @@ impl<'c> Lowerer<'c> {
         if !self.has_terminator() {
             self.set_terminator(Terminator::Br(join_bb));
         }
+        let else_exit_bb = self.current_block_id().unwrap_or(else_bb);
         let else_locals = self.locals.clone();
 
         // join
         self.locals = saved_locals;
         self.push_block(join_bb, i.span, ExecutionHint::Sequential);
-        self.merge_locals_with_phi(&then_locals, then_bb, &else_locals, else_bb, i.span);
+        self.merge_locals_with_phi(
+            &then_locals, then_exit_bb, &else_locals, else_exit_bb, i.span
+        );
 
         Ok(())
     }
