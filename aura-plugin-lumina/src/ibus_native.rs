@@ -115,6 +115,17 @@ fn grapheme_from_scalar(text:&str,scalar:usize)->Option<usize>{
     };
     Some(text.grapheme_indices(true).take_while(|(at,_)|*at<byte).count())
 }
+fn parse_surrounding_delete_frame(line:&str)->Option<(i32,u32)>{
+    let rest=line.strip_prefix("D\t")?;
+    let mut fields=rest.split('\t');
+    let (Some(offset),Some(count),None)=
+        (fields.next(),fields.next(),fields.next())else{return None;};
+    let (Ok(offset),Ok(count))=(offset.parse::<i32>(),count.parse::<u32>())else{
+        return None;
+    };
+    ((-1024..=1024).contains(&offset)&&count>0&&count<=1024)
+        .then_some((offset,count))
+}
 impl NativeIbus{
     pub(crate) fn connect()->Option<Self>{
         let executable=std::env::var_os("LUMINA_IBUS_HELPER_BIN")?;
@@ -181,15 +192,8 @@ impl NativeIbus{
             self.surrounding_requires=self.surrounding_requires.saturating_add(1);
             return true;
         }
-        if let Some(rest)=line.strip_prefix("D\t"){
-            let mut fields=rest.split('\t');
-            let (Some(offset),Some(count),None)=(fields.next(),fields.next(),fields.next())else{
-                return false;
-            };
-            let (Ok(offset),Ok(count))=(offset.parse::<i32>(),count.parse::<u32>())else{
-                return false;
-            };
-            if !(-1024..=1024).contains(&offset)||count>1024{return false;}
+        if line.starts_with("D\t"){
+            if parse_surrounding_delete_frame(line).is_none(){return false;}
             // Advisory from IBus engine; do NOT mutate authoritative editor.
             self.surrounding_delete_requests=self.surrounding_delete_requests.saturating_add(1);
             return true;
@@ -435,6 +439,17 @@ impl Drop for NativeIbus{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn native_surrounding_delete_signal_bounds_never_apply_authority(){
+        assert_eq!(parse_surrounding_delete_frame("D\t-2\t2"),Some((-2,2)));
+        assert_eq!(parse_surrounding_delete_frame("D\t1024\t1"),Some((1024,1)));
+        assert_eq!(parse_surrounding_delete_frame("D\t-1025\t1"),None);
+        assert_eq!(parse_surrounding_delete_frame("D\t0\t0"),None);
+        assert_eq!(parse_surrounding_delete_frame("D\t0\t1025"),None);
+        assert_eq!(parse_surrounding_delete_frame("D\t-1\t1\t2"),None);
+        assert_eq!(parse_surrounding_delete_frame("D\t-1\tbogus"),None);
+        assert_eq!(parse_surrounding_delete_frame("D\t2147483648\t1"),None);
+        assert_eq!(parse_surrounding_delete_frame("C\t-1\t1"),None);
+    }
     #[test]fn real_native_signal_hex_protocol_rejects_invalid_utf8_and_oversize(){
         assert_eq!(decode_hex("eab080"),Some("가".into()));
         assert_eq!(decode_hex(""),Some("".into()));
