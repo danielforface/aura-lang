@@ -1566,3 +1566,58 @@ cell nested_high(a: bool, b: bool, first: High, second: High, third: High) ->:
         }
     }
 }
+
+#[test]
+fn nested_else_high_u64_user_call_phi_uses_true_exit_predecessor() {
+    // Symmetric regression: the *else* outer arm ends in an inner join.
+    // An outer Phi wired to the else-entry (instead of inner-join) can
+    // leave its returned U64 SSA variable uninitialized.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell pass_high(n: High) ->:
+    yield n
+cell nested_else(a: bool, b: bool, x: High, y: High, z: High) ->:
+    val mut result: High = x
+    if a:
+        result = pass_high(y)
+    else:
+        if b:
+            result = pass_high(z)
+        else:
+            result = pass_high(x)
+    yield result
+"#;
+    let ast=aura_parse::parse_source(src).expect("legal nested else source");
+    let ir=lower_program(&ast).expect("nested else source lowers");
+    validate_module(&ir).expect("nested else Phi SSA validates");
+    assert_eq!(ir.refined_return_bounds.get("nested_else"),Some(&(4294967296,4294967316)));
+    assert!(ir.functions["nested_else"].blocks.iter().flat_map(|b| &b.insts)
+        .filter(|i| matches!(i.kind,aura_ir::InstKind::Phi { .. })).count()>=2);
+    let artifact=emit_module_with_source_contract(&ast,&ir,None)
+        .expect("source-bound native nested else emits");
+    let tmp=Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"),artifact.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"),&artifact.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n",
+        "uint64_t nested_else(bool,bool,uint64_t,uint64_t,uint64_t);\n",
+        "int main(void) {\n",
+        " const uint64_t x=4294967296ULL,y=4294967306ULL,z=4294967316ULL;\n",
+        " return nested_else(true,false,x,y,z)==y &&\n",
+        "        nested_else(true,true,x,y,z)==y &&\n",
+        "        nested_else(false,true,x,y,z)==z &&\n",
+        "        nested_else(false,false,x,y,z)==x ? 0 : 99;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=tmp.0.join(format!("nested_else_phi_{}",&opt[1..]));
+        let build=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c")).arg(tmp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("Clang");
+        assert!(build.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&build.stderr),artifact.module_c);
+        let run=Command::new(&exe).output().expect("run linked nested else");
+        assert!(run.status.success(),"{opt}: {}",
+            String::from_utf8_lossy(&run.stderr));
+    }
+}
