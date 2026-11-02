@@ -1584,8 +1584,18 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 };
                 if let (Some(caret),Some(anchor))=
                     (scalar_at(fi.session.caret),scalar_at(fi.session.anchor)){
-                    let _=bus.sync_surrounding_text(fi.on_change,
-                        &fi.session.buffer,caret,anchor);
+                    // Fail closed: a too-large or unsafe host value
+                    // clears the *previous* IME snapshot rather than leaving
+                    // stale text visible to the newly rebased authority epoch.
+                    let unsafe_context=fi.session.buffer.len()>1024 ||
+                        fi.session.buffer.chars().any(|c|c.is_control() ||
+                            matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'));
+                    if unsafe_context {
+                        let _=bus.sync_surrounding_text(fi.on_change,"",0,0);
+                    }else{
+                        let _=bus.sync_surrounding_text(fi.on_change,
+                            &fi.session.buffer,caret,anchor);
+                    }
                 }
             }
             ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
