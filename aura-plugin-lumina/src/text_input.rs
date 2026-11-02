@@ -79,6 +79,8 @@ pub(crate) struct EditSession {
     redo: Vec<Snapshot>,
     preedit: Option<Preedit>,
     last_composition_sequence: u64,
+    /// Monotonic barrier for authority rebases, edits and selection history.
+    authority_epoch: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
@@ -116,7 +118,61 @@ impl EditSession {
     pub(crate) fn new(text: String) -> Self {
         let end=grapheme_count(&text);
         Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
-            preedit:None, last_composition_sequence:0 }
+            preedit:None, last_composition_sequence:0, authority_epoch:0 }
+    }
+    pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
+    fn advance_authority_epoch(&mut self){
+        self.authority_epoch=self.authority_epoch.saturating_add(1);
+    }
+    /// Translate IBus Unicode *scalar* positions to strict UAX29 grapheme
+    /// boundaries. No partial regional-indicator flag, combining sequence,
+    /// emoji ZWJ cluster or UTF-8 codepoint can ever be removed.
+    fn scalar_range_to_grapheme_bounds(
+        text:&str,cursor_grapheme:usize,offset:i32,count:u32
+    )->Option<(usize,usize,usize,usize)>{
+        if count==0||count>1024||!(-1024..=1024).contains(&offset){return None;}
+        let cursor_byte=byte_offset(text,cursor_grapheme);
+        let cursor_scalar=text[..cursor_byte].chars().count();
+        let start_scalar=(cursor_scalar as i64).checked_add(i64::from(offset))?;
+        let end_scalar=start_scalar.checked_add(i64::from(count))?;
+        if start_scalar<0||end_scalar>text.chars().count() as i64{return None;}
+        let byte_at=|scalar:usize|{
+            text.char_indices().nth(scalar).map(|(byte,_)|byte)
+                .unwrap_or(text.len())
+        };
+        let a=byte_at(start_scalar as usize);
+        let b=byte_at(end_scalar as usize);
+        if a>=b{return None;}
+        let boundaries:Vec<usize>=text.grapheme_indices(true)
+            .map(|(byte,_)|byte).chain(std::iter::once(text.len())).collect();
+        let g0=boundaries.binary_search(&a).ok()?;
+        let g1=boundaries.binary_search(&b).ok()?;
+        Some((a,b,g0,g1))
+    }
+    /// PREPARED ONLY: this atomic deletion primitive is NOT wired to
+    /// engine-origin DeleteSurroundingText in production. Such a request
+    /// is advisory until a separate real-engine provenance gate is proven.
+    /// Snapshot and epoch must match after host value_revision reconciliation.
+    pub(crate) fn delete_surrounding_if_snapshot(
+        &mut self,epoch:u64,expected:&str,expected_caret:usize,
+        expected_anchor:usize,offset:i32,count:u32
+    )->bool{
+        if self.composing()||self.authority_epoch!=epoch||
+            self.buffer!=expected || self.caret!=expected_caret ||
+            self.anchor!=expected_anchor || self.caret!=self.anchor ||
+            self.buffer.len()>1024{return false;}
+        let Some((a,b,g0,g1))=Self::scalar_range_to_grapheme_bounds(
+            &self.buffer,self.caret,offset,count)else{return false;};
+        let old=self.snapshot();
+        self.buffer.replace_range(a..b,"");
+        self.caret=if self.caret>=g1{
+            self.caret-(g1-g0)
+        }else if self.caret>=g0{g0}else{self.caret};
+        self.anchor=self.caret;
+        Self::push(&mut self.undo,old);
+        self.redo.clear();
+        self.advance_authority_epoch();
+        true
     }
     fn snapshot(&self) -> Snapshot {
         Snapshot { buffer:self.buffer.clone(),caret:self.caret,anchor:self.anchor }
@@ -132,6 +188,7 @@ impl EditSession {
         if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_some(){return false;}
         self.last_composition_sequence=sequence;
         self.preedit=Some(Preedit{text:String::new(),caret:0});
+        self.advance_authority_epoch();
         true
     }
     pub(crate) fn update_composition(&mut self,sequence:u64,text:&str,caret:usize)->bool {
@@ -140,6 +197,7 @@ impl EditSession {
             caret>grapheme_count(text){return false;}
         self.last_composition_sequence=sequence;
         self.preedit=Some(Preedit{text:text.to_owned(),caret});
+        self.advance_authority_epoch();
         true
     }
     /// Exactly one committed Edit action: one Undo snapshot, one on_change.
@@ -148,6 +206,7 @@ impl EditSession {
            self.preedit.is_none() || !valid_preedit(text){return None;}
         self.last_composition_sequence=sequence;
         self.preedit=None;
+        self.advance_authority_epoch();
         Some(if text.is_empty(){false}else{
             self.apply(SessionAction::Edit(EditCommand::Insert(text.to_owned())))
         })
@@ -156,16 +215,21 @@ impl EditSession {
         if sequence==0 || sequence<=self.last_composition_sequence || self.preedit.is_none(){return false;}
         self.last_composition_sequence=sequence;
         self.preedit=None;
+        self.advance_authority_epoch();
         true
     }
-    pub(crate) fn abandon_composition(&mut self) {self.preedit=None;}
+    pub(crate) fn abandon_composition(&mut self) {
+        if self.preedit.take().is_some(){self.advance_authority_epoch();}
+    }
     pub(crate) fn composing(&self)->bool{self.preedit.is_some()}
     /// A new authoritative value revision clears transient composition and
     /// undo, yet must not reset the adapter replay barrier for this widget.
     pub(crate) fn rebase_authority(&mut self,text:String){
         let last=self.last_composition_sequence;
+        let next=self.authority_epoch.saturating_add(1);
         *self=Self::new(text);
         self.last_composition_sequence=last;
+        self.authority_epoch=next;
     }
     /// Non-authoritative projection used by GPU and measured viewport only.
     /// The source buffer, caret, selection, undo and redo remain unchanged.
@@ -200,13 +264,21 @@ impl EditSession {
         let len=grapheme_count(&self.buffer);
         self.caret=self.caret.min(len); self.anchor=self.anchor.min(len);
         match action {
-            SessionAction::SelectAll => {self.anchor=0;self.caret=len;false}
+            SessionAction::SelectAll => {
+                if self.anchor!=0||self.caret!=len{self.advance_authority_epoch();}
+                self.anchor=0;self.caret=len;false
+            }
             SessionAction::Move(cmd,extend) => {
+                let before=(self.caret,self.anchor);
                 if !extend {
                     if let Some((start,end))=self.selection() {
                         match cmd {
-                            EditCommand::Left=>{self.caret=start;self.anchor=start;return false;}
-                            EditCommand::Right=>{self.caret=end;self.anchor=end;return false;}
+                            EditCommand::Left=>{self.caret=start;self.anchor=start;
+                                if before!=(self.caret,self.anchor){self.advance_authority_epoch();}
+                                return false;}
+                            EditCommand::Right=>{self.caret=end;self.anchor=end;
+                                if before!=(self.caret,self.anchor){self.advance_authority_epoch();}
+                                return false;}
                             _=>{}
                         }
                     }
@@ -216,13 +288,14 @@ impl EditSession {
                 let _=apply_edit(&mut self.buffer,&mut self.caret,cmd);
                 if !extend {self.anchor=self.caret;}
                 if self.caret==old && !extend {self.anchor=self.caret;}
+                if before!=(self.caret,self.anchor){self.advance_authority_epoch();}
                 false
             }
             SessionAction::Undo => {
                 if let Some(previous)=self.undo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.redo,now);
-                    self.restore(previous);return true;
+                    self.restore(previous);self.advance_authority_epoch();return true;
                 }
                 false
             }
@@ -230,7 +303,7 @@ impl EditSession {
                 if let Some(next)=self.redo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.undo,now);
-                    self.restore(next);return true;
+                    self.restore(next);self.advance_authority_epoch();return true;
                 }
                 false
             }
@@ -261,6 +334,7 @@ impl EditSession {
                 if changed {
                     Self::push(&mut self.undo,old);
                     self.redo.clear();
+                    self.advance_authority_epoch();
                 }
                 changed
             }
