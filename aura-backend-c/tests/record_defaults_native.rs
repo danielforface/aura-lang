@@ -1484,3 +1484,85 @@ cell choose_calls(flag: bool, first: High, second: High) ->:
             "expected precise fail-closed scalar Phi ABI diagnostic, got {err}");
     }
 }
+
+#[test]
+fn nested_if_high_u64_call_phi_tracks_actual_predecessor_edges_in_clang() {
+    // EV-190: the outer "then" arm ends in an inner if/else join, not its
+    // initial then block. The incoming Phi predecessor must be the actual
+    // final block, or the native backend may drop/corrupt the selected U64.
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell id_high(n: High) ->:
+    yield n
+cell mid_high(n: High) ->:
+    yield id_high(n)
+cell nested_high(a: bool, b: bool, first: High, second: High, third: High) ->:
+    val mut selected: High = first
+    if a:
+        if b:
+            selected = mid_high(second)
+        else:
+            selected = id_high(third)
+    else:
+        selected = mid_high(first)
+    yield selected
+"#;
+    let ast=aura_parse::parse_source(src).expect("nested Aura source must parse");
+    let ir=lower_program(&ast).expect("nested source refines, lowers, and retains SSA");
+    validate_module(&ir).expect("nested SSA Phi predecessor edges must validate");
+    assert_eq!(ir.refined_return_bounds.get("nested_high"),
+        Some(&(4294967296,4294967316)));
+    let f=&ir.functions["nested_high"];
+    assert!(f.blocks.iter().flat_map(|b| &b.insts)
+        .filter(|i| matches!(i.kind,aura_ir::InstKind::Phi { .. })).count()>=2,
+        "both inner and outer if/else must create real SSA Phi nodes");
+    assert!(f.blocks.iter().flat_map(|b| &b.insts)
+        .filter(|i| matches!(i.kind,aura_ir::InstKind::Call { .. })).count()>=3,
+        "nested branch inputs must include chained user-cell Call results");
+    let artifacts=emit_module_with_source_contract(&ast,&ir,None)
+        .expect("nested Phi with high-U64 Call returns must source-qualify native C");
+    let temp=Scratch::new();
+    fs::write(temp.0.join("aura_runtime.h"),&artifacts.runtime_h).unwrap();
+    fs::write(temp.0.join("module.c"),&artifacts.module_c).unwrap();
+    fs::write(temp.0.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n#include <stdlib.h>\n",
+        "uint64_t nested_high(bool,bool,uint64_t,uint64_t,uint64_t);\n",
+        "int main(int argc,char **argv) {\n",
+        "  if(argc!=6) return 91;\n",
+        "  bool a=(bool)atoi(argv[1]),b=(bool)atoi(argv[2]);\n",
+        "  uint64_t x=strtoull(argv[3],NULL,10),y=strtoull(argv[4],NULL,10),z=strtoull(argv[5],NULL,10);\n",
+        "  uint64_t want=!a?x:(b?y:z);\n",
+        "  return nested_high(a,b,x,y,z)==want?0:92;\n",
+        "}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=temp.0.join(format!("nested_high_phi_{}",&opt[1..]));
+        let built=Command::new("clang").args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&temp.0).arg(temp.0.join("module.c")).arg(temp.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("strict Clang installed");
+        assert!(built.status.success(),"{opt}: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),artifacts.module_c);
+        for (a,b,x,y,z) in [
+            ("0","0","4294967296","4294967306","4294967316"),
+            ("0","1","4294967316","4294967296","4294967306"),
+            ("1","0","4294967296","4294967306","4294967316"),
+            ("1","1","4294967296","4294967316","4294967306"),
+        ] {
+            let run=Command::new(&exe).args([a,b,x,y,z]).output().expect("run nested Phi");
+            assert!(run.status.success(),
+                "{opt}: a={a} b={b} x={x} y={y} z={z}, status={:?}, stderr={}",
+                run.status,String::from_utf8_lossy(&run.stderr));
+        }
+        for (a,b,x,y,z) in [
+            ("0","0","4294967295","4294967306","4294967316"),
+            ("1","1","4294967296","8589934604","4294967316"),
+            ("1","0","4294967296","4294967306","4294967317"),
+        ] {
+            let run=Command::new(&exe).args([a,b,x,y,z]).output().expect("run invalid nested Phi");
+            assert!(!run.status.success(),"{opt}: nested invalid refined argument escaped");
+            assert!(String::from_utf8_lossy(&run.stderr).contains("Aura range check failed"),
+                "{opt}: missing range guard for nested input: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
