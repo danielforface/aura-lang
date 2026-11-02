@@ -345,6 +345,60 @@ impl EditSession {
 
 #[cfg(test)]
 mod tests {
+    #[test]fn native_delete_exact_epoch_is_single_atomic_undo(){
+        let mut s=EditSession::new("A🇮🇱e\u{301}Z".into());
+        let prior=s.buffer.clone();
+        let (epoch,caret,anchor)=(s.authority_epoch(),s.caret,s.anchor);
+        // A(1), flag(2), e+combining(2), Z(1): remove exactly
+        // the two scalar-codepoint regional indicator flag as one grapheme.
+        assert!(s.delete_surrounding_if_snapshot(epoch,&prior,caret,anchor,-5,2));
+        assert_eq!(s.buffer,"Ae\u{301}Z");
+        assert_eq!((s.caret,s.anchor),(3,3));
+        assert_eq!(s.undo_len(),1);
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&prior,caret,anchor,-5,2),
+            "same engine request replay cannot delete again");
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,prior);
+        assert_eq!(s.undo_len(),0);
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&prior,caret,anchor,-5,2),
+            "undo restoring same bytes must NOT restore old authority token");
+    }
+    #[test]fn native_delete_never_splits_combining_zwj_or_flag_cluster(){
+        for text in ["A🇮🇱Z","Ae\u{301}Z","A👨‍👩‍👦Z"] {
+            let mut s=EditSession::new(text.into());
+            let original=s.buffer.clone();
+            let epoch=s.authority_epoch();
+            let scalar_count=text.chars().count();
+            // One internal scalar from the multi-scalar grapheme is forbidden.
+            assert!(!s.delete_surrounding_if_snapshot(epoch,&original,
+                s.caret,s.anchor,-(scalar_count as i32-2),1));
+            assert_eq!(s.buffer,original);
+            assert_eq!(s.undo_len(),0);
+        }
+    }
+    #[test]fn native_delete_rejects_old_rebase_selected_composing_or_bad_ranges(){
+        let mut s=EditSession::new("XY界Z".into());
+        let snapshot=s.buffer.clone();
+        let epoch=s.authority_epoch();
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,s.caret,s.anchor,-500,3));
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,s.caret,s.anchor,-1,0));
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,s.caret,s.anchor,-1,1025));
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,s.caret,s.anchor,1,1));
+        assert_eq!(s.undo_len(),0);
+        s.apply(SessionAction::SelectAll);
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,4,4,-1,1));
+        assert!(!s.delete_surrounding_if_snapshot(s.authority_epoch(),&snapshot,
+            s.caret,s.anchor,-1,1),"selected region requires explicit policy");
+        s.rebase_authority("XY界Z".into());
+        assert!(!s.delete_surrounding_if_snapshot(epoch,&snapshot,4,4,-1,1),
+            "identical text under higher host revision must reject stale request");
+        let new_epoch=s.authority_epoch();
+        assert!(s.start_composition(1));
+        assert!(!s.delete_surrounding_if_snapshot(new_epoch,&snapshot,4,4,-1,1),
+            "engine cannot delete authoritative text while composition active");
+        assert_eq!(s.buffer,snapshot);
+    }
+
     use super::*;
 
     fn edit(text: &str, index: usize, ops: Vec<EditCommand>) -> (String, usize, Vec<bool>) {
