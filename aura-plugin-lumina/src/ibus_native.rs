@@ -90,6 +90,10 @@ pub(crate) struct NativeIbus{
     pub(crate) candidate_click_acks:usize,
     pub(crate) cursor_location_acks:usize,
     pub(crate) cursor_location:Option<(u32,u32,u32,u32)>,
+    pub(crate) surrounding_text_acks:usize,
+    pub(crate) surrounding_delete_requests:usize,
+    pub(crate) surrounding_requires:usize,
+    pub(crate) surrounding_text:Option<(String,u32,u32)>,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
 }
 fn decode_hex(input:&str)->Option<String>{
@@ -154,7 +158,9 @@ impl NativeIbus{
             composing:false,disconnected:false,engine_events:0,
             key_acks:0,release_acks:0,shifted_acks:0,
             candidate_events:0,candidate_click_acks:0,candidate_page:None,
-            cursor_location_acks:0,cursor_location:None})
+            cursor_location_acks:0,cursor_location:None,
+            surrounding_text_acks:0,surrounding_delete_requests:0,
+            surrounding_requires:0,surrounding_text:None})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -170,12 +176,60 @@ impl NativeIbus{
         if line.len()>MAX_PROTOCOL_LINE{self.disconnected=true;return None;}
         Some(line)
     }
+    fn observe_surrounding_signal(&mut self,line:&str)->bool{
+        if line=="N"{
+            self.surrounding_requires=self.surrounding_requires.saturating_add(1);
+            return true;
+        }
+        if let Some(rest)=line.strip_prefix("D\t"){
+            let mut fields=rest.split('\t');
+            let (Some(offset),Some(count),None)=(fields.next(),fields.next(),fields.next())else{
+                return false;
+            };
+            let (Ok(offset),Ok(count))=(offset.parse::<i32>(),count.parse::<u32>())else{
+                return false;
+            };
+            if !(-1024..=1024).contains(&offset)||count>1024{return false;}
+            // Advisory from IBus engine; do NOT mutate authoritative editor.
+            self.surrounding_delete_requests=self.surrounding_delete_requests.saturating_add(1);
+            return true;
+        }
+        false
+    }
+    /// UTF-8 content remains owned by host editor; IBus positions are
+    /// Unicode scalar indices (not bytes or graphemes). Entire snapshot is
+    /// bounded to 1024 bytes; oversize text is NEVER partially/truncated.
+    pub(crate) fn sync_surrounding_text(
+        &mut self,callback_id:u64,content:&str,caret:u32,anchor:u32
+    )->bool{
+        if self.disconnected || self.focus!=Some(callback_id) ||
+            content.len()>1024 || content.contains('\0') ||
+            content.chars().any(|c|c.is_control() ||
+                matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}')) {
+            return false;
+        }
+        let chars=content.chars().count();
+        if caret as usize>chars || anchor as usize>chars {return false;}
+        if self.surrounding_text.as_ref().is_some_and(|t|
+            t.0==content&&t.1==caret&&t.2==anchor){return true;}
+        let mut hex=String::with_capacity(content.len()*2);
+        for byte in content.as_bytes(){
+            use std::fmt::Write as _;
+            let _=write!(&mut hex,"{byte:02x}");
+        }
+        if !self.send(&format!("S\t{hex}\t{caret}\t{anchor}"))||
+            !self.await_ack(){return false;}
+        self.surrounding_text=Some((content.to_owned(),caret,anchor));
+        self.surrounding_text_acks=self.surrounding_text_acks.saturating_add(1);
+        true
+    }
     fn await_ack(&mut self)->bool{
         for _ in 0..MAX_LINES_PER_KEY {
             let Some(line)=self.next() else{
                 self.disconnected=true;return false;
             };
             if line=="A"{return true;}
+            if self.observe_surrounding_signal(&line){continue;}
             // Some IBus engines emit hide-preedit during FocusOut/FocusIn.
             // Such events belong to the OLD focus generation and must not
             // be delivered to the newly focused native TextInput.
@@ -198,6 +252,7 @@ impl NativeIbus{
         self.composing=false;
         self.candidate_page=None;
         self.cursor_location=None;
+        self.surrounding_text=None;
         self.focus=None;
         if let Some(id)=target{
             if !self.send("F1"){return false;}
@@ -306,6 +361,7 @@ impl NativeIbus{
                 }
                 break;
             }
+            if self.observe_surrounding_signal(&line){continue;}
             if line=="H"||line.starts_with("P\t")||line.starts_with("C\t")||line.starts_with("L\t"){
                 lines.push(line);
             }else{self.disconnected=true;return Some((true,Vec::new()));}
