@@ -1322,8 +1322,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                         bidi_editor::hit_test(shape,mouse.x-c.x+scroll)
                                     });
                                     if let (Some(stop),Some(fi))=(hit,win.focused_input.as_mut()) {
-                                        fi.session.caret=stop.grapheme;
-                                        fi.session.anchor=stop.grapheme;
+                                        fi.session.set_visual_caret(stop.grapheme,false);
                                         fi.visual_affinity=Some(stop.run);
                                     }
                                 }
@@ -1527,9 +1526,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             if end {fi.session.apply(SessionAction::Move(EditCommand::End,extend_selection));}
                         }else if let Some(shape)=geometry {
                             if let Some(stop)=bidi_editor::edge(shape,end){
-                                fi.session.caret=stop.grapheme;
+                                fi.session.set_visual_caret(stop.grapheme,extend_selection);
                                 fi.visual_affinity=Some(stop.run);
-                                if !extend_selection{fi.session.anchor=stop.grapheme;}
                             }
                         }
                     }
@@ -1540,9 +1538,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }else if let Some(shape)=geometry {
                             if let Some(stop)=bidi_editor::navigate(shape,fi.session.caret,
                                 fi.visual_affinity,right,extend_selection,fi.session.selection()){
-                                fi.session.caret=stop.grapheme;
+                                fi.session.set_visual_caret(stop.grapheme,extend_selection);
                                 fi.visual_affinity=Some(stop.run);
-                                if !extend_selection{fi.session.anchor=stop.grapheme;}
                             }
                         }
                     }
