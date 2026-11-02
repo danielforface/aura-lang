@@ -434,3 +434,42 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert_eq!((zero,zero_anchor),(0,0));
     assert!(ack5>ack4);
 }
+
+#[test]fn real_pinyin_delete_safety_no_implicit_authority_change(){
+    // Real libpinyin is exercised with physical XTest BackSpace while
+    // composing. Do NOT describe this test as proof of a live engine D signal:
+    // it only proves that native preedit cancellation/edit never silently
+    // deletes authoritative committed editor text.
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value","A🇮🇱e\u{301}Z"),("value_revision","1"),
+        ("on_change","cb:949"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    let original=p.diagnostic_native_ibus_surrounding()
+        .expect("real libibus surrounding snapshot");
+    assert_eq!(original.0,"A🇮🇱e\u{301}Z");
+    assert!(key(&p,&app,&mut c,"n").is_empty());
+    assert!(key(&p,&app,&mut c,"i").is_empty());
+    let before=p.diagnostic_native_ibus_surrounding().unwrap();
+    assert_eq!(before.0,original.0);
+    let events=key(&p,&app,&mut c,"BackSpace");
+    let after=p.diagnostic_native_ibus_surrounding().unwrap();
+    eprintln!("LUMINA_IBUS_P23_ENGINE_DELETE_INVESTIGATION before={before:?} after={after:?} key_callbacks={events:?} composition={:?}",
+        p.diagnostic_composition(949));
+    assert!(events.is_empty(),"preedit BackSpace must not mutate host authority");
+    assert_eq!(after.0,original.0,"only explicit real Commit can mutate EditSession");
+    assert_eq!(after.1,original.1);
+    assert_eq!(after.2,original.2);
+    // Actual D counter, if nonzero, is observed only; no implicit edit.
+    // A zero count is an explicit boundary, not evidence of deletion support.
+    eprintln!("LUMINA_IBUS_P23_ENGINE_DELETE_COUNT {} (advisory-only; no engine delete mutation qualified)",after.5);
+}
