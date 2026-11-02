@@ -88,6 +88,38 @@ static void update_lookup(IBusInputContext *ctx,IBusLookupTable *table,
     fprintf(stderr,"LUMINA_IBUS_LIVE_LOOKUP total=%u cursor=%u page_start=%u shown=%u\n",
         total,cursor,first,limit);
 }
+/* Engine-origin requests are observable but NEVER blindly authoritative.
+ * A delete request is delivered as bounded advisory D frame to Rust;
+ * phase 22 forbids applying it until transaction/selection proof exists. */
+static void request_surrounding(IBusInputContext *ctx,gpointer data) {
+    (void)ctx;(void)data;
+    fprintf(stderr,"LUMINA_IBUS_REQUIRE_SURROUNDING\n");
+    puts("N");fflush(stdout);
+}
+static void delete_surrounding(IBusInputContext *ctx,gint offset,guint count,gpointer data) {
+    (void)ctx;(void)data;
+    fprintf(stderr,"LUMINA_IBUS_DELETE_REQUEST offset=%d count=%u (not applied)\n",
+        offset,count);
+    printf("D\t%d\t%u\n",offset,count);fflush(stdout);
+}
+static int hex_decode_utf8(char *hex,char *out,size_t capacity) {
+    size_t n=strlen(hex);
+    if(n%2 || n>2048 || n/2>=capacity) return 0;
+    for(size_t i=0;i<n;i+=2){
+        unsigned value=0;
+        for(unsigned j=0;j<2;j++){
+            unsigned char c=(unsigned char)hex[i+j];
+            unsigned digit=(c>='0' && c<='9')?c-'0':
+               (c>='a' && c<='f')?c-'a'+10:256;
+            if(digit>15)return 0;
+            value=(value<<4)|digit;
+        }
+        out[i/2]=(char)value;
+        if(!value)return 0;
+    }
+    out[n/2]='\0';
+    return g_utf8_validate(out,-1,NULL);
+}
 static void pump_ms(unsigned ms){
     for(unsigned i=0;i<ms;i++){
         while(g_main_context_iteration(NULL,FALSE)){}
@@ -109,7 +141,9 @@ int main(int argc,char**argv) {
     g_signal_connect(ic,"hide-preedit-text",G_CALLBACK(hide_preedit),NULL);
     g_signal_connect(ic,"update-lookup-table",G_CALLBACK(update_lookup),NULL);
     g_signal_connect(ic,"hide-lookup-table",G_CALLBACK(hide_lookup),NULL);
-    ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT | IBUS_CAP_LOOKUP_TABLE);
+    g_signal_connect(ic,"require-surrounding-text",G_CALLBACK(request_surrounding),NULL);
+    g_signal_connect(ic,"delete-surrounding-text",G_CALLBACK(delete_surrounding),NULL);
+    ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT | IBUS_CAP_LOOKUP_TABLE | IBUS_CAP_SURROUNDING_TEXT);
     ibus_input_context_set_engine(ic,argv[1]);
     pump_ms(350);
     IBusEngineDesc *initial=ibus_input_context_get_engine(ic);
@@ -117,7 +151,7 @@ int main(int argc,char**argv) {
         initial ? ibus_engine_desc_get_name(initial) : "(none)");
     puts("READY");
     /* Fixed input frame: no getline allocation before checking its size. */
-    char line[129];
+    char line[2112];
     while(fgets(line,sizeof(line),stdin)) {
         if (!strchr(line,'\n')) {
             puts("FATAL input_too_long");break;
@@ -146,6 +180,35 @@ int main(int argc,char**argv) {
             ibus_input_context_focus_out(ic);
             ibus_input_context_reset(ic);
             pump_ms(40);puts("A");continue;
+        }
+        if(!strncmp(line,"S\t",2)){
+            char *start=line+2,*cursor=strchr(start,'\t');
+            if(!cursor){puts("FATAL invalid_surrounding_frame");break;}
+            *cursor++='\0';
+            char *anchor=strchr(cursor,'\t');
+            if(!anchor){puts("FATAL invalid_surrounding_frame");break;}
+            *anchor++='\0';
+            unsigned long c,a;
+            char *cur_field=cursor,*anchor_field=anchor;
+            char utf8[1025];
+            if(!dec_field(&cur_field,&c,1)||
+               !dec_field(&anchor_field,&a,1)||
+               !hex_decode_utf8(start,utf8,sizeof(utf8))) {
+                puts("FATAL invalid_surrounding_frame");break;
+            }
+            glong count=g_utf8_strlen(utf8,-1);
+            if(c>(unsigned long)count || a>(unsigned long)count ||
+               count>1024 || c>1024 || a>1024){
+                puts("FATAL invalid_surrounding_cursor");break;
+            }
+            IBusText *text=ibus_text_new_from_string(utf8);
+            g_object_ref_sink(text);
+            ibus_input_context_set_surrounding_text(ic,text,(guint32)c,(guint32)a);
+            g_object_unref(text);
+            pump_ms(10);
+            fprintf(stderr,"LUMINA_IBUS_SURROUNDING_SET bytes=%zu scalars=%ld cursor=%lu anchor=%lu\n",
+                strlen(utf8),count,c,a);
+            puts("A");continue;
         }
         if(!strncmp(line,"G\t",2)){
             char *cursor=line+2;

@@ -56,6 +56,8 @@ use std::collections::HashMap;
 
 #[cfg(feature = "raylib")]
 use raylib::prelude::*;
+#[cfg(all(feature="raylib",target_os="linux"))]
+use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(feature = "raylib")]
 const SDF_ROUNDED_RECT_FS: &str = r#"
@@ -961,6 +963,18 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|bus.candidate_click_acks)
     }
+    /// Diagnostic only. Committed editor text is sent to the real IBus
+    /// context as a bounded read-only surrounding snapshot (never preedit).
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_surrounding(&self)
+        ->Option<(String,u32,u32,usize,usize,usize)> {
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let (value,caret,anchor)=bus.surrounding_text.clone()?;
+        Some((value,caret,anchor,bus.surrounding_text_acks,
+            bus.surrounding_requires,bus.surrounding_delete_requests))
+    }
+
     /// Actual acknowledged libibus absolute screen rectangle; diagnostic only.
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_cursor_location(&self)
@@ -1553,6 +1567,34 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                 callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
                             });
                         }
+                    }
+                }
+            }
+            // Read-only native IBus surrounding text uses COMMITTED editor
+            // buffer only: preedit projection is not host-authoritative.
+            // Cursor/anchor must be Unicode scalars, never UTF-8 byte offsets
+            // or grapheme IDs. Focus/revision/blur are checked by the adapter.
+            #[cfg(target_os="linux")]
+            if let (Some(bus),Some(fi))=
+                (win.native_ibus.as_mut(),win.focused_input.as_ref()){
+                let scalar_at=|idx:usize|{
+                    let byte=fi.session.buffer.grapheme_indices(true)
+                        .nth(idx).map(|(b,_)|b).unwrap_or(fi.session.buffer.len());
+                    u32::try_from(fi.session.buffer[..byte].chars().count()).ok()
+                };
+                if let (Some(caret),Some(anchor))=
+                    (scalar_at(fi.session.caret),scalar_at(fi.session.anchor)){
+                    // Fail closed: a too-large or unsafe host value
+                    // clears the *previous* IME snapshot rather than leaving
+                    // stale text visible to the newly rebased authority epoch.
+                    let unsafe_context=fi.session.buffer.len()>1024 ||
+                        fi.session.buffer.chars().any(|c|c.is_control() ||
+                            matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'));
+                    if unsafe_context {
+                        let _=bus.sync_surrounding_text(fi.on_change,"",0,0);
+                    }else{
+                        let _=bus.sync_surrounding_text(fi.on_change,
+                            &fi.session.buffer,caret,anchor);
                     }
                 }
             }

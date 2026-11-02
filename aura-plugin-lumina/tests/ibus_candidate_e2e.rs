@@ -356,3 +356,81 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(key(&p,&app,&mut c,"space").iter()
         .any(|e|e.callback_id==947 && !e.text.is_empty()));
 }
+
+#[test]fn real_pinyin_surrounding_text_selection_rebase_and_bounds(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"libpinyin");
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let initial="אבג🇮🇱e\u{301}Z";
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","420"),("height","70"),
+        ("value",initial),("value_revision","1"),
+        ("on_change","cb:948"),("size","28"),
+    ]));
+    frames(&p,&app,&mut c,4);
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let win=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=win.lines().next().expect("X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    let (v,end,anchor,acks,_,del)=p.diagnostic_native_ibus_surrounding()
+        .expect("native libibus SetSurroundingText must ACK");
+    eprintln!("LUMINA_IBUS_P22_INITIAL value={v:?} caret={end} anchor={anchor} ack={acks} deletion_requests={del}");
+    assert_eq!(v,initial);
+    assert_eq!(end as usize,initial.chars().count(),
+        "IBus Unicode character offsets must not be byte or grapheme indices");
+    assert_eq!(end,anchor);
+    assert!(acks>=1&&del==0);
+    // Native selection changes context cursor and anchor but NOT buffer.
+    xdo(&["keydown","ctrl"]);
+    xdo(&["keydown","a"]);
+    let mut events=frames(&p,&app,&mut c,5);
+    xdo(&["keyup","a"]);
+    xdo(&["keyup","ctrl"]);
+    events.extend(frames(&p,&app,&mut c,5));
+    assert!(events.is_empty(),"selection is not authoritative edit");
+    let (selected,caret,selection_anchor,ack2,_,del2)=
+        p.diagnostic_native_ibus_surrounding().unwrap();
+    eprintln!("LUMINA_IBUS_P22_SELECTED value={selected:?} caret={caret} anchor={selection_anchor} ACK={acks}->{ack2}");
+    assert_eq!(selected,initial);
+    assert_eq!(caret,end);
+    assert_eq!(selection_anchor,0);
+    assert!(ack2>acks&&del2==0);
+    // A new revision supersedes the selection, never an engine Commit.
+    app.children[0].set_prop("value","新版🙂");
+    app.children[0].set_prop("value_revision","2");
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let (new,cur,anch,ack3,_,_)=p.diagnostic_native_ibus_surrounding().unwrap();
+    eprintln!("LUMINA_IBUS_P22_REBASE value={new:?} cursor={cur} anchor={anch} ACK={ack2}->{ack3}");
+    assert_eq!(new,"新版🙂");
+    assert_eq!((cur,anch),(3,3));
+    assert!(ack3>ack2);
+    // Real Pinyin preedit can NEVER alter authoritative surrounding buffer.
+    assert!(key(&p,&app,&mut c,"n").is_empty());
+    assert!(key(&p,&app,&mut c,"i").is_empty());
+    assert!(p.diagnostic_native_ibus_candidates().is_some());
+    let (before_commit,_,_,_,_,_)=p.diagnostic_native_ibus_surrounding().unwrap();
+    assert_eq!(before_commit,"新版🙂");
+    let committed=key(&p,&app,&mut c,"space");
+    eprintln!("LUMINA_IBUS_P22_REAL_COMMIT {committed:?}");
+    assert_eq!(committed.len(),1);
+    let (after,after_caret,after_anchor,ack4,_,_)=
+        p.diagnostic_native_ibus_surrounding().unwrap();
+    assert!(after.starts_with("新版🙂")&&after.len()>"新版🙂".len());
+    assert_eq!(after_caret,after_anchor);
+    assert_eq!(after.chars().count(),after_caret as usize);
+    assert!(ack4>ack3);
+    // Oversize external authority text must not be truncated or leak stale
+    // cached surrounding snapshots into the current engine focus.
+    app.children[0].set_prop("value",&"W".repeat(1200));
+    app.children[0].set_prop("value_revision","3");
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let (cleared,zero,zero_anchor,ack5,_,_)=
+        p.diagnostic_native_ibus_surrounding().unwrap();
+    eprintln!("LUMINA_IBUS_P22_OVERSIZE_CLEAR bytes={} cursor={} anchor={} acks={} previous={}",
+        cleared.len(),zero,zero_anchor,ack5,ack4);
+    assert!(cleared.is_empty(),"oversized editor value must be fail-closed");
+    assert_eq!((zero,zero_anchor),(0,0));
+    assert!(ack5>ack4);
+}
