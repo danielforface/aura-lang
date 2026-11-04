@@ -154,6 +154,7 @@ int main(int argc,char**argv) {
     puts("READY");
     /* Fixed input frame: no getline allocation before checking its size. */
     char line[2112];
+    int exit_code=0;
     while(fgets(line,sizeof(line),stdin)) {
         if (!strchr(line,'\n')) {
             puts("FATAL input_too_long");break;
@@ -203,7 +204,10 @@ int main(int argc,char**argv) {
             pump_ms(40);puts("A");continue;
         }
         if(!strncmp(line,"S\t",2)){
-            if(!surrounding_enabled){puts("FATAL surrounding_not_authorized");break;}
+            if(!surrounding_enabled){
+                puts("FATAL surrounding_not_authorized");
+                exit_code=6;break;
+            }
             char *start=line+2,*cursor=strchr(start,'\t');
             if(!cursor){puts("FATAL invalid_surrounding_frame");break;}
             *cursor++='\0';
@@ -279,5 +283,5 @@ int main(int argc,char**argv) {
     ibus_input_context_focus_out(ic);
     g_object_unref(ic);
     g_object_unref(bus);
-    return 0;
+    return exit_code;
 }

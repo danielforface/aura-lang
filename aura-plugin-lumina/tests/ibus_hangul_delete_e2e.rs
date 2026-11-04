@@ -173,7 +173,7 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     tree.children.push(node("TextInput",&[
         ("x","20"),("y","110"),("width","400"),("height","65"),
         ("value","PRIVATE-CANARY"),("value_revision","1"),("on_change","cb:954"),
-        ("surrounding_text","none"),
+        ("surrounding_text","full"),("type","password"),
     ]));
     frames(&plugin,&tree,&mut ctx,4);
     assert!(plugin.diagnostic_resize_window(760,520));
@@ -206,4 +206,8 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     let restored=plugin.diagnostic_native_ibus_surrounding()
         .expect("explicit normal mode should restore ordinary IBus");
     assert_eq!(restored.0,"PUBLIC-CANARYz");
+    tree.children[0].set_prop("surrounding_text","unknown-mode");
+    frames(&plugin,&tree,&mut ctx,5);
+    assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
+        "unknown explicit policy must fail closed even on a normal field");
 }

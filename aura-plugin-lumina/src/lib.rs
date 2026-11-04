@@ -316,9 +316,14 @@ struct FocusedTextInput {
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn native_surrounding_policy_allows(node:&UiNode)->bool{
     if node.kind!="TextInput"{return false;}
-    if matches!(prop_string(node,"type").or_else(||prop_string(node,"input_type")),
-        Some("password")|Some("otp")|Some("payment")){return false;}
-    if matches!(prop_string(node,"sensitive"),Some("true")|Some("1")){return false;}
+    for key in ["type","input_type"]{
+        if prop_string(node,key).is_some_and(|value|
+            !matches!(value,"text"|"search"|"email"|"number"|"url"|"tel")){
+            return false; // Includes password, OTP and unknown types.
+        }
+    }
+    if prop_string(node,"sensitive")
+        .is_some_and(|value|!matches!(value,"false"|"0")){return false;}
     matches!(prop_string(node,"surrounding_text"),None|Some("full"))
 }
 /// Keep the engine's committed surrounding snapshot current *before* keys
@@ -1440,6 +1445,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     let authorized=win.focused_input.as_ref()
                         .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
                         .is_some_and(|(node,_)|native_surrounding_policy_allows(node));
+                    if !authorized {
+                        // Native reset discards IBus's preedit; discard the
+                        // matching local projection before direct typing too.
+                        if let Some(fi)=win.focused_input.as_mut(){
+                            fi.session.abandon_composition();
+                        }
+                    }
                     let native_focus=if authorized{focus}else{None};
                     let available=bus.set_surrounding_enabled(authorized)
                         && bus.sync_focus(native_focus);

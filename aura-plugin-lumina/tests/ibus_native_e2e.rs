@@ -90,7 +90,7 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)
 /// Phase 26 second behavioral RED: revoking native IME sharing during a live
 /// upstream preedit must also abandon the local projected, uncommitted text.
 /// No synthetic CompositionEvent or helper D/C frames are injected here.
-#[test]fn live_policy_change_during_active_ibus_preedit_abandons_it(){
+#[test]fn zzz_live_policy_change_during_active_ibus_preedit_abandons_it(){
     let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
     let mut app=node("App",&[("bg","#101820")]);
     app.children.push(node("TextInput",&[
@@ -123,7 +123,7 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)
 /// C/libibus boundary proof. A private native context starts with its
 /// SURROUNDING_TEXT capability OFF and must reject an S frame outright.
 /// This is controlled-protocol evidence, NOT engine-generated D/C evidence.
-#[test]fn live_helper_rejects_unpermitted_surrounding_frame(){
+#[test]fn zzz_live_helper_rejects_unpermitted_surrounding_frame(){
     use std::{io::Write,process::Stdio};
     let bin=std::env::var_os("LUMINA_IBUS_HELPER_BIN").expect("built real C helper");
     let mut child=Command::new(bin).arg("hangul")
