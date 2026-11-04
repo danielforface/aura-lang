@@ -287,6 +287,10 @@ struct LuminaWindow {
     last_native_caret:Option<Rectangle>,
     #[cfg(target_os="linux")]
     native_ibus: Option<ibus_native::NativeIbus>,
+    #[cfg(target_os="linux")]
+    native_ibus_reconnect:ibus_native::IbusReconnectBudget,
+    #[cfg(target_os="linux")]
+    native_ibus_serial_floor:u64,
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
@@ -1267,10 +1271,28 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     last_native_caret:None,
                     #[cfg(target_os="linux")]
                     native_ibus: ibus_native::NativeIbus::connect(),
+                    #[cfg(target_os="linux")]
+                    native_ibus_reconnect:ibus_native::IbusReconnectBudget::default(),
+                    #[cfg(target_os="linux")]
+                    native_ibus_serial_floor:0,
                 });
             }
 
             let win = win_ref.as_mut().expect("window initialized");
+
+            // Recovery occurs only for a PREVIOUSLY-LIVE native helper that
+            // was lost. The new real C child starts privacy capability OFF;
+            // no prior events, candidate pages or deletions are carried over.
+            // Retries are deterministic, frame-spaced, and capped per window.
+            #[cfg(target_os="linux")]
+            if win.native_ibus.is_none() && win.native_ibus_reconnect.tick(){
+                if let Some(mut fresh)=ibus_native::NativeIbus::connect(){
+                    fresh.set_serial_floor(win.native_ibus_serial_floor);
+                    win.native_ibus=Some(fresh);
+                }else{
+                    win.native_ibus_reconnect.arm();
+                }
+            }
 
             // Preload any image textures before begin_drawing (needs &mut RaylibHandle).
             ensure_textures_loaded(&mut win.rl, &win.thread, &mut win.textures, tree);
@@ -1546,7 +1568,20 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     helper_lost=bus.is_disconnected();
                 }
                 if helper_lost {
+                    if let Some(old)=win.native_ibus.as_ref(){
+                        win.native_ibus_serial_floor=
+                            win.native_ibus_serial_floor.max(old.last_serial());
+                    }
+                    // Discard every native event observed during a dying
+                    // generation. No old P/C/D/NativeReplace may be applied
+                    // after reconnect or given a fresh focus/authority epoch.
+                    pending_composition.clear();
+                    typed.clear(); // uncertain in-flight key: fail closed
                     win.native_ibus=None;
+                    win.native_ibus_reconnect.arm();
+                    win.last_candidate_bounds=None;
+                    win.candidate_font=None;
+                    win.last_native_caret=None;
                     if let Some(fi)=win.focused_input.as_mut() {
                         // A dead IME may not leave a permanent editor lock.
                         // Never commit a preedit that outlived its engine.
