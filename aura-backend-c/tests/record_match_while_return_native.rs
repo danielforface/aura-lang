@@ -218,8 +218,8 @@ cell wide_loop(wide: u64, start: u32, limit: u32) ->:
     assert_eq!(incomings.len(), 2);
     incomings[1].1 = wide; // U64 defined at function entry, but wrong U32 loop ABI.
     validate_module(&ir).expect("structural CFG/dominance valid; typed C must reject");
-    let err = emit_module(&ir, None)
-        .expect_err("provisional loop Phi inference must never hide mixed widths");
+    let err = emit_module(&ir, None).err()
+        .expect("provisional loop Phi inference must never hide mixed widths");
     assert!(err.message.contains("Phi") || err.message.contains("SSA"),
         "require explicit typed Phi/SSA refusal: {err}");
 }
