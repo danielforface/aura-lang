@@ -1,10 +1,11 @@
 //! EV-194 RED: Phi must be a contiguous block-prefix and known-typed
 //! terminator operands must match their primitive CFG/return contracts.
 //! Positive tests run real Aura source before and after IR optimization.
+use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{optimize_module, run_oracle_entry, validate_module, Inst, InstKind,
     OracleConfig, OracleValue, RValue, Terminator, ValueId};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, process::Command, time::{SystemTime, UNIX_EPOCH}};
 
 const SOURCE: &str = r#"
 cell join(flag: bool, a: u32, b: u32) ->:
@@ -149,4 +150,46 @@ fn known_typed_terminator_contracts_must_fail_closed() {
         .expect("source has return");
     ret.term=Terminator::Return(Some(bool_param));
     expect_refusal(&bad_return,"type","U32 return cannot yield known bool parameter");
+}
+
+#[test]
+fn optimized_real_source_compiles_and_runs_strict_native_clang_o0_o2() {
+    let mut optimized=real_source();
+    optimize_module(&mut optimized);
+    validate_module(&optimized).expect("post-optimization IR remains structurally valid");
+    let c=emit_module(&optimized,None).expect("optimized source should emit C");
+    let ns=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root=std::env::temp_dir().join(format!("aura-ev194-{}-{ns}",std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) { let _=fs::remove_dir_all(&self.0); }
+    }
+    let _cleanup=Cleanup(root.clone());
+    fs::write(root.join("aura_runtime.h"),c.runtime_h).unwrap();
+    fs::write(root.join("module.c"),&c.module_c).unwrap();
+    fs::write(root.join("driver.c"),concat!(
+        "#include <stdint.h>\n#include <stdbool.h>\n",
+        "uint32_t join(bool,uint32_t,uint32_t);\n",
+        "uint32_t loop_sum(uint32_t,uint32_t);\n",
+        "uint32_t dense(bool,uint32_t,uint32_t);\n",
+        "uint32_t const_join(uint32_t,uint32_t);\n",
+        "int main(void){return (",
+        "join(true,7,13)==8 && join(false,7,13)==15",
+        " && loop_sum(0,4)==4 && loop_sum(4,4)==4",
+        " && dense(true,0,7)==8 && dense(false,4,7)==7",
+        " && const_join(7,13)==8)?0:1;}\n"
+    )).unwrap();
+    for opt in ["-O0","-O2"] {
+        let exe=root.join(format!("ev194_{}", &opt[1..]));
+        let built=Command::new("clang")
+            .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+            .arg(&root).arg(root.join("module.c")).arg(root.join("driver.c"))
+            .arg("-o").arg(&exe).output().expect("Native CI provides Clang");
+        assert!(built.status.success(),"{opt} optimized C compilation: {}\n{}",
+            String::from_utf8_lossy(&built.stderr),c.module_c);
+        let ran=Command::new(exe).output().expect("execute optimized source native C");
+        assert!(ran.status.success(),"{opt} optimized C execution: {}",
+            String::from_utf8_lossy(&ran.stderr));
+    }
 }
