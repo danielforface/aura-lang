@@ -695,13 +695,22 @@ fn emit_function(
                             _ => None,
                         }
                     }
-                    InstKind::Phi { incomings } if !incomings.is_empty() => incomings
-                        .iter()
-                        .map(|(_, value)| known_ssa_types.get(value).copied())
-                        .collect::<Option<Vec<_>>>()
-                        .and_then(|ts| {
-                            ts.first().copied().filter(|first| ts.iter().all(|ty| ty == first))
-                        }),
+                    InstKind::Phi { incomings } if !incomings.is_empty() => {
+                        // Loop-carried SSA forms a legitimate type-inference
+                        // cycle: header Phi -> body Binary -> backedge Phi.
+                        // Seed the candidate from a *known* incoming (usually
+                        // the typed preheader). This is only a provisional
+                        // type used to unblock the fixed point; the mandatory
+                        // Phi declaration pass below checks EVERY incoming
+                        // before C is emitted, refusing mismatched widths.
+                        // Never default an entirely unknown Phi to U32.
+                        let known = incomings.iter()
+                            .filter_map(|(_, value)| known_ssa_types.get(value).copied())
+                            .collect::<Vec<_>>();
+                        known.first().copied().filter(|first|
+                            known.iter().all(|candidate| candidate == first)
+                        )
+                    },
                     // A user-cell Call is a typed SSA producer. Its result
                     // may be an incoming value of a join-block Phi even when
                     // the Call appears in a successor block in serialized IR.
