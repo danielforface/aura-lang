@@ -166,6 +166,35 @@ fn same_key_replace_pair(lines:&[String])->Option<(i32,u32)>{
     let (at,offset,count)=delete?;
     (at<commit?).then_some((offset,count))
 }
+/// A fixed, per-window recovery budget. A failed Native IBus child is never
+/// respawned in an unbounded loop; retries are tied to subsequent UI frames.
+#[derive(Clone,Debug,Default)]
+pub(crate) struct IbusReconnectBudget{
+    used:u8,
+    countdown:u16,
+    armed:bool,
+}
+impl IbusReconnectBudget{
+    const MAX_ATTEMPTS:u8=3;
+    const WAIT_FRAMES:[u16;3]=[24,72,144];
+    /// Starts a fresh cooldown only after a real child was lost or an
+    /// attempted connection failed. Does not retry unconfigured startup.
+    pub(crate) fn arm(&mut self){
+        if !self.armed && self.used<Self::MAX_ATTEMPTS{
+            self.countdown=Self::WAIT_FRAMES[self.used as usize];
+            self.armed=true;
+        }
+    }
+    /// At most one reconnect attempt in any frame; attempts are permanently
+    /// capped for this window, even if a recovered helper fails again.
+    pub(crate) fn tick(&mut self)->bool{
+        if !self.armed{return false;}
+        if self.countdown>0{self.countdown-=1;return false;}
+        self.armed=false;
+        self.used=self.used.saturating_add(1);
+        true
+    }
+}
 impl NativeIbus{
     pub(crate) fn connect()->Option<Self>{
         let executable=std::env::var_os("LUMINA_IBUS_HELPER_BIN")?;
@@ -367,6 +396,19 @@ impl NativeIbus{
     }
     pub(crate) fn take_native_replacements(&mut self)->Vec<NativeReplace>{
         std::mem::take(&mut self.native_replacements)
+    }
+    /// Diagnostic-only REAL child-process termination. No fake libibus
+    /// signals, protocol frames or composition events are injected.
+    #[cfg(feature="lumina-diagnostics")]
+    pub(crate) fn terminate_helper_for_diagnostic(&mut self)->bool{
+        self.child.kill().is_ok()
+    }
+    /// Preserve monotonically increasing native editor event sequences across
+    /// real helper process generations; a restarted child must not reuse the
+    /// old EditSession replay barrier even when bytes/caret match.
+    pub(crate) fn last_serial(&self)->u64{self.serial}
+    pub(crate) fn set_serial_floor(&mut self,serial:u64){
+        self.serial=self.serial.max(serial);
     }
     pub(crate) fn is_disconnected(&mut self)->bool{
         self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
@@ -589,6 +631,19 @@ impl Drop for NativeIbus{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn real_helper_recovery_budget_is_bounded_without_clock_or_sleep(){
+        let mut b=IbusReconnectBudget::default();
+        assert!(!b.tick(),"no automatic unconfigured retry");
+        for attempt in 0..IbusReconnectBudget::MAX_ATTEMPTS{
+            b.arm();
+            let wait=IbusReconnectBudget::WAIT_FRAMES[attempt as usize];
+            for _ in 0..wait{assert!(!b.tick());}
+            assert!(b.tick(),"exactly one retry after bounded frame delay");
+            assert!(!b.tick(),"cannot reconnect twice from same timer");
+        }
+        b.arm();
+        for _ in 0..200{assert!(!b.tick(),"lifetime attempt cap must hold");}
+    }
     #[test]fn adversarial_same_key_order_has_no_delete_authority(){
         let parse=|seq:&[&str]|same_key_replace_pair(
             &seq.iter().map(|s|s.to_string()).collect::<Vec<_>>());

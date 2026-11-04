@@ -211,3 +211,69 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
         "unknown explicit policy must fail closed even on a normal field");
 }
+
+
+/// LUMINA-IBUS-RECONNECT-ISOLATION-027: RED until the real helper can be
+/// re-created safely. This terminates the actual libibus C child process;
+/// no synthetic D/C or scripted composition signals are used.
+#[test]fn zzz_real_ibus_helper_death_recovers_with_new_authority(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let p=AuraLuminaPlugin::new();let mut ctx=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","440"),("height","70"),
+        ("value","RECOVER-"),("value_revision","1"),("on_change","cb:955"),
+        ("size","28"),("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    assert!(frames(&p,&app,&mut ctx,4).is_empty());
+    assert!(p.diagnostic_resize_window(760,520));
+    assert!(frames(&p,&app,&mut ctx,4).is_empty());
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("genuine X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut ctx,"Tab").is_empty());
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"RECOVER-");
+    let first=key(&p,&app,&mut ctx,"r");
+    assert_eq!(first.len(),1,"first real Hangul CommitText");
+    assert_eq!(first[0].text,"RECOVER-ㄱ");
+    assert!(p.diagnostic_native_ibus().unwrap_or(0)>=1);
+    assert!(p.diagnostic_terminate_native_ibus_helper(),
+        "must terminate a real live IBus C helper process");
+    assert!(frames(&p,&app,&mut ctx,2).is_empty(),
+        "dead helper cannot issue stale host edit events");
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "dead generation must be fully dropped");
+    assert_eq!(p.diagnostic_composition(955),None,
+        "abandoned helper must not retain active IME composition");
+    // During the bounded reconnect delay, normal local editing is usable.
+    let fallback=key(&p,&app,&mut ctx,"z");
+    assert_eq!(fallback.len(),1,"one direct fallback change, no old engine C");
+    assert_eq!(fallback[0].text,"RECOVER-ㄱz");
+    let during=frames(&p,&app,&mut ctx,100);
+    assert!(during.is_empty(),"recovering cannot replay stale native commits");
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "a fresh real helper must have reconnected, with new counters");
+    let snap=p.diagnostic_native_ibus_surrounding()
+        .expect("fresh helper must ACK updated host value before any new key");
+    assert_eq!(snap.0,"RECOVER-ㄱz");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0),
+        "old native replacement proofs must not survive process death");
+    assert!(p.diagnostic_native_ibus_deletion().is_none(),
+        "old engine D requests must not cross process generations");
+    let resumed=key(&p,&app,&mut ctx,"r");
+    eprintln!("LUMINA_IBUS_P27_RECONNECT_REAL_ENGINE resumed={resumed:?}");
+    assert_eq!(resumed.len(),1,"new upstream Hangul key still has one edit");
+    assert_eq!(resumed[0].callback_id,955);
+    assert_eq!(resumed[0].text,"RECOVER-ㄱzㄱ");
+    assert!(p.diagnostic_native_ibus_deletion().is_none(),
+        "new engine first key cannot reuse old syllable D");
+    // Reconnection must not bypass the phase26 privacy revocation.
+    app.children[0].set_prop("surrounding_text","none");
+    assert!(frames(&p,&app,&mut ctx,5).is_empty());
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "recovered helper must honor sensitive field opt-out");
+    let private=key(&p,&app,&mut ctx,"x");
+    assert_eq!(private.len(),1);
+    assert_eq!(private[0].text,"RECOVER-ㄱzㄱx");
+    assert!(p.diagnostic_native_ibus_surrounding().is_none());
+}
