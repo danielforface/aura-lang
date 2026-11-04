@@ -102,6 +102,28 @@ pub fn validate_module(module: &ModuleIR) -> Result<(), OracleError> {
     Ok(())
 }
 
+// EV-193: all non-Phi instruction uses are ordinary SSA uses at their
+// instruction position. Phi inputs are different: they are read on incoming
+// predecessor edges and are validated separately below.
+fn non_phi_operands(inst: &InstKind) -> Vec<ValueId> {
+    match inst {
+        InstKind::AllocCapability { .. } => Vec::new(),
+        InstKind::BindStrand { expr: RValue::Local(value), .. } => vec![*value],
+        InstKind::BindStrand { .. } => Vec::new(),
+        InstKind::Call { args, .. } | InstKind::ComputeKernel { args, .. } |
+        InstKind::ConstructEnumVariant { args, .. } => args.clone(),
+        InstKind::RangeCheckU32 { value, .. } | InstKind::RangeCheck { value, .. } => vec![*value],
+        InstKind::SetField { base, value, .. } => vec![*base, *value],
+        InstKind::ConstructRecord { fields, .. } =>
+            fields.iter().map(|(_, value)| *value).collect(),
+        InstKind::GetField { base, .. } | InstKind::GetEnumTag { base } |
+        InstKind::GetEnumPayload { base, .. } => vec![*base],
+        InstKind::Unary { operand, .. } => vec![*operand],
+        InstKind::Binary { left, right, .. } => vec![*left, *right],
+        InstKind::Phi { .. } => Vec::new(),
+    }
+}
+
 fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
     if f.name != name {
         return Err(OracleError {
@@ -232,14 +254,27 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
         }
         if !changed { break; }
     }
-    let mut definitions: HashMap<ValueId, BlockId> = HashMap::new();
+    // Record the defining instruction index (params are available from entry).
+    // A globally duplicated SSA destination is never a valid redefinition,
+    // even if both definitions live in different branches.
+    let mut definitions: HashMap<ValueId, (BlockId, Option<usize>)> = HashMap::new();
     for param in &f.params {
-        definitions.entry(param.value).or_insert(f.entry);
+        if definitions.insert(param.value, (f.entry, None)).is_some() {
+            return Err(OracleError { message: format!(
+                "oracle: function '{}' has duplicate parameter SSA definition {:?}",
+                f.name, param.value
+            ) });
+        }
     }
     for bb in &f.blocks {
-        for inst in &bb.insts {
+        for (index, inst) in bb.insts.iter().enumerate() {
             if let Some(value) = inst.dest {
-                definitions.entry(value).or_insert(bb.id);
+                if definitions.insert(value, (bb.id, Some(index))).is_some() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' has duplicate SSA definition {:?} in {:?}",
+                        f.name, value, bb.id
+                    ) });
+                }
             }
         }
     }
@@ -262,7 +297,7 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
                         f.name, bb.id, from
                     ) });
                 }
-                let def_bb = definitions.get(value).ok_or_else(|| OracleError {
+                let (def_bb, _) = definitions.get(value).ok_or_else(|| OracleError {
                     message: format!(
                         "oracle: function '{}' Phi in {:?} references undefined incoming SSA value {:?}",
                         f.name, bb.id, value
@@ -281,6 +316,56 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
                     f.name, bb.id, actual, present
                 ) });
             }
+        }
+    }
+
+    // For non-Phi uses, the definition must dominate the *use block*,
+    // not merely one incoming predecessor. Inside one block, it must also
+    // precede the use. A terminator reads values after the last instruction.
+    // All reachable ordinary instruction/terminator operand variants are
+    // checked, not just Binary or Return.
+    let check_use = |value: ValueId, use_bb: BlockId, before: usize, context: &str|
+        -> Result<(), OracleError>
+    {
+        let &(def_bb, def_pos) = definitions.get(&value).ok_or_else(|| OracleError {
+            message: format!(
+                "oracle: function '{}' undefined SSA value {:?} in {} of {:?}",
+                f.name, value, context, use_bb
+            )
+        })?;
+        if def_bb == use_bb {
+            if let Some(pos) = def_pos {
+                if pos >= before {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' SSA {:?} use-before-definition in {} of {:?} (definition index {}, use index {})",
+                        f.name, value, context, use_bb, pos, before
+                    ) });
+                }
+            }
+        } else if !dominators[&use_bb].contains(&def_bb) {
+            return Err(OracleError { message: format!(
+                "oracle: function '{}' SSA {:?} definition in {:?} does not dominate {} in {:?}",
+                f.name, value, def_bb, context, use_bb
+            ) });
+        }
+        Ok(())
+    };
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        for (index, inst) in bb.insts.iter().enumerate() {
+            if matches!(&inst.kind, InstKind::Phi { .. }) { continue; }
+            for value in non_phi_operands(&inst.kind) {
+                check_use(value, bb.id, index, "non-Phi instruction")?;
+            }
+        }
+        let terminal_uses: Vec<ValueId> = match &bb.term {
+            Terminator::Return(Some(value)) => vec![*value],
+            Terminator::CondBr { cond, .. } => vec![*cond],
+            Terminator::Switch { scrut, .. } => vec![*scrut],
+            Terminator::Return(None) | Terminator::Br(_) => Vec::new(),
+        };
+        for value in terminal_uses {
+            check_use(value, bb.id, bb.insts.len(), "terminator")?;
         }
     }
 
