@@ -143,7 +143,9 @@ int main(int argc,char**argv) {
     g_signal_connect(ic,"hide-lookup-table",G_CALLBACK(hide_lookup),NULL);
     g_signal_connect(ic,"require-surrounding-text",G_CALLBACK(request_surrounding),NULL);
     g_signal_connect(ic,"delete-surrounding-text",G_CALLBACK(delete_surrounding),NULL);
-    ibus_input_context_set_capabilities(ic,IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT | IBUS_CAP_LOOKUP_TABLE | IBUS_CAP_SURROUNDING_TEXT);
+    const guint base_caps=IBUS_CAP_FOCUS | IBUS_CAP_PREEDIT_TEXT | IBUS_CAP_LOOKUP_TABLE;
+    int surrounding_enabled=0;
+    ibus_input_context_set_capabilities(ic,base_caps);
     ibus_input_context_set_engine(ic,argv[1]);
     pump_ms(350);
     IBusEngineDesc *initial=ibus_input_context_get_engine(ic);
@@ -152,9 +154,25 @@ int main(int argc,char**argv) {
     puts("READY");
     /* Fixed input frame: no getline allocation before checking its size. */
     char line[2112];
+    int exit_code=0;
     while(fgets(line,sizeof(line),stdin)) {
         if (!strchr(line,'\n')) {
             puts("FATAL input_too_long");break;
+        }
+        if(!strcmp(line,"V0\n") || !strcmp(line,"V1\n")){
+            // Clear old text BEFORE changing the external engine capability.
+            IBusText *empty=ibus_text_new_from_string("");
+            g_object_ref_sink(empty);
+            ibus_input_context_set_surrounding_text(ic,empty,0,0);
+            g_object_unref(empty);
+            int enable=(line[1]=='1');
+            ibus_input_context_set_capabilities(ic,base_caps |
+                (enable ? IBUS_CAP_SURROUNDING_TEXT : 0));
+            ibus_input_context_reset(ic);
+            surrounding_enabled=enable;
+            pump_ms(20);
+            fprintf(stderr,"LUMINA_IBUS_SURROUNDING_POLICY enabled=%d (content redacted)\n",enable);
+            puts("A");continue;
         }
         if(!strcmp(line,"F1\n")){
             ibus_input_context_focus_in(ic);
@@ -179,9 +197,17 @@ int main(int argc,char**argv) {
         if(!strcmp(line,"F0\n")){
             ibus_input_context_focus_out(ic);
             ibus_input_context_reset(ic);
+            IBusText *empty=ibus_text_new_from_string("");
+            g_object_ref_sink(empty);
+            ibus_input_context_set_surrounding_text(ic,empty,0,0);
+            g_object_unref(empty);
             pump_ms(40);puts("A");continue;
         }
         if(!strncmp(line,"S\t",2)){
+            if(!surrounding_enabled){
+                puts("FATAL surrounding_not_authorized");
+                exit_code=6;break;
+            }
             char *start=line+2,*cursor=strchr(start,'\t');
             if(!cursor){puts("FATAL invalid_surrounding_frame");break;}
             *cursor++='\0';
@@ -257,5 +283,5 @@ int main(int argc,char**argv) {
     ibus_input_context_focus_out(ic);
     g_object_unref(ic);
     g_object_unref(bus);
-    return 0;
+    return exit_code;
 }

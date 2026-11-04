@@ -156,3 +156,58 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_native_ibus_deletion().is_none(),
         "first new-generation Hangul key has only D(0,0), not a stale D(-1,1)");
 }
+
+
+/// Phase 26 semantic RED: privacy is an outbound native protocol property,
+/// not a screen mask or a suppressed diagnostic. Values here are nonsecret
+/// test canaries. This uses the REAL ibus-hangul daemon and X11 window.
+#[test]fn live_surrounding_policy_revokes_context_without_cross_field_reuse(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")]);
+    tree.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","400"),("height","65"),
+        ("value","PUBLIC-CANARY"),("value_revision","1"),("on_change","cb:953"),
+    ]));
+    tree.children.push(node("TextInput",&[
+        ("x","20"),("y","110"),("width","400"),("height","65"),
+        ("value","PRIVATE-CANARY"),("value_revision","1"),("on_change","cb:954"),
+        ("surrounding_text","full"),("type","password"),
+    ]));
+    frames(&plugin,&tree,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(760,520));
+    frames(&plugin,&tree,&mut ctx,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    let ordinary=plugin.diagnostic_native_ibus_surrounding()
+        .expect("ordinary field must preserve phase-25 protocol");
+    assert_eq!(ordinary.0,"PUBLIC-CANARY");
+    // Change policy while still focused. A stale helper ACK or host revision
+    // must not make the previous published value authoritative again.
+    tree.children[0].set_prop("surrounding_text","none");
+    frames(&plugin,&tree,&mut ctx,5);
+    assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
+        "sensitive TextInput must not retain a native surrounding snapshot");
+    let typed=key(&plugin,&tree,&mut ctx,"z");
+    assert_eq!(typed.len(),1,"ordinary direct typing remains available without IME");
+    assert_eq!(typed[0].callback_id,953);
+    assert!(typed[0].text.ends_with('z'));
+    assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
+        "local edits cannot silently re-enable native sharing");
+    // The second field must never inherit the first field's text.
+    assert!(key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
+        "different private field must not inherit previous context");
+    tree.children[0].set_prop("surrounding_text","full");
+    assert!(key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    let restored=plugin.diagnostic_native_ibus_surrounding()
+        .expect("explicit normal mode should restore ordinary IBus");
+    assert_eq!(restored.0,"PUBLIC-CANARYz");
+    tree.children[0].set_prop("surrounding_text","unknown-mode");
+    frames(&plugin,&tree,&mut ctx,5);
+    assert!(plugin.diagnostic_native_ibus_surrounding().is_none(),
+        "unknown explicit policy must fail closed even on a normal field");
+}

@@ -95,6 +95,7 @@ pub(crate) struct NativeIbus{
     serial:u64,
     composing:bool,
     disconnected:bool,
+    surrounding_enabled:bool,
     /// Number of actual engine-produced nonempty preedit/commit callbacks.
     pub(crate) engine_events:usize,
     pub(crate) key_acks:usize,
@@ -147,6 +148,24 @@ fn parse_surrounding_delete_frame(line:&str)->Option<(i32,u32)>{
     ((-1024..=1024).contains(&offset)&&count>0&&count<=1024)
         .then_some((offset,count))
 }
+/// This guard never fabricates an engine transaction ID. It only narrows
+/// the proven SAME ProcessKeyEvent signal order; asynchronous cross-key
+/// deletes have no authority and remain unsupported.
+fn same_key_replace_pair(lines:&[String])->Option<(i32,u32)>{
+    let (mut delete,mut commit)=(None,None);
+    for (i,line) in lines.iter().enumerate(){
+        if line.starts_with("D\t"){
+            let (offset,count)=parse_surrounding_delete_frame(line)?;
+            if delete.replace((i,offset,count)).is_some(){return None;}
+        }else if line.starts_with("C\t"){
+            if commit.replace(i).is_some(){return None;}
+        }else if line.starts_with("P\t"){
+            return None;
+        }
+    }
+    let (at,offset,count)=delete?;
+    (at<commit?).then_some((offset,count))
+}
 impl NativeIbus{
     pub(crate) fn connect()->Option<Self>{
         let executable=std::env::var_os("LUMINA_IBUS_HELPER_BIN")?;
@@ -187,7 +206,7 @@ impl NativeIbus{
             let _=child.kill();let _=child.wait();return None;
         }
         Some(Self{child,input,output,focus:None,serial:0,
-            composing:false,disconnected:false,engine_events:0,
+            composing:false,disconnected:false,surrounding_enabled:false,engine_events:0,
             key_acks:0,release_acks:0,shifted_acks:0,
             candidate_events:0,candidate_click_acks:0,candidate_page:None,
             cursor_location_acks:0,cursor_location:None,
@@ -235,14 +254,32 @@ impl NativeIbus{
         }
         false
     }
+    /// Explicit privacy fence. The native helper starts with surrounding
+    /// disabled. An ACKed switch invalidates all previous editor authority.
+    pub(crate) fn set_surrounding_enabled(&mut self,enabled:bool)->bool{
+        if self.disconnected{return false;}
+        if self.surrounding_enabled==enabled{return true;}
+        self.context_epoch=None;
+        self.surrounding_text=None;
+        self.surrounding_last_delete=None;
+        self.native_replacements.clear();
+        self.candidate_page=None;
+        self.composing=false;
+        self.authority_generation=None;
+        if !self.send(if enabled{"V1"}else{"V0"}) || !self.await_ack(){
+            self.disconnected=true;return false;
+        }
+        self.surrounding_enabled=enabled;
+        true
+    }
     /// UTF-8 content remains owned by host editor; IBus positions are
     /// Unicode scalar indices (not bytes or graphemes). Entire snapshot is
     /// bounded to 1024 bytes; oversize text is NEVER partially/truncated.
     pub(crate) fn sync_surrounding_text(
         &mut self,callback_id:u64,content:&str,caret:u32,anchor:u32
     )->bool{
-        if self.disconnected || self.focus!=Some(callback_id) ||
-            content.len()>1024 || content.contains('\0') ||
+        if self.disconnected || !self.surrounding_enabled ||
+            self.focus!=Some(callback_id) || content.len()>1024 || content.contains('\0') ||
             content.chars().any(|c|c.is_control() ||
                 matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}')) {
             return false;
@@ -323,8 +360,8 @@ impl NativeIbus{
     /// Epoch is obtained from the actual editor in the same focused frame,
     /// *after* the helper ACKed the matching immutable surrounding snapshot.
     pub(crate) fn mark_context_epoch(&mut self,callback_id:u64,epoch:u64)->bool{
-        if self.disconnected||self.focus!=Some(callback_id)||
-            self.surrounding_text.is_none(){self.context_epoch=None;return false;}
+        if self.disconnected||!self.surrounding_enabled||
+            self.focus!=Some(callback_id)||self.surrounding_text.is_none(){self.context_epoch=None;return false;}
         self.context_epoch=Some(epoch);
         true
     }
@@ -410,7 +447,7 @@ impl NativeIbus{
     pub(crate) fn process_ibus_key_event(
         &mut self,key:NativeKeyEvent,target:Option<u64>
     )->Option<(bool,Vec<CompositionEvent>)>{
-        if !key.valid() || !self.sync_focus(target){return None;}
+        if !self.surrounding_enabled || !key.valid() || !self.sync_focus(target){return None;}
         let cb=target?;
         let context_at_key=self.surrounding_text.clone();
         let epoch_at_key=self.context_epoch;
@@ -457,11 +494,11 @@ impl NativeIbus{
         // Engine-proven D alone NEVER mutates the editor. Only one positive
         // D preceding one real C during this SAME ProcessKeyEvent can produce
         // an internal NativeReplace. Reject missing/stale contexts/epochs.
-        let replacement_proof=if delete_frames.len()==1 && commits.len()==1 &&
-            delete_frames[0].0<commits[0] && !self.composing &&
+        let replacement_proof=if !self.composing && self.surrounding_enabled &&
             self.focus==Some(cb){
-            context_at_key.zip(epoch_at_key).map(|(ctx,epoch)|
-                (ctx,epoch,delete_frames[0].1,delete_frames[0].2))
+            same_key_replace_pair(&lines).and_then(|(offset,count)|
+                context_at_key.zip(epoch_at_key).map(|(ctx,epoch)|
+                    (ctx,epoch,offset,count)))
         }else{None};
         let mut out=Vec::new();
         for l in lines{
@@ -552,6 +589,20 @@ impl Drop for NativeIbus{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn adversarial_same_key_order_has_no_delete_authority(){
+        let parse=|seq:&[&str]|same_key_replace_pair(
+            &seq.iter().map(|s|s.to_string()).collect::<Vec<_>>());
+        assert_eq!(parse(&["D\t-1\t1","C\teab080"]),Some((-1,1)));
+        for seq in [
+            vec!["D\t-1\t1"],vec!["C\teab080"],
+            vec!["C\teab080","D\t-1\t1"],
+            vec!["D\t-1\t1","D\t-1\t1","C\teab080"],
+            vec!["D\t-1\t1","C\teab080","C\teab080"],
+            vec!["D\t0\t0","C\teab080"],
+            vec!["D\t-1025\t1","C\teab080"],
+            vec!["P\teab080\t1","D\t-1\t1","C\teab080"],
+        ]{assert_eq!(parse(&seq),None,"ambiguous controlled sequence {seq:?}");}
+    }
     #[test]fn native_surrounding_delete_signal_bounds_never_apply_authority(){
         assert_eq!(parse_surrounding_delete_frame("D\t-2\t2"),Some((-2,2)));
         assert_eq!(parse_surrounding_delete_frame("D\t1024\t1"),Some((1024,1)));

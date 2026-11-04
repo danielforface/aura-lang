@@ -72,7 +72,18 @@ jobs:
             export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper"
             export LUMINA_IBUS_ENGINE="hangul"
             export LUMINA_IBUS_TEST_HANGUL_SWITCH="1"
-            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e -- --nocapture --test-threads=1
+            # Existing native preedit regression first. Each subsequent
+            # live Hangul mode test needs a FRESH daemon/input-mode generation:
+            # Hangul switch state remains global and persists across tests.
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e real_ibus_hangul_engine_x11_preedit_and_commit_without_injection -- --exact --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P26_FRESH_PREEDIT_ENGINE"
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P26_ENGINE_NOT_ACTIVE"; exit 26; }
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzz_live_policy_change_during_active_ibus_preedit_abandons_it -- --exact --nocapture --test-threads=1
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzz_live_helper_rejects_unpermitted_surrounding_frame -- --exact --nocapture --test-threads=1
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_input_semantics_e2e -- --nocapture --test-threads=1
             echo "LUMINA_IBUS_SELECT_CANDIDATE_ENGINE"
             unset LUMINA_IBUS_TEST_HANGUL_SWITCH
