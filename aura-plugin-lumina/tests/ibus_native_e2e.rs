@@ -85,3 +85,58 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)
     assert!(p.diagnostic_composition(936).is_none());
     drop(p);
 }
+
+
+/// Phase 26 second behavioral RED: revoking native IME sharing during a live
+/// upstream preedit must also abandon the local projected, uncommitted text.
+/// No synthetic CompositionEvent or helper D/C frames are injected here.
+#[test]fn live_policy_change_during_active_ibus_preedit_abandons_it(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","380"),("height","65"),
+        ("value","PUBLIC"),("value_revision","1"),
+        ("on_change","cb:937"),("size","28"),
+        ("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf")
+    ]));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_resize_window(640,420));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    assert!(key(&p,&app,&mut c,"r").is_empty());
+    assert!(p.diagnostic_composition(937).is_some(),
+        "registered upstream Hangul engine must create genuine preedit");
+    app.children[0].set_prop("surrounding_text","none");
+    assert!(frames(&p,&app,&mut c,5).is_empty());
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "revoked policy cannot preserve native surroundings");
+    assert!(p.diagnostic_composition(937).is_none(),
+        "old preedit must not keep the editor locked after revocation");
+    let events=key(&p,&app,&mut c,"z");
+    assert_eq!(events.len(),1,"direct local typing should resume after revocation");
+    assert_eq!((events[0].callback_id,events[0].text.as_str()),(937,"PUBLICz"));
+}
+
+/// C/libibus boundary proof. A private native context starts with its
+/// SURROUNDING_TEXT capability OFF and must reject an S frame outright.
+/// This is controlled-protocol evidence, NOT engine-generated D/C evidence.
+#[test]fn live_helper_rejects_unpermitted_surrounding_frame(){
+    use std::{io::Write,process::Stdio};
+    let bin=std::env::var_os("LUMINA_IBUS_HELPER_BIN").expect("built real C helper");
+    let mut child=Command::new(bin).arg("hangul")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("registered live IBus");
+    child.stdin.take().unwrap()
+        .write_all(b"S\t43414e415259\t6\t6\n").unwrap();
+    let out=child.wait_with_output().expect("helper must terminate on refusal");
+    let stdout=String::from_utf8(out.stdout).unwrap();
+    let stderr=String::from_utf8(out.stderr).unwrap();
+    assert!(!out.status.success());
+    assert!(stdout.contains("FATAL surrounding_not_authorized"),
+        "native helper must refuse S before permission, got: {stdout}");
+    assert!(!stdout.contains("43414e415259") && !stderr.contains("CANARY"),
+        "helper refusal and diagnostics must not disclose even a test canary");
+}
