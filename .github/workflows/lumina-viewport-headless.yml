@@ -76,6 +76,13 @@ jobs:
             # live Hangul mode test needs a FRESH daemon/input-mode generation:
             # Hangul switch state remains global and persists across tests.
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e real_ibus_hangul_engine_x11_preedit_and_commit_without_injection -- --exact --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P29_FRESH_HARD_CRASH_PREEDIT_ENGINE"
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P29_HARD_CRASH_ENGINE_NOT_ACTIVE"; exit 29; }
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzzz_live_sigkill_daemon_during_active_preedit -- --exact --nocapture --test-threads=1
             echo "LUMINA_IBUS_P26_FRESH_PREEDIT_ENGINE"
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
             ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
