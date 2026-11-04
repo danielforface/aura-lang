@@ -85,3 +85,74 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
         "the last engine-origin D request must be discarded on FocusOut");
     eprintln!("LUMINA_IBUS_P24_FOCUS_OUT_CLEARED real_deletion_advisory_only");
 }
+
+#[test]fn real_hangul_none_preedit_atomic_replace_and_undo(){
+    // The installed upstream engine sends genuine D(-1,1) before each C.
+    // Each real physical key must cause exactly ONE host change and one
+    // grapheme-safe EditSession undo snapshot, never duplicate old syllables.
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","440"),("height","70"),
+        ("value","ANCHOR"),("value_revision","1"),("on_change","cb:951"),
+        ("size","28"),("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_resize_window(760,520));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let w=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=w.lines().next().expect("X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    let keys=["r","k","s","k","r","k","t","k"];
+    let expected=["ANCHORㄱ","ANCHOR가","ANCHOR간","ANCHOR가나",
+        "ANCHOR가낙","ANCHOR가나가","ANCHOR가나갓","ANCHOR가나가사"];
+    for (i,k) in keys.iter().enumerate(){
+        let callbacks=key(&p,&app,&mut c,k);
+        let live=p.diagnostic_native_ibus_deletion();
+        let replacements=p.diagnostic_native_ibus_replacements();
+        eprintln!("LUMINA_IBUS_P25_ATOMIC_REPLACE key={k:?} expected={:?} callbacks={callbacks:?} engine_delete={live:?} paired={replacements:?}",
+            expected[i]);
+        assert_eq!(callbacks.len(),1,"each real engine D+C key must create ONE callback");
+        assert_eq!(callbacks[0].callback_id,951);
+        assert_eq!(callbacks[0].text,expected[i],"no duplicate Hangul syllables");
+        if i>0{
+            assert!(replacements.unwrap_or(0)>=i,
+                "same-key genuine IBus D→C replacement provenance required");
+        }
+    }
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(7));
+    let last=p.diagnostic_native_ibus_surrounding().unwrap();
+    assert_eq!(last.0,expected[7]);
+    assert_eq!(last.1 as usize,last.0.chars().count());
+    let mut press_ctrl=|letter:&str|{
+        xdo(&["keydown","ctrl"]);frames(&p,&app,&mut c,4);
+        xdo(&["keydown",letter]);let mut events=frames(&p,&app,&mut c,6);
+        xdo(&["keyup",letter]);events.extend(frames(&p,&app,&mut c,6));
+        xdo(&["keyup","ctrl"]);events.extend(frames(&p,&app,&mut c,4));
+        events
+    };
+    let undone=press_ctrl("z");
+    eprintln!("LUMINA_IBUS_P25_ONE_UNDO {undone:?}");
+    assert_eq!(undone.len(),1);
+    assert_eq!(undone[0].text,expected[6],
+        "one Ctrl+Z must revert the ENTIRE D+Commit pair, not only insertion");
+    let redone=press_ctrl("y");
+    eprintln!("LUMINA_IBUS_P25_ONE_REDO {redone:?}");
+    assert_eq!(redone.len(),1);
+    assert_eq!(redone[0].text,expected[7]);
+    // External authority change while the Hangul engine retains its prior
+    // syllable must reset native generation BEFORE the next physical key.
+    app.children[0].set_prop("value","HOST-2");
+    app.children[0].set_prop("value_revision","2");
+    assert!(frames(&p,&app,&mut c,5).is_empty());
+    let rebased=p.diagnostic_native_ibus_surrounding().unwrap();
+    assert_eq!(rebased.0,"HOST-2");
+    let next=key(&p,&app,&mut c,"r");
+    eprintln!("LUMINA_IBUS_P25_REBASE_NO_STALE_DELETE {next:?}");
+    assert_eq!(next.len(),1);
+    assert_eq!(next[0].text,"HOST-2ㄱ");
+    assert!(p.diagnostic_native_ibus_deletion().is_none(),
+        "first new-generation Hangul key has only D(0,0), not a stale D(-1,1)");
+}

@@ -73,6 +73,20 @@ fn parse_lookup_frame(line:&str,callback_id:u64)->Option<Option<IbusCandidatePag
     }
     Some(Some(IbusCandidatePage{callback_id,cursor,page_start,total,candidates}))
 }
+/// NOT a public synthetic CompositionEvent. Created only by the real
+/// libibus helper after the same physical key emits one bounded D before C.
+#[derive(Clone,Debug)]
+pub(crate) struct NativeReplace{
+    pub(crate) callback_id:u64,
+    pub(crate) sequence:u64,
+    pub(crate) authority_epoch:u64,
+    pub(crate) expected:String,
+    pub(crate) caret_scalar:u32,
+    pub(crate) anchor_scalar:u32,
+    pub(crate) offset:i32,
+    pub(crate) count:u32,
+    pub(crate) text:String,
+}
 pub(crate) struct NativeIbus{
     child:Child,
     input:ChildStdin,
@@ -96,6 +110,11 @@ pub(crate) struct NativeIbus{
     pub(crate) surrounding_last_delete:Option<(i32,u32)>,
     pub(crate) surrounding_requires:usize,
     pub(crate) surrounding_text:Option<(String,u32,u32)>,
+    /// An acknowledged, focused screen-context's current host edit epoch.
+    context_epoch:Option<u64>,
+    authority_generation:Option<(u64,u64)>,
+    native_replacements:Vec<NativeReplace>,
+    pub(crate) native_replacement_pairs:usize,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
 }
 fn decode_hex(input:&str)->Option<String>{
@@ -174,7 +193,9 @@ impl NativeIbus{
             cursor_location_acks:0,cursor_location:None,
             surrounding_text_acks:0,surrounding_delete_requests:0,
             surrounding_last_delete:None,
-            surrounding_requires:0,surrounding_text:None})
+            surrounding_requires:0,surrounding_text:None,
+            context_epoch:None,authority_generation:None,
+            native_replacements:Vec::new(),native_replacement_pairs:0})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -235,6 +256,7 @@ impl NativeIbus{
             use std::fmt::Write as _;
             let _=write!(&mut hex,"{byte:02x}");
         }
+        self.context_epoch=None;
         if !self.send(&format!("S\t{hex}\t{caret}\t{anchor}"))||
             !self.await_ack(){return false;}
         self.surrounding_text=Some((content.to_owned(),caret,anchor));
@@ -271,6 +293,9 @@ impl NativeIbus{
         self.candidate_page=None;
         self.cursor_location=None;
         self.surrounding_text=None;
+        self.context_epoch=None;
+        self.authority_generation=None;
+        self.native_replacements.clear();
         self.surrounding_last_delete=None;
         self.focus=None;
         if let Some(id)=target{
@@ -279,6 +304,32 @@ impl NativeIbus{
             self.focus=Some(id);
         }
         true
+    }
+    /// A newer host revision invalidates the input-method's own previous
+    /// composition, even if new host text happens to be byte-for-byte equal.
+    /// Local edits leave the engine running; only host rebase resets it.
+    pub(crate) fn sync_authority_generation(
+        &mut self,callback_id:u64,generation:u64
+    )->bool{
+        if self.disconnected||self.focus!=Some(callback_id){return false;}
+        if self.authority_generation==Some((callback_id,generation)){return true;}
+        if self.authority_generation.is_some() &&
+            (!self.sync_focus(None)||!self.sync_focus(Some(callback_id))){
+            return false;
+        }
+        self.authority_generation=Some((callback_id,generation));
+        true
+    }
+    /// Epoch is obtained from the actual editor in the same focused frame,
+    /// *after* the helper ACKed the matching immutable surrounding snapshot.
+    pub(crate) fn mark_context_epoch(&mut self,callback_id:u64,epoch:u64)->bool{
+        if self.disconnected||self.focus!=Some(callback_id)||
+            self.surrounding_text.is_none(){self.context_epoch=None;return false;}
+        self.context_epoch=Some(epoch);
+        true
+    }
+    pub(crate) fn take_native_replacements(&mut self)->Vec<NativeReplace>{
+        std::mem::take(&mut self.native_replacements)
     }
     pub(crate) fn is_disconnected(&mut self)->bool{
         self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
@@ -361,6 +412,8 @@ impl NativeIbus{
     )->Option<(bool,Vec<CompositionEvent>)>{
         if !key.valid() || !self.sync_focus(target){return None;}
         let cb=target?;
+        let context_at_key=self.surrounding_text.clone();
+        let epoch_at_key=self.context_epoch;
         if !self.send(&format!("K\t{}\t{}\t{}\t0",
             key.keysym,key.modifiers,u8::from(key.released))){return None;}
         let mut lines=Vec::new();
@@ -380,6 +433,13 @@ impl NativeIbus{
                 }
                 break;
             }
+            if line.starts_with("D\t"){
+                if !self.observe_surrounding_signal(&line){
+                    self.disconnected=true;return Some((true,Vec::new()));
+                }
+                if line!="D\t0\t0"{lines.push(line);}
+                continue;
+            }
             if self.observe_surrounding_signal(&line){continue;}
             if line=="H"||line.starts_with("P\t")||line.starts_with("C\t")||line.starts_with("L\t"){
                 lines.push(line);
@@ -389,8 +449,23 @@ impl NativeIbus{
             self.disconnected=true;return Some((true,Vec::new()));
         };
         let committed=lines.iter().any(|s|s.starts_with("C\t"));
+        let delete_frames:Vec<(usize,i32,u32)>=lines.iter().enumerate()
+            .filter_map(|(i,line)|parse_surrounding_delete_frame(line)
+                .map(|(offset,count)|(i,offset,count))).collect();
+        let commits:Vec<usize>=lines.iter().enumerate()
+            .filter_map(|(i,line)|line.starts_with("C\t").then_some(i)).collect();
+        // Engine-proven D alone NEVER mutates the editor. Only one positive
+        // D preceding one real C during this SAME ProcessKeyEvent can produce
+        // an internal NativeReplace. Reject missing/stale contexts/epochs.
+        let replacement_proof=if delete_frames.len()==1 && commits.len()==1 &&
+            delete_frames[0].0<commits[0] && !self.composing &&
+            self.focus==Some(cb){
+            context_at_key.zip(epoch_at_key).map(|(ctx,epoch)|
+                (ctx,epoch,delete_frames[0].1,delete_frames[0].2))
+        }else{None};
         let mut out=Vec::new();
         for l in lines{
+            if l.starts_with("D\t"){continue;}
             if l.starts_with("L\t"){
                 match parse_lookup_frame(&l,cb){
                     Some(Some(page))=>{
@@ -413,6 +488,29 @@ impl NativeIbus{
                 }
             }else if let Some(hex)=l.strip_prefix("C\t"){
                 let Some(text)=decode_hex(hex)else{self.disconnected=true;return Some((true,Vec::new()));};
+                if !delete_frames.is_empty(){
+                    if let Some(((expected,caret_scalar,anchor_scalar),epoch,offset,count))=
+                        replacement_proof.as_ref(){
+                        if !text.is_empty() && self.native_replacements.len()<MAX_LINES_PER_KEY{
+                            let seq=self.new_serial()?;
+                            self.native_replacements.push(NativeReplace{
+                                callback_id:cb,sequence:seq,authority_epoch:*epoch,
+                                expected:expected.clone(),caret_scalar:*caret_scalar,
+                                anchor_scalar:*anchor_scalar,offset:*offset,count:*count,
+                                text,
+                            });
+                            self.native_replacement_pairs=self.native_replacement_pairs
+                                .saturating_add(1);
+                            self.engine_events=self.engine_events.saturating_add(1);
+                            consumed=true;
+                            self.composing=false;
+                            self.candidate_page=None;
+                        }
+                    }
+                    // A D without an authenticated same-key C is advisory only;
+                    // suppress any unpaired C rather than duplicate edit.
+                    continue;
+                }
                 if !self.composing{
                     let seq=self.new_serial()?;
                     self.add(CompositionEvent::Start{callback_id:cb,sequence:seq},&mut out);

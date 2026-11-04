@@ -81,6 +81,8 @@ pub(crate) struct EditSession {
     last_composition_sequence: u64,
     /// Monotonic barrier for authority rebases, edits and selection history.
     authority_epoch: u64,
+    /// Changes only when host authority rebases (not local editing).
+    rebase_generation: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
@@ -118,9 +120,11 @@ impl EditSession {
     pub(crate) fn new(text: String) -> Self {
         let end=grapheme_count(&text);
         Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
-            preedit:None, last_composition_sequence:0, authority_epoch:0 }
+            preedit:None, last_composition_sequence:0,
+            authority_epoch:0,rebase_generation:0 }
     }
     pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
+    pub(crate) fn rebase_generation(&self)->u64{self.rebase_generation}
     /// Shaped/BiDi GPU hit-testing must pass through this method rather
     /// than assigning caret/anchor directly, so stale IME deletion tokens
     /// are invalidated even if the user navigates away and back.
@@ -187,6 +191,46 @@ impl EditSession {
         self.advance_authority_epoch();
         true
     }
+    /// Exactly one committed D→C replacement, not a standalone engine delete.
+    /// The native adapter supplies a focus-owned, engine-key-local D then C
+    /// proof; edit authority independently checks the exact snapshot + epoch.
+    /// IBus offsets count Unicode scalars; deletion must align to BOTH UAX29
+    /// grapheme boundaries, otherwise reject the complete transaction.
+    pub(crate) fn replace_surrounding_if_snapshot(
+        &mut self,epoch:u64,expected:&str,
+        expected_caret_scalar:u32,expected_anchor_scalar:u32,
+        offset:i32,count:u32,replacement:&str,sequence:u64
+    )->Option<bool>{
+        if sequence==0||sequence<=self.last_composition_sequence ||
+            self.composing()||self.authority_epoch!=epoch||
+            self.buffer!=expected||self.caret!=self.anchor||
+            self.buffer.len()>1024||!valid_preedit(replacement){
+            return None;
+        }
+        let caret_byte=byte_offset(&self.buffer,self.caret);
+        let anchor_byte=byte_offset(&self.buffer,self.anchor);
+        if self.buffer[..caret_byte].chars().count()!=expected_caret_scalar as usize||
+            self.buffer[..anchor_byte].chars().count()!=expected_anchor_scalar as usize{
+            return None;
+        }
+        let (a,b,_,_)=Self::scalar_range_to_grapheme_bounds(
+            &self.buffer,self.caret,offset,count)?;
+        let next_size=self.buffer.len().checked_sub(b-a)?
+            .checked_add(replacement.len())?;
+        if next_size>MAX_PROJECTED_TEXT_BYTES{return None;}
+        let mut next=self.buffer.clone();
+        next.replace_range(a..b,replacement);
+        self.last_composition_sequence=sequence;
+        if next==self.buffer{return Some(false);}
+        let old=self.snapshot();
+        self.buffer=next;
+        self.caret=grapheme_index_at_or_after_byte(&self.buffer,a+replacement.len());
+        self.anchor=self.caret;
+        Self::push(&mut self.undo,old);
+        self.redo.clear();
+        self.advance_authority_epoch();
+        Some(true)
+    }
     fn snapshot(&self) -> Snapshot {
         Snapshot { buffer:self.buffer.clone(),caret:self.caret,anchor:self.anchor }
     }
@@ -240,9 +284,11 @@ impl EditSession {
     pub(crate) fn rebase_authority(&mut self,text:String){
         let last=self.last_composition_sequence;
         let next=self.authority_epoch.saturating_add(1);
+        let generation=self.rebase_generation.saturating_add(1);
         *self=Self::new(text);
         self.last_composition_sequence=last;
         self.authority_epoch=next;
+        self.rebase_generation=generation;
     }
     /// Non-authoritative projection used by GPU and measured viewport only.
     /// The source buffer, caret, selection, undo and redo remain unchanged.
@@ -358,6 +404,63 @@ impl EditSession {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]fn real_engine_d_then_c_replacement_is_one_undo_not_two_edits(){
+        let mut s=EditSession::new("ANCHORㄱ".into());
+        let first=s.authority_epoch();
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            first,"ANCHORㄱ",7,7,-1,1,"가",101),Some(true));
+        assert_eq!((s.buffer.as_str(),s.caret,s.anchor),("ANCHOR가",7,7));
+        assert_eq!(s.undo_len(),1);
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            first,"ANCHORㄱ",7,7,-1,1,"가",101),None);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"ANCHORㄱ");
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            first,"ANCHORㄱ",7,7,-1,1,"가",102),None,
+            "an old host snapshot cannot be replayed after Undo restores its bytes");
+        assert!(s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"ANCHOR가");
+    }
+    #[test]fn real_engine_replace_rejects_half_flag_zwj_and_combining(){
+        for text in ["A🇮🇱Z","Ae\u{301}Z","A👨‍👩‍👦Z"]{
+            let mut s=EditSession::new(text.into());
+            let epoch=s.authority_epoch();
+            let total=text.chars().count() as i32;
+            assert_eq!(s.replace_surrounding_if_snapshot(
+                epoch,text,total as u32,total as u32,-2,1,"x",1),None);
+            assert_eq!(s.buffer,text);
+            assert_eq!(s.undo_len(),0);
+        }
+    }
+    #[test]fn real_engine_replace_rejects_rebase_selection_epoch_and_preedit(){
+        let mut s=EditSession::new("ABㄱ".into());
+        let epoch=s.authority_epoch();
+        s.rebase_authority("ABㄱ".into());
+        assert_eq!(s.rebase_generation(),1);
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"ABㄱ",3,3,-1,1,"가",1),None);
+        let current=s.authority_epoch();
+        assert!(s.set_visual_caret(1,true));
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            current,"ABㄱ",3,3,-1,1,"가",1),None);
+        assert!(s.start_composition(1));
+        let cur=s.authority_epoch();
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            cur,"ABㄱ",1,3,-1,1,"가",2),None);
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]fn real_engine_replacement_checks_unicode_scalar_caret_not_graphemes(){
+        let mut s=EditSession::new("🇮🇱Z".into());
+        let epoch=s.authority_epoch();
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"🇮🇱Z",2,2,-1,1,"X",1),None);
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"🇮🇱Z",3,3,-1,1,"X",1),Some(true));
+        assert_eq!(s.buffer,"🇮🇱X");
+        assert_eq!(s.undo_len(),1);
+    }
+
     #[test]fn gpu_visual_caret_roundtrip_cannot_reuse_stale_delete_snapshot(){
         let mut s=EditSession::new("ABCDE".into());
         let (old,original)=(s.authority_epoch(),s.buffer.clone());
