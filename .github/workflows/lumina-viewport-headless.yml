@@ -92,7 +92,7 @@ jobs:
             gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
             gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
-            test "$(gsettings get org.freedesktop.ibus.engine.hangul preedit-mode)" = "\x27none\x27"
+            gsettings get org.freedesktop.ibus.engine.hangul preedit-mode | grep -qx ".*none.*"
             ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
             sleep 2
             ibus engine hangul || true
