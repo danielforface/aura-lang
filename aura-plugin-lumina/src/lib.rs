@@ -980,6 +980,14 @@ impl AuraLuminaPlugin {
         self.window.borrow().as_ref()?.native_ibus.as_ref()
             .map(|bus|bus.engine_events)
     }
+    /// Kill the genuine running libibus helper, not the daemon or mock data.
+    /// Available only with diagnostics for an actual X11 recovery E2E.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_terminate_native_ibus_helper(&self)->bool{
+        self.window.borrow_mut().as_mut()
+            .and_then(|win|win.native_ibus.as_mut())
+            .is_some_and(|bus|bus.terminate_helper_for_diagnostic())
+    }
     /// Acknowledged by the real helper, not an emulated keyboard stream.
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{

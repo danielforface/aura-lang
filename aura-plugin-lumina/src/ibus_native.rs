@@ -368,6 +368,12 @@ impl NativeIbus{
     pub(crate) fn take_native_replacements(&mut self)->Vec<NativeReplace>{
         std::mem::take(&mut self.native_replacements)
     }
+    /// Diagnostic-only REAL child-process termination. No fake libibus
+    /// signals, protocol frames or composition events are injected.
+    #[cfg(feature="lumina-diagnostics")]
+    pub(crate) fn terminate_helper_for_diagnostic(&mut self)->bool{
+        self.child.kill().is_ok()
+    }
     pub(crate) fn is_disconnected(&mut self)->bool{
         self.disconnected || matches!(self.child.try_wait(),Ok(Some(_))|Err(_))
     }
