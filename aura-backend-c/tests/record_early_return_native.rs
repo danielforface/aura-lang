@@ -11,6 +11,13 @@ const SOURCE: &str = r#"
 type High = u64[4294967296..4294967316]
 cell id_high(v: High) ->:
     yield v
+cell normal_phi(flag: bool, a: u32, b: u32) ->:
+    val mut chosen: u32 = a
+    if flag:
+        chosen = a + 1
+    else:
+        chosen = b + 1
+    yield chosen
 cell early_then(flag: bool, a: u32, b: u32) ->:
     val mut chosen: u32 = a
     if flag:
@@ -171,5 +178,53 @@ fn source_early_returns_have_only_reachable_phi_incomings_and_strict_native_o0_o
         let run = Command::new(exe).output().expect("execute native driver");
         assert!(run.status.success(), "{opt}: {}\n{}",
             String::from_utf8_lossy(&run.stderr), c.module_c);
+    }
+}
+
+#[test]
+fn adversarial_phi_incoming_edges_and_branch_local_dominance_fail_closed() {
+    let ast = aura_parse::parse_source(SOURCE).expect("real Aura source parses");
+    let pristine = lower_program(&ast).expect("source checker and lowering");
+    validate_module(&pristine).expect("unmodified source IR is valid");
+    let base = pristine.functions.get("normal_phi").expect("normal source Phi");
+    let (join_index, phi_index) = base.blocks.iter().enumerate().find_map(|(bi, bb)| {
+        bb.insts.iter().enumerate().find(|(_, inst)|
+            matches!(inst.kind, InstKind::Phi { .. })).map(|(ii, _)| (bi, ii))
+    }).expect("normal source has a real two-input Phi");
+    let incomings = match &base.blocks[join_index].insts[phi_index].kind {
+        InstKind::Phi { incomings } => incomings.clone(),
+        _ => unreachable!(),
+    };
+    assert_eq!(incomings.len(), 2, "must have two live predecessors");
+
+    // The old structural validator accepted these corrupted incoming sets.
+    for kind in ["non_predecessor", "missing", "duplicate", "return_edge", "non_dominating"] {
+        let mut forged = pristine.clone();
+        let f = forged.functions.get_mut("normal_phi").unwrap();
+        if kind == "return_edge" {
+            // Convert a recorded join predecessor to a terminal Return.
+            let old_pred = incomings[0].0;
+            let bb = f.blocks.iter_mut().find(|b| b.id == old_pred).unwrap();
+            bb.term = Terminator::Return(Some(incomings[0].1));
+        } else {
+            let InstKind::Phi { incomings: bad } =
+                &mut f.blocks[join_index].insts[phi_index].kind else { unreachable!() };
+            match kind {
+                "non_predecessor" => bad[0].0 = f.entry,
+                "missing" => { bad.pop(); },
+                "duplicate" => bad.push(bad[0]),
+                "non_dominating" => bad[0].1 = incomings[1].1,
+                _ => unreachable!(),
+            }
+        }
+        let err = validate_module(&forged).expect_err(
+            "adversarial Phi mutation must be caught before Oracle/C execution");
+        assert!(err.message.contains("Phi"), "{kind}: {err}");
+        if kind == "non_dominating" {
+            assert!(err.message.contains("dominat"), "{kind}: {err}");
+        } else {
+            assert!(err.message.contains("predecessor") || err.message.contains("incoming"),
+                "{kind}: {err}");
+        }
     }
 }
