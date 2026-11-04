@@ -44,11 +44,9 @@ cell early_nested(a: bool, b: bool, x: u32, y: u32) ->:
         chosen = x
     yield chosen
 cell early_high(flag: bool, a: High, b: High) ->:
-    val mut chosen: High = id_high(a)
+    val chosen: High = id_high(a)
     if flag:
         yield id_high(b)
-    else:
-        chosen = id_high(a)
     yield chosen
 "#;
 
