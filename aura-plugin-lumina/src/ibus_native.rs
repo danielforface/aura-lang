@@ -159,12 +159,36 @@ fn same_key_replace_pair(lines:&[String])->Option<(i32,u32)>{
             if delete.replace((i,offset,count)).is_some(){return None;}
         }else if line.starts_with("C\t"){
             if commit.replace(i).is_some(){return None;}
-        }else if line.starts_with("P\t"){
+        }else if line=="B" || line.starts_with("P\t"){
             return None;
         }
     }
     let (at,offset,count)=delete?;
     (at<commit?).then_some((offset,count))
+}
+/// The helper emits B immediately BEFORE calling the actual native
+/// ProcessKeyEvent. Signals pumped from GLib before B are late/idle and
+/// must never be attributed to this new physical key. B is a LOCAL protocol
+/// fence, not a provenance ID invented for the external IME engine.
+/// Signals that race AFTER B are not claimed to have universal provenance.
+#[derive(Default)]
+struct KeyDispatchFence { begun:bool }
+impl KeyDispatchFence {
+    /// Some(false) = discard stale pre-dispatch frame / consume B.
+    /// Some(true) = frame belongs to the bounded dispatch observation window.
+    /// None = malformed marker order, R before B or unsupported wire frame.
+    fn admit(&mut self,line:&str)->Option<bool>{
+        if !self.begun{
+            if line=="B"{self.begun=true;return Some(false);}
+            if line=="N"||line=="H"||line.starts_with("D\t")||
+                line.starts_with("C\t")||line.starts_with("P\t")||
+                line.starts_with("L\t"){
+                return Some(false);
+            }
+            return None;
+        }
+        (line!="B").then_some(true)
+    }
 }
 /// Fixed recovery budget per explicitly authorized host revision.
 /// Never restart a failed native child in an unbounded automatic loop;
@@ -542,10 +566,15 @@ impl NativeIbus{
             key.keysym,key.modifiers,u8::from(key.released))){return None;}
         let mut lines=Vec::new();
         let mut handled=None;
+        let mut dispatch=KeyDispatchFence::default();
         for _ in 0..MAX_LINES_PER_KEY{
             let Some(line)=self.next()else{
                 self.disconnected=true;return Some((true,Vec::new()));
             };
+            let Some(in_dispatch)=dispatch.admit(&line)else{
+                self.disconnected=true;return Some((true,Vec::new()));
+            };
+            if !in_dispatch{continue;}
             if let Some(bit)=line.strip_prefix("R\t"){
                 handled=match bit{"1"=>Some(true),"0"=>Some(false),_=>None};
                 if handled.is_some(){
@@ -718,6 +747,22 @@ mod tests{
     /// Controlled PROTOCOL sequence, NOT a claimed genuine engine trace.
     /// A D/C from the helper's idle/pre-dispatch GLib pump must never be
     /// assigned to the *following* ProcessKeyEvent, even if an R arrives.
+    /// Pure wire-protocol test: these frames are CONTROLLED INPUT, not
+    /// evidence that an upstream IBus engine emitted delayed signals.
+    #[test]fn key_dispatch_fence_drops_late_pre_key_frames_and_rejects_duplicate_begin(){
+        let mut fence=KeyDispatchFence::default();
+        for stale in ["D\t-1\t1","C\teab080","P\teab080\t1","L\t0","N","H"]{
+            assert_eq!(fence.admit(stale),Some(false),"{stale:?} must be quarantined");
+        }
+        assert_eq!(fence.admit("B"),Some(false),"only helper starts a key cycle");
+        assert_eq!(fence.admit("D\t-1\t1"),Some(true));
+        assert_eq!(fence.admit("C\teab080"),Some(true));
+        assert_eq!(fence.admit("R\t1"),Some(true));
+        assert_eq!(fence.admit("B"),None,"second begin must be fail-closed");
+        let mut fresh=KeyDispatchFence::default();
+        assert_eq!(fresh.admit("R\t1"),None,"R cannot close a key never begun");
+        assert_eq!(fresh.admit("BOGUS"),None);
+    }
     #[test]fn pre_dispatch_delayed_pair_must_not_cross_key_boundary(){
         let stale=vec![
             "D\t-1\t1".to_string(),
