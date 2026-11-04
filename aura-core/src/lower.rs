@@ -664,13 +664,22 @@ impl<'c> Lowerer<'c> {
             }
 
             self.lower_block(&arm.body)?;
+            // Only fallthrough arms are predecessors of the match join.
+            // A nested if can move the current block to its own join, so
+            // the arm's initial 'bb' is not necessarily its outgoing edge.
             if !self.has_terminator() {
                 self.set_terminator(Terminator::Br(join_bb));
+                let exit_bb = self.current_block_id().unwrap_or(bb);
+                arm_locals.push((exit_bb, self.locals.clone()));
             }
-            arm_locals.push((bb, self.locals.clone()));
         }
 
-        // join
+        // When every arm ended with an explicit yield/Return, there is no
+        // reachable join. Preserve the terminal block and let the enclosing
+        // lower_block avoid manufacturing unreachable instructions.
+        if arm_locals.is_empty() {
+            return Ok(());
+        }
         self.locals = saved_locals;
         self.push_block(join_bb, m.span, ExecutionHint::Sequential);
         self.merge_locals_with_phi_multi(&arm_locals, m.span);
@@ -908,19 +917,26 @@ impl<'c> Lowerer<'c> {
         self.push_block(body_bb, w.body.span, ExecutionHint::Sequential);
         self.locals = cond_locals.clone();
         self.lower_block(&w.body)?;
-        if !self.has_terminator() {
+        // An explicit Return from the body has no loop backedge.
+        // For nested control flow, the actual outgoing block can differ
+        // from the initial body_bb (as with EV-190's nested if joins).
+        let has_backedge = !self.has_terminator();
+        if has_backedge {
             self.set_terminator(Terminator::Br(cond_bb));
         }
         let backedge_bb = self.current_block_id().unwrap_or(body_bb);
         let body_locals = self.locals.clone();
 
-        // Patch phi incoming values from the body.
-        // Note: only names present at loop entry get phis; new names in the body don't escape.
+        // Patch each header Phi using the *real* CFG predecessors.
+        // A body that always returns contributes no backedge; retain only
+        // the entry/preheader value rather than a phantom incoming.
         for (inst_idx, name, pre_v) in phi_fixups {
             let body_v = body_locals.get(&name).copied().unwrap_or(pre_v);
             let inst = &mut self.blocks[cond_block_idx].insts[inst_idx];
             if let InstKind::Phi { incomings } = &mut inst.kind {
-                if incomings.len() >= 2 {
+                if !has_backedge {
+                    incomings.truncate(1);
+                } else if incomings.len() >= 2 {
                     incomings[1].0 = backedge_bb;
                     incomings[1].1 = body_v;
                 }
