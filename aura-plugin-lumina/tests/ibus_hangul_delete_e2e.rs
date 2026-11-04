@@ -346,3 +346,64 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_native_ibus_surrounding().is_none(),
         "daemon recovery cannot resurrect a private TextInput policy");
 }
+
+
+/// Phase29 operator-rearm semantic RED: the existing three-attempt budget
+/// MUST remain exhausted, without unlimited automatic helper creation, until
+/// the host deliberately increments a monotonic App-level retry revision.
+/// Four REAL C helper SIGKILLs are used, not fake protocol frames. This is
+/// a controlled exhaustion proof, NOT a claim that the daemon stayed offline.
+#[test]fn zzzzz_recover_after_exhausted_real_helper_budget_with_host_revision(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let p=AuraLuminaPlugin::new();let mut ctx=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820"),("ibus_retry_revision","0")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","440"),("height","70"),
+        ("value","BUDGET-"),("value_revision","1"),("on_change","cb:957"),
+        ("size","28"),("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    assert!(frames(&p,&app,&mut ctx,4).is_empty());
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut ctx,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("genuine X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut ctx,"Tab").is_empty());
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"BUDGET-");
+    // The previously qualified bounded budget allows exactly THREE restarts.
+    for (attempt,wait) in [24usize,72,144].iter().enumerate(){
+        assert!(p.diagnostic_terminate_native_ibus_helper(),
+            "terminate real native C helper on attempt {attempt}");
+        assert!(frames(&p,&app,&mut ctx,2).is_empty());
+        assert_eq!(p.diagnostic_native_ibus(),None,
+            "old helper must be discarded before an attempt");
+        assert!(frames(&p,&app,&mut ctx,wait+15).is_empty());
+        assert_eq!(p.diagnostic_native_ibus(),Some(0),
+            "the permitted bounded native attempt must restore a real helper");
+        assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"BUDGET-");
+    }
+    // Fourth real death exceeds the entire window lifetime budget.
+    assert!(p.diagnostic_terminate_native_ibus_helper());
+    assert!(frames(&p,&app,&mut ctx,2).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),None);
+    assert!(frames(&p,&app,&mut ctx,240).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "after 3 retries, 240 extra frames MUST NOT launch a fourth child");
+    assert_eq!(p.diagnostic_composition(957),None);
+    // Explicit HOST-only command. A stable revision must not auto-rearm
+    // forever; only a strictly greater observed revision may reauthorize
+    // a single new bounded retry epoch.
+    app.set_prop("ibus_retry_revision","1");
+    assert!(frames(&p,&app,&mut ctx,42).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "incremented trusted host retry revision must recover after exhaustion");
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"BUDGET-");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    assert!(p.diagnostic_native_ibus_deletion().is_none());
+    eprintln!("LUMINA_IBUS_P29_EXPLICIT_REARM_AFTER_BOUNDED_REAL_KILLS");
+    app.set_prop("surrounding_text","none");
+    app.children[0].set_prop("surrounding_text","none");
+    assert!(frames(&p,&app,&mut ctx,5).is_empty());
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "operator retry cannot bypass private TextInput policy");
+}
