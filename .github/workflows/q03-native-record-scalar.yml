@@ -33,6 +33,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_match_while_return_native -- --nocapture
       - name: EV-193 non-Phi SSA dominance real source and adversarial IR (test first)
         run: cargo test --locked -p aura-backend-c --test record_ssa_non_phi_dominance -- --nocapture
+      - name: EV-194 Phi placement typed terminators and optimizer source Oracle (test first)
+        run: cargo test --locked -p aura-backend-c --test record_phi_placement_optimizer -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
