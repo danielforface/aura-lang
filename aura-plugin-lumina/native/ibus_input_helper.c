@@ -184,7 +184,6 @@ int main(int argc,char**argv) {
             /* Privacy-neutral read-only health probe forces dispatch of
              * the real daemon-disconnected signal while input is idle. */
             pump_ms(3);
-            CHECK_DAEMON_GENERATION();
             CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strcmp(line,"V0\n") || !strcmp(line,"V1\n")){
