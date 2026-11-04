@@ -313,6 +313,11 @@ int main(int argc,char**argv) {
             if(mod&4) state|=IBUS_MOD1_MASK;
             if(mod&8) state|=IBUS_SUPER_MASK;
             if(release) state|=IBUS_RELEASE_MASK;
+            /* Local key-dispatch BEGIN marker. The preceding pump_ms(1)
+             * may flush genuine but STALE asynchronous engine signals.
+             * B does NOT assert external engine provenance; Rust must drop
+             * all P/C/D/L/H/N seen before B for this new key. */
+            puts("B");
             gboolean handled=ibus_input_context_process_key_event(
                 ic,(guint32)sym,(guint32)code,state);
             fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY keysym=%lu modifiers=%lu release=%lu code=%lu handled=%d\n",
