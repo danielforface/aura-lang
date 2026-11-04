@@ -168,3 +168,28 @@ fn match_and_while_return_real_source_cfg_oracle_and_clang_o0_o2() {
             String::from_utf8_lossy(&ran.stderr), c.module_c);
     }
 }
+
+#[test]
+fn while_body_return_must_not_invent_loop_backedge() {
+    // Isolate While from the Match RED above to establish an independent
+    // Parser/Checker/Lowerer/IR CFG failure rather than a skipped assertion.
+    let source = r#"
+cell loop_yield(flag: bool, n: u32) ->:
+    val mut selected: u32 = n
+    while flag:
+        selected = selected + 1
+        yield selected
+    yield selected
+"#;
+    let ast = aura_parse::parse_source(source).expect("real while-yield source parses");
+    Checker::new().check_program(&ast).expect("while-yield source checks");
+    let ir = lower_program(&ast).expect("while-yield lowers");
+    validate_module(&ir).expect("loop header Phi must not mention a returning body as backedge");
+    check_exact_phi_cfg(ir.functions.get("loop_yield").unwrap());
+    for (flag, want) in [(false, 7u32), (true, 8u32)] {
+        let actual = run_oracle_entry(&ir, "loop_yield",
+            &[OracleValue::Bool(flag), OracleValue::U32(7)], OracleConfig::default())
+            .expect("Oracle must execute both loop exit paths");
+        assert_eq!(actual.return_value, Some(OracleValue::U32(want)));
+    }
+}
