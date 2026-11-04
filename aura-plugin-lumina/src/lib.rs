@@ -994,6 +994,13 @@ impl AuraLuminaPlugin {
             .and_then(|win|win.native_ibus.as_mut())
             .is_some_and(|bus|bus.terminate_helper_for_diagnostic())
     }
+    /// Phase29 semantic RED: expose a non-sensitive retry/exhaustion proof.
+    /// This test-only stub is deliberately not connected to the budget yet.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_recovery_budget(&self)->Option<(u8,bool)>{
+        self.window.borrow().as_ref()?;
+        Some((0,false))
+    }
     /// Acknowledged by the real helper, not an emulated keyboard stream.
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{
