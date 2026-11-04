@@ -74,7 +74,7 @@ jobs:
             export LUMINA_IBUS_TEST_HANGUL_SWITCH="1"
             # Existing native preedit regression first. Each subsequent
             # live Hangul mode test needs a FRESH daemon/input-mode generation:
-            # ibus-hangul's switch state is global and persists across tests.
+            # Hangul switch state remains global and persists across tests.
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e real_ibus_hangul_engine_x11_preedit_and_commit_without_injection -- --exact --nocapture --test-threads=1
             echo "LUMINA_IBUS_P26_FRESH_PREEDIT_ENGINE"
             gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
