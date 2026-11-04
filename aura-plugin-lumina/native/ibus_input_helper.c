@@ -13,6 +13,9 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef LUMINA_IBUS_TEST_STOP_AFTER_DELETE
+#include <signal.h>
+#endif
 /* Bounded, decimal-only field decoder; rejects signs, overflows and junk. */
 static int dec_field(char **at, unsigned long *value, int last) {
     char *p=*at, *end=NULL;
@@ -101,6 +104,18 @@ static void delete_surrounding(IBusInputContext *ctx,gint offset,guint count,gpo
     fprintf(stderr,"LUMINA_IBUS_DELETE_REQUEST offset=%d count=%u (not applied)\n",
         offset,count);
     printf("D\t%d\t%u\n",offset,count);fflush(stdout);
+#ifdef LUMINA_IBUS_TEST_STOP_AFTER_DELETE
+    /* Diagnostic-only binary, compiled with an explicit test flag, NOT
+     * present in normal installed helpers. Stop AFTER a genuine upstream
+     * nonempty delete, BEFORE any later CommitText from the same real key.
+     * The isolated Rust test kills the actual daemon while this thread is
+     * stopped, then resumes us. No IBus C/D/P signal is injected here. */
+    if(offset<0 && count>0){
+        fputs("LUMINA_IBUS_P31_GENUINE_D_PAUSED_BEFORE_C\n",stderr);
+        fflush(stderr);
+        raise(SIGSTOP);
+    }
+#endif
 }
 /* The daemon connection itself is a security-sensitive generation.
  * An automatic libibus reconnection must NEVER revive an old context. */

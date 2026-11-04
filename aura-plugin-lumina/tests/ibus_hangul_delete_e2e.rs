@@ -593,3 +593,91 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
         "no cached prior engine surrounding after exhausted retry");
     eprintln!("LUMINA_IBUS_P29_GENUINE_OFFLINE_EXHAUSTED attempted=3 no_auto_restart");
 }
+
+
+/// Phase31 authentic in-flight D→C interruption with *no synthetic IME
+/// signals*: a compile-time diagnostic C helper SIGSTOPs itself ONLY after
+/// the registered upstream Hangul engine emits genuine nonempty D. A second
+/// OS thread SIGKILLs the real ibus-daemon while that helper is stopped
+/// inside the D callback, then SIGCONTs it before normal key completion.
+#[test]
+#[ignore = "run only with separately compiled diagnostic helper under isolated session"]
+fn zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity(){
+    use std::{path::Path,time::Duration};
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    assert!(std::env::var_os("LUMINA_IBUS_TEST_HANGUL_SWITCH").is_none());
+    assert_eq!(std::env::var("LUMINA_IBUS_P31_DIAGNOSTIC_INFLIGHT").unwrap(),"1",
+        "test must use the separate diagnostic C helper binary");
+    let binary=std::env::var("LUMINA_IBUS_HELPER_BIN").expect("real test-only helper");
+    assert!(binary.ends_with("lumina-ibus-helper-inflight"),
+        "never accidentally pause the installed ordinary native helper");
+
+    let (p,app,mut ctx)=phase29_live_field("INFLIGHT-",960);
+    let initial=key(&p,&app,&mut ctx,"r");
+    assert_eq!(initial.len(),1,"registered none-preedit upstream r must commit");
+    assert_eq!(initial[0].text,"INFLIGHT-ㄱ");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    let mut restore=Phase29RestoreDaemon{restored:false};
+
+    // Only inspect a real Linux process, not a mock signal/engine frame.
+    let parent=std::process::id().to_string();
+    let basename=Path::new(&binary).file_name().unwrap().to_str().unwrap();
+    let child=Command::new("pgrep").args(["-P",&parent,"-f",basename])
+        .output().expect("real OS process lookup");
+    assert!(child.status.success(),"expected live C libibus subprocess: {}",
+        String::from_utf8_lossy(&child.stderr));
+    let helper_pid=String::from_utf8(child.stdout).unwrap()
+        .lines().next().unwrap().trim().to_string();
+    assert!(helper_pid.bytes().all(|b|b.is_ascii_digit())&&!helper_pid.is_empty());
+
+    let watcher=std::thread::spawn(move||{
+        let proc_path=format!("/proc/{helper_pid}/status");
+        let mut genuinely_stopped=false;
+        for _ in 0..400 {
+            let status=std::fs::read_to_string(&proc_path).unwrap_or_default();
+            if status.lines().any(|l|l.starts_with("State:")&&
+                (l.contains("T (stopped)")||l.contains("t (tracing stop)"))){
+                genuinely_stopped=true;break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let killed=if genuinely_stopped {
+            // Signal the actual isolated ibus-daemon while C remains
+            // suspended INSIDE a native upstream DeleteSurrounding callback.
+            Command::new("pkill").args(["-KILL","-x","ibus-daemon"])
+                .output().is_ok_and(|x|x.status.success())
+        }else{false};
+        // Always release a possibly stopped diagnostic child even on failed
+        // observation to prevent a wedged CI suite or leaking a suspended IME.
+        let _=Command::new("kill").args(["-CONT",&helper_pid]).status();
+        (genuinely_stopped,killed)
+    });
+    let interrupted=key(&p,&app,&mut ctx,"k");
+    let (stopped,killed)=watcher.join().expect("OS daemon-kill watcher joined");
+    assert!(stopped&&killed,
+        "must observe genuine paused upstream nonempty DeleteSurroundingText then hard-kill REAL daemon");
+    eprintln!("LUMINA_IBUS_P31_INFLIGHT_REAL_D_DAEMON_KILLED (no text leaked)");
+    assert!(interrupted.is_empty(),
+        "without authoritative R the interrupted D/C must NOT change host text");
+    assert!(frames(&p,&app,&mut ctx,10).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "dead daemon generation must drop the entire old helper");
+    assert_eq!(p.diagnostic_composition(960),None);
+    let fallback=key(&p,&app,&mut ctx,"z");
+    assert_eq!(fallback.len(),1);
+    assert_eq!(fallback[0].text,"INFLIGHT-ㄱz",
+        "real old D(-1,1) must NOT delete the prior committed ㄱ");
+    phase29_start_real_daemon_hangul();
+    restore.restored=true;
+    assert!(frames(&p,&app,&mut ctx,100).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "new daemon must require a NEW real helper and new authority epoch");
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"INFLIGHT-ㄱz");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    assert!(p.diagnostic_native_ibus_deletion().is_none());
+    let next=key(&p,&app,&mut ctx,"r");
+    eprintln!("LUMINA_IBUS_P31_INFLIGHT_GENUINE_RECOVERY next={next:?}");
+    assert_eq!(next.len(),1);
+    assert_eq!(next[0].text,"INFLIGHT-ㄱzㄱ",
+        "new upstream CommitText cannot reuse prior interrupted D or C");
+}
