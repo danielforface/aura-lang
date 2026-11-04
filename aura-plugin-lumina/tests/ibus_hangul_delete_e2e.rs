@@ -277,3 +277,72 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert_eq!(private[0].text,"RECOVER-ㄱzㄱx");
     assert!(p.diagnostic_native_ibus_surrounding().is_none());
 }
+
+
+/// Phase 28 semantic RED: replacing the REAL bus-owning ibus-daemon while
+/// the prior libibus C helper is still running must invalidate that stale
+/// daemon generation without waiting for a user key or fabricating signals.
+/// The child-process crash proof in Phase27 is not sufficient for this case.
+#[test]fn zzzz_real_ibus_daemon_replacement_invalidates_running_helper(){
+    use std::time::Duration;
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    assert!(std::env::var_os("LUMINA_IBUS_TEST_HANGUL_SWITCH").is_none());
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","440"),("height","70"),
+        ("value","DAEMON-"),("value_revision","1"),("on_change","cb:956"),
+        ("size","28"),("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_resize_window(760,520));
+    frames(&p,&app,&mut c,4);
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("genuine X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"DAEMON-");
+    let first=key(&p,&app,&mut c,"r");
+    assert_eq!(first.len(),1);
+    assert_eq!(first[0].text,"DAEMON-ㄱ");
+    assert!(p.diagnostic_native_ibus().unwrap_or(0)>=1);
+    // Restart the actual daemon, NOT the helper. The old helper remains
+    // alive here; only a bus-generation liveness check can revoke it.
+    let swap=Command::new("ibus-daemon").args([
+        "--replace","--daemonize","--xim","--panel","disable","--cache=refresh"
+    ]).output().expect("real ibus-daemon --replace");
+    assert!(swap.status.success(),"real daemon replace failed: {}",
+        String::from_utf8_lossy(&swap.stderr));
+    let mut active=false;
+    for _ in 0..25{
+        let set=Command::new("ibus").args(["engine","hangul"]).output();
+        let check=Command::new("ibus").arg("engine").output();
+        if set.as_ref().is_ok_and(|x|x.status.success()) &&
+            check.as_ref().is_ok_and(|x|x.status.success()
+                && String::from_utf8_lossy(&x.stdout).trim()=="hangul"){
+            active=true;break;
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+    assert!(active,"the new REAL daemon must have registered hangul");
+    let idle=frames(&p,&app,&mut c,110);
+    assert!(idle.is_empty(),"no old native CommitText on daemon restart");
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "a replaced daemon must discard the OLD live helper and start new real libibus generation before another key");
+    let snapshot=p.diagnostic_native_ibus_surrounding()
+        .expect("new native helper must independently ACK current surrounding");
+    assert_eq!(snapshot.0,"DAEMON-ㄱ");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    assert!(p.diagnostic_native_ibus_deletion().is_none());
+    assert_eq!(p.diagnostic_composition(956),None);
+    let next=key(&p,&app,&mut c,"r");
+    eprintln!("LUMINA_IBUS_P28_DAEMON_REPLACE_REAL_ENGINE next={next:?}");
+    assert_eq!(next.len(),1,"new daemon can emit exactly one real key Commit");
+    assert_eq!(next[0].callback_id,956);
+    assert_eq!(next[0].text,"DAEMON-ㄱㄱ",
+        "no old-engine D(-1,1) may delete before new daemon first syllable");
+    app.children[0].set_prop("surrounding_text","none");
+    assert!(frames(&p,&app,&mut c,5).is_empty());
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "daemon recovery cannot resurrect a private TextInput policy");
+}
