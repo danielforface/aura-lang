@@ -311,6 +311,16 @@ struct FocusedTextInput {
     visual_affinity: Option<usize>,
 }
 
+/// Unknown explicit policies fail closed. Normal TextInput keeps phase-25
+/// behavior; this is NOT a complete password/secure-memory widget.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn native_surrounding_policy_allows(node:&UiNode)->bool{
+    if node.kind!="TextInput"{return false;}
+    if matches!(prop_string(node,"type").or_else(||prop_string(node,"input_type")),
+        Some("password")|Some("otp")|Some("payment")){return false;}
+    if matches!(prop_string(node,"sensitive"),Some("true")|Some("1")){return false;}
+    matches!(prop_string(node,"surrounding_text"),None|Some("full"))
+}
 /// Keep the engine's committed surrounding snapshot current *before* keys
 /// (and again after edits). A host rebase resets the IME generation; local
 /// edits keep composition continuity. No new public injection surface.
@@ -1342,6 +1352,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }else{None};
             #[cfg(target_os="linux")]
+            let candidate_row_clicked=candidate_row_clicked.filter(|(cb,_)|
+                find_input_by_callback(tree,&planned_layout,*cb)
+                    .is_some_and(|(node,_)|native_surrounding_policy_allows(node)));
+            #[cfg(target_os="linux")]
             let candidate_click_consumed=candidate_row_clicked.is_some();
             #[cfg(not(target_os="linux"))]
             let candidate_click_consumed=false;
@@ -1421,8 +1435,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         .is_some_and(|fi|!fi.session.composing()) {
                         let _=bus.sync_focus(None);
                     }
-                    let available=bus.sync_focus(focus);
-                    if available && focus.is_some() {
+                    // Restrict BEFORE focus, key delivery, or any text sync.
+                    // Private fields retain direct local typing but no IBus IME.
+                    let authorized=win.focused_input.as_ref()
+                        .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                        .is_some_and(|(node,_)|native_surrounding_policy_allows(node));
+                    let native_focus=if authorized{focus}else{None};
+                    let available=bus.set_surrounding_enabled(authorized)
+                        && bus.sync_focus(native_focus);
+                    if available && authorized && focus.is_some() {
                         if let Some(fi)=win.focused_input.as_ref(){
                             let _=sync_native_ibus_context(bus,fi);
                         }
