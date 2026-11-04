@@ -139,14 +139,10 @@ fn source_early_returns_have_only_reachable_phi_incomings_and_strict_native_o0_o
         assert!(got.ok && got.stderr.is_empty(), "{name}: {got:?}");
         assert_eq!(got.return_value, Some(OracleValue::U32(*expected)), "{name} {flags:?}");
     }
-    for (flag, expected) in [(true, 4294967316u64), (false, 4294967296)] {
-        let got = run_oracle_entry(&ir, "early_high",
-            &[OracleValue::Bool(flag), OracleValue::U64(4294967296),
-              OracleValue::U64(4294967316)], OracleConfig::default())
-            .expect("high U64 Oracle execution");
-        assert!(got.ok, "{got:?}");
-        assert_eq!(got.return_value, Some(OracleValue::U64(expected)));
-    }
+    // The current IR Oracle models U32, not full-width U64. Check the
+    // exact lowered ABI here and exercise high bits in real native Clang below.
+    assert_eq!(ir.functions.get("early_high").expect("high cell").ret, aura_ir::Type::U64);
+    assert_eq!(ir.refined_return_bounds.get("early_high"), Some(&(4294967296, 4294967316)));
     let c = emit_module(&ir, None).expect("typed C emit");
     let temp = Scratch::new();
     fs::write(temp.0.join("aura_runtime.h"), c.runtime_h).unwrap();
