@@ -97,7 +97,7 @@ pub fn run_oracle_entry(
 /// This is a lightweight, structural sanity check (not a full verifier).
 pub fn validate_module(module: &ModuleIR) -> Result<(), OracleError> {
     for (name, f) in &module.functions {
-        validate_function(name, f)?;
+        validate_function(module, name, f)?;
     }
     Ok(())
 }
@@ -140,7 +140,7 @@ fn known_primitive_type(ty: &Type) -> Option<KnownPrimitiveKind> {
     }
 }
 
-fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
+fn validate_function(module: &ModuleIR, name: &str, f: &FunctionIR) -> Result<(), OracleError> {
     if f.name != name {
         return Err(OracleError {
             message: format!("oracle: function key '{name}' mismatches FunctionIR.name='{}'", f.name),
@@ -445,6 +445,13 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
                         RValue::Local(value) => known.get(value).copied(),
                         _ => None,
                     },
+                    // EV-196: the declared result of a *defined* user Cell
+                    // is a stable primitive-category fact. Unknown builtins,
+                    // external calls, nominal returns and all widths remain
+                    // outside this limited type-provenance guarantee.
+                    InstKind::Call { callee, .. } =>
+                        module.functions.get(callee)
+                            .and_then(|target| known_primitive_type(&target.ret)),
                     InstKind::Unary { op: UnaryOp::Not, operand } =>
                         (known.get(operand) == Some(&KnownPrimitiveKind::Bool))
                             .then_some(KnownPrimitiveKind::Bool),
@@ -499,6 +506,31 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
         }
         if !progressed { break; }
     }
+    // EV-196: an actual SSA argument with a *known* incompatible category
+    // cannot satisfy a known internal Cell's parameter category, regardless
+    // of whether the argument and parameter have independently valid SSA
+    // dominance. Width-specific, Record and extern ABI checks remain at
+    // their already-qualified backend/source boundaries.
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        for inst in &bb.insts {
+            let InstKind::Call { callee, args } = &inst.kind else { continue; };
+            let Some(target) = module.functions.get(callee) else { continue; };
+            for (index, (arg, param)) in args.iter().zip(&target.params).enumerate() {
+                if let (Some(required), Some(actual)) =
+                    (known_primitive_type(&param.ty), known.get(arg).copied())
+                {
+                    if actual != required {
+                        return Err(OracleError { message: format!(
+                            "oracle: function '{}' Call '{}' arg {} type mismatch in {:?}: SSA {:?} has {:?}, declared {:?}",
+                            f.name, callee, index, bb.id, arg, actual, required
+                        ) });
+                    }
+                }
+            }
+        }
+    }
+
     for bb in &f.blocks {
         if !reachable.contains(&bb.id) { continue; }
         match &bb.term {

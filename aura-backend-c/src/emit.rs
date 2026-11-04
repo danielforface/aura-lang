@@ -1779,6 +1779,13 @@ fn emit_call(
 
         if ret != CType::Void {
             values.insert(d, (ret, format!("v{}", d.0)));
+            // A Call is side-effecting and may be intentionally retained by
+            // DCE after its SSA result becomes dead. Keep the call and its
+            // SSA name for any live consumers, but mark the scalar result as
+            // consumed in portable C so strict -Wall -Werror does not reject
+            // source-valid optimized Aura with an otherwise unused result.
+            // The cast is side-effect-free and optimized away.
+            out.push_str(&format!("  (void)v{};\n", d.0));
         }
     } else {
         out.push_str("  ");
