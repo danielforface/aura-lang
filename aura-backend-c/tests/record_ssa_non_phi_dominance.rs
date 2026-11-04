@@ -3,7 +3,7 @@
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{run_oracle_entry, validate_module, BinOp, FunctionIR, InstKind,
-    ModuleIR, OracleConfig, OracleValue, RValue, Terminator, ValueId};
+    ModuleIR, OracleConfig, OracleValue, Terminator, ValueId};
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 
 const SOURCE: &str = r#"

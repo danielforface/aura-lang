@@ -700,3 +700,60 @@ cell main() ->:
         }
     }
 }
+
+#[test]
+fn public_cli_builds_source_dominated_nested_branch_switch_and_loop_ssa() {
+    // The source-qualified public check/build path must continue accepting
+    // legal SSA from joins, dense switches, calls and loop backedges.
+    // This is compilation conformance, never an SMT proof claim.
+    let source = r#"
+cell identity(x: u32) ->:
+    yield x
+cell select(flag: bool, x: u32, y: u32) ->:
+    val mut chosen: u32 = x
+    if flag:
+        if x == y:
+            chosen = identity(x + 1)
+        else:
+            chosen = identity(x + 2)
+    else:
+        chosen = identity(y + 2)
+    yield chosen
+cell choose_case(n: u32, x: u32) ->:
+    match n:
+        0:
+            yield x + 1
+        1:
+            yield x
+        2:
+            yield x
+        3:
+            yield x
+        _:
+            yield x
+    yield x
+cell count_up(start: u32, limit: u32) ->:
+    val mut cursor: u32 = start
+    while cursor < limit:
+        cursor = cursor + 1
+    yield cursor
+cell main() ->:
+    yield select(true, 7, 13)
+"#;
+    let fixture = SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result = fixture.run(args);
+        let output = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-193 public Aura {:?} must accept properly dominated SSA: {output}", args);
+        if args[0] == "check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 CLI must not claim formal verification: {output}");
+        }
+    }
+}
