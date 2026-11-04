@@ -401,7 +401,6 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
     assert!(p.diagnostic_native_ibus_deletion().is_none());
     eprintln!("LUMINA_IBUS_P29_EXPLICIT_REARM_AFTER_BOUNDED_REAL_KILLS");
-    app.set_prop("surrounding_text","none");
     app.children[0].set_prop("surrounding_text","none");
     assert!(frames(&p,&app,&mut ctx,5).is_empty());
     assert!(p.diagnostic_native_ibus_surrounding().is_none(),
