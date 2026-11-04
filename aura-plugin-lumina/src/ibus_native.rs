@@ -181,6 +181,12 @@ pub(crate) struct IbusReconnectBudget{
 impl IbusReconnectBudget{
     const MAX_ATTEMPTS:u8=3;
     const WAIT_FRAMES:[u16;3]=[24,72,144];
+    /// Read-only per-authorized-epoch status; counts bounded attempts,
+    /// never publishes input text, callback identifiers or native keys.
+    /// On an explicit host rearm this count resets for the NEW finite epoch.
+    pub(crate) fn diagnostic_status(&self)->(u8,bool){
+        (self.used,self.used>=Self::MAX_ATTEMPTS)
+    }
     /// Starts a fresh cooldown only after a real child was lost or an
     /// attempted connection failed. Does not retry unconfigured startup.
     pub(crate) fn arm(&mut self){
@@ -707,6 +713,7 @@ mod tests{
         }
         b.arm();
         for _ in 0..200{assert!(!b.tick(),"lifetime attempt cap must hold");}
+        assert_eq!(b.diagnostic_status(),(3,true));
     }
     #[test]fn adversarial_same_key_order_has_no_delete_authority(){
         let parse=|seq:&[&str]|same_key_replace_pair(

@@ -1027,6 +1027,14 @@ impl AuraLuminaPlugin {
             .and_then(|win|win.native_ibus.as_mut())
             .is_some_and(|bus|bus.terminate_helper_for_diagnostic())
     }
+    /// Non-sensitive read-only native helper recovery budget telemetry.
+    /// Exposes at most (attempts in current bounded epoch, exhausted);
+    /// never reveals text, native keys or any focus/callback identity.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_recovery_budget(&self)->Option<(u8,bool)>{
+        Some(self.window.borrow().as_ref()?
+            .native_ibus_reconnect.diagnostic_status())
+    }
     /// Acknowledged by the real helper, not an emulated keyboard stream.
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
     pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{

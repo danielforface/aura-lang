@@ -406,3 +406,190 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     assert!(p.diagnostic_native_ibus_surrounding().is_none(),
         "operator retry cannot bypass private TextInput policy");
 }
+
+// Phase29 never injects engine C/D/P. This sends SIGKILL to the real daemon
+// process inside the dedicated Xvfb + dbus-run-session test job; the C helper
+// is NOT killed. The old libibus bus signal must invalidate its generation.
+struct Phase29RestoreDaemon{restored:bool}
+impl Drop for Phase29RestoreDaemon{
+    fn drop(&mut self){
+        if self.restored{return;}
+        // Test isolation: a failed real daemon test must not poison the next
+        // independent X11 test. No production recovery is simulated here.
+        let _=Command::new("ibus-daemon").args([
+            "--daemonize","--xim","--panel","disable","--cache=refresh"
+        ]).status();
+        for _ in 0..30{
+            if Command::new("ibus").args(["engine","hangul"])
+                .status().is_ok_and(|s|s.success()){break;}
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+fn phase29_hard_kill_real_daemon()->Phase29RestoreDaemon{
+    let out=Command::new("pkill").args(["-KILL","-x","ibus-daemon"])
+        .output().expect("procps pkill required for genuine daemon SIGKILL");
+    assert!(out.status.success(),
+        "must actually SIGKILL the live ibus-daemon process (not helper): {}",
+        String::from_utf8_lossy(&out.stderr));
+    Phase29RestoreDaemon{restored:false}
+}
+fn phase29_start_real_daemon_hangul(){
+    use std::time::Duration;
+    let out=Command::new("ibus-daemon").args([
+        "--daemonize","--xim","--panel","disable","--cache=refresh"
+    ]).output().expect("start actual ibus-daemon after hard crash");
+    assert!(out.status.success(),
+        "restarting genuine daemon failed: {}",String::from_utf8_lossy(&out.stderr));
+    let mut active=false;
+    for _ in 0..30{
+        let set=Command::new("ibus").args(["engine","hangul"]).output();
+        let check=Command::new("ibus").arg("engine").output();
+        if set.as_ref().is_ok_and(|x|x.status.success()) &&
+            check.as_ref().is_ok_and(|x|x.status.success() &&
+                String::from_utf8_lossy(&x.stdout).trim()=="hangul"){
+            active=true;break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(active,"restarted daemon must activate registered REAL hangul engine");
+}
+fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut app=node("App",&[("bg","#101820")]);
+    let cb_name=format!("cb:{cb}");
+    app.children.push(node("TextInput",&[
+        ("x","20"),("y","20"),("width","440"),("height","70"),
+        ("value",prefix),("value_revision","1"),("on_change",&cb_name),
+        ("size","28"),("font_path","/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    assert!(p.diagnostic_resize_window(760,520));
+    assert!(frames(&p,&app,&mut c,4).is_empty());
+    let window=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=window.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(key(&p,&app,&mut c,"Tab").is_empty());
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,prefix);
+    (p,app,c)
+}
+
+
+/// Phase30 real SIGKILL + REAL sustained daemon OFFLINE exhausts all
+/// automatic C helper retries. A trusted root App revision manually opens
+/// ONE new finite epoch only after the daemon actually returns.
+#[test]fn zzzzzz_real_daemon_offline_exhaustion_operator_rearms_once(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let (p,mut app,mut c)=phase29_live_field("OFFLINE-",959);
+    app.set_prop("ibus_retry_revision","0");
+    assert!(frames(&p,&app,&mut c,3).is_empty(),
+        "initial host revision is only a baseline");
+    let first=key(&p,&app,&mut c,"r");
+    assert_eq!(first.len(),1,"real Hangul must commit before daemon kill");
+    assert_eq!(first[0].text,"OFFLINE-ㄱ");
+    let mut restore=phase29_hard_kill_real_daemon();
+    assert!(frames(&p,&app,&mut c,430).is_empty(),
+        "old daemon generation must NEVER emit C/D while offline");
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "after three real failed attempts the helper remains absent");
+    assert_eq!(p.diagnostic_native_ibus_recovery_budget(),Some((3,true)),
+        "three truly failed daemon-offline attempts must exhaust the budget");
+    assert_eq!(p.diagnostic_composition(959),None);
+    let fallback=key(&p,&app,&mut c,"z");
+    assert_eq!(fallback.len(),1);
+    assert_eq!(fallback[0].text,"OFFLINE-ㄱz");
+    phase29_start_real_daemon_hangul();
+    restore.restored=true;
+    assert!(frames(&p,&app,&mut c,180).is_empty(),
+        "daemon return MUST NOT bypass a fully exhausted retry breaker");
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "no automatic fourth native helper after real daemon returns");
+    // Operator explicit revision: no silent or clock-based retry.
+    app.set_prop("ibus_retry_revision","1");
+    assert!(frames(&p,&app,&mut c,42).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "explicit increasing trusted host command MUST restore real IBus after offline exhaustion");
+    assert_eq!(p.diagnostic_native_ibus_recovery_budget(),Some((1,false)),
+        "explicit host rearm begins one new capped epoch, not an unbounded counter");
+    let ack=p.diagnostic_native_ibus_surrounding()
+        .expect("fresh C helper must ACK entire local fallback buffer");
+    assert_eq!(ack.0,"OFFLINE-ㄱz");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    assert!(p.diagnostic_native_ibus_deletion().is_none());
+    let next=key(&p,&app,&mut c,"r");
+    eprintln!("LUMINA_IBUS_P30_OFFLINE_OPERATOR_REARM_REAL next={next:?}");
+    assert_eq!(next.len(),1);
+    assert_eq!(next[0].callback_id,959);
+    assert_eq!(next[0].text,"OFFLINE-ㄱzㄱ",
+        "fresh daemon C may not replay stale cross-generation delete");
+    app.children[0].set_prop("surrounding_text","none");
+    assert!(frames(&p,&app,&mut c,5).is_empty());
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "rearm must not bypass opt-out from sharing surrounding text");
+}
+
+/// RED: authentic SIGKILL must abandon the old libibus generation without
+/// applying stale edits, permit fallback, then recover when daemon returns
+/// while remaining within the strict lifetime retry budget.
+#[test]fn zzzzz_real_ibus_daemon_sigkill_delayed_recovery(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let (p,app,mut c)=phase29_live_field("HARD-",957);
+    let first=key(&p,&app,&mut c,"r");
+    assert_eq!(first.len(),1);
+    assert_eq!(first[0].text,"HARD-ㄱ");
+    let mut restore=phase29_hard_kill_real_daemon();
+    assert!(frames(&p,&app,&mut c,50).is_empty(),
+        "real hard-crash cannot replay old CommitText during idle frames");
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "the old daemon generation must lose its native helper");
+    let (tries,exhausted)=p.diagnostic_native_ibus_recovery_budget().unwrap();
+    assert!(tries>=1 && !exhausted,
+        "a failed real offline attempt must be observable without sensitive text: tries={tries}");
+    let local=key(&p,&app,&mut c,"z");
+    assert_eq!(local.len(),1,"offline direct typing must remain available");
+    assert_eq!(local[0].text,"HARD-ㄱz");
+    phase29_start_real_daemon_hangul();
+    restore.restored=true;
+    assert!(frames(&p,&app,&mut c,210).is_empty(),
+        "old engine events must not replay after delayed daemon restart");
+    assert_eq!(p.diagnostic_native_ibus(),Some(0),
+        "remaining bounded attempt must connect a FRESH real helper");
+    assert_eq!(p.diagnostic_native_ibus_surrounding().unwrap().0,"HARD-ㄱz");
+    assert_eq!(p.diagnostic_native_ibus_replacements(),Some(0));
+    assert!(p.diagnostic_native_ibus_deletion().is_none());
+    let next=key(&p,&app,&mut c,"r");
+    eprintln!("LUMINA_IBUS_P29_HARD_KILL_RECOVER next={next:?}");
+    assert_eq!(next.len(),1);
+    assert_eq!(next[0].text,"HARD-ㄱzㄱ");
+}
+
+/// A second genuine hard crash persists across ALL three limited process
+/// respawn attempts. When the daemon later returns, exhaustion forbids
+/// unlimited automatic reconnect; direct local typing remains available.
+#[test]fn zzzzz_real_ibus_daemon_sigkill_retry_exhaustion(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    let (p,app,mut c)=phase29_live_field("EXHAUST-",958);
+    let first=key(&p,&app,&mut c,"r");
+    assert_eq!(first.len(),1);
+    assert_eq!(first[0].text,"EXHAUST-ㄱ");
+    let mut restore=phase29_hard_kill_real_daemon();
+    assert!(frames(&p,&app,&mut c,430).is_empty(),
+        "no stale engine callback may escape during long offline render");
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "no offline helper can remain trusted after genuine hard crash");
+    assert_eq!(p.diagnostic_native_ibus_recovery_budget(),Some((3,true)),
+        "three failed live native reconnect attempts must exhaust budget");
+    phase29_start_real_daemon_hangul();
+    restore.restored=true;
+    assert!(frames(&p,&app,&mut c,180).is_empty());
+    assert_eq!(p.diagnostic_native_ibus(),None,
+        "automatic helper spawning must STOP at lifetime cap even after daemon returns");
+    assert_eq!(p.diagnostic_native_ibus_recovery_budget(),Some((3,true)),
+        "late daemon return must not silently reset budget");
+    let fallback=key(&p,&app,&mut c,"z");
+    assert_eq!(fallback.len(),1);
+    assert_eq!(fallback[0].text,"EXHAUST-ㄱz");
+    assert!(p.diagnostic_native_ibus_surrounding().is_none(),
+        "no cached prior engine surrounding after exhausted retry");
+    eprintln!("LUMINA_IBUS_P29_GENUINE_OFFLINE_EXHAUSTED attempted=3 no_auto_restart");
+}
