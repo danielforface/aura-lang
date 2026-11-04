@@ -129,7 +129,7 @@ fn known_bool_call_result_in_u32_phi_must_reject() {
     let flag=f.params[0].value;
     // Mutate a *single* properly dominated Call in a real source join arm.
     // Its branch-local result flows into the existing two-predecessor Phi.
-    let calls=f.blocks.iter_mut().flat_map(|b|b.insts.iter_mut())
+    let mut calls=f.blocks.iter_mut().flat_map(|b|b.insts.iter_mut())
         .filter(|i|matches!(&i.kind,InstKind::Call{callee,..} if callee=="id_number"))
         .collect::<Vec<_>>();
     assert!(calls.len()>=3,"source has initial and both branch Calls");
