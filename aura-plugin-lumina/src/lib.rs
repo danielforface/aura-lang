@@ -291,6 +291,8 @@ struct LuminaWindow {
     native_ibus_reconnect:ibus_native::IbusReconnectBudget,
     #[cfg(target_os="linux")]
     native_ibus_serial_floor:u64,
+    #[cfg(target_os="linux")]
+    native_ibus_health_frames:u8,
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
@@ -1275,6 +1277,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     native_ibus_reconnect:ibus_native::IbusReconnectBudget::default(),
                     #[cfg(target_os="linux")]
                     native_ibus_serial_floor:0,
+                    #[cfg(target_os="linux")]
+                    native_ibus_health_frames:0,
                 });
             }
 
@@ -1288,6 +1292,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             if win.native_ibus.is_none() && win.native_ibus_reconnect.tick(){
                 if let Some(mut fresh)=ibus_native::NativeIbus::connect(){
                     fresh.set_serial_floor(win.native_ibus_serial_floor);
+                    win.native_ibus_health_frames=0;
                     win.native_ibus=Some(fresh);
                 }else{
                     win.native_ibus_reconnect.arm();
@@ -1462,6 +1467,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
                 if let Some(bus)=win.native_ibus.as_mut(){
+                    // A live helper is not proof that the original daemon
+                    // still owns the context. Read-only T every 12 frames
+                    // catches daemon loss even without another physical key.
+                    win.native_ibus_health_frames=
+                        win.native_ibus_health_frames.saturating_add(1);
+                    if win.native_ibus_health_frames>=12 {
+                        win.native_ibus_health_frames=0;
+                        if !bus.probe_daemon_generation(){helper_lost=true;}
+                    }
                     let focus=win.focused_input.as_ref().map(|f|f.on_change);
                     // If an external value_revision rebased the editor while
                     // the engine still owns preedit, reset that engine session.
@@ -1565,7 +1579,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             }
                         }
                     }
-                    helper_lost=bus.is_disconnected();
+                    helper_lost|=bus.is_disconnected();
                 }
                 if helper_lost {
                     if let Some(old)=win.native_ibus.as_ref(){
@@ -1578,6 +1592,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     pending_composition.clear();
                     typed.clear(); // uncertain in-flight key: fail closed
                     win.native_ibus=None;
+                    win.native_ibus_health_frames=0;
                     win.native_ibus_reconnect.arm();
                     win.last_candidate_bounds=None;
                     win.candidate_font=None;
