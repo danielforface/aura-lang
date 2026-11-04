@@ -124,6 +124,22 @@ fn non_phi_operands(inst: &InstKind) -> Vec<ValueId> {
     }
 }
 
+// EV-194: deliberately limited primitive-category facts available from
+// trusted parameter declarations and unambiguous literal definitions.
+// This is NOT a complete SSA type inference pass or full IR type checker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KnownPrimitiveKind { Bool, Integer }
+
+fn known_primitive_type(ty: &Type) -> Option<KnownPrimitiveKind> {
+    match ty {
+        Type::Bool => Some(KnownPrimitiveKind::Bool),
+        Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::USize |
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::I128 | Type::ISize =>
+            Some(KnownPrimitiveKind::Integer),
+        _ => None,
+    }
+}
+
 fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
     if f.name != name {
         return Err(OracleError {
@@ -278,6 +294,39 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
             }
         }
     }
+    // A Phi reads values at block entry, before any ordinary instruction.
+    // Even if the source back end currently happens to accept it, a Phi
+    // appearing after an ordinary instruction violates our SSA IR contract.
+    // Check placement, result and non-empty incoming list in *all* blocks,
+    // including unreachable IR that later optimization may expose.
+    for bb in &f.blocks {
+        let mut has_non_phi = false;
+        for inst in &bb.insts {
+            if let InstKind::Phi { incomings } = &inst.kind {
+                if has_non_phi {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} occurs after a non-Phi instruction",
+                        f.name, bb.id
+                    ) });
+                }
+                if inst.dest.is_none() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has no SSA destination",
+                        f.name, bb.id
+                    ) });
+                }
+                if incomings.is_empty() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has no incoming edges",
+                        f.name, bb.id
+                    ) });
+                }
+            } else {
+                has_non_phi = true;
+            }
+        }
+    }
+
     for bb in &f.blocks {
         if !reachable.contains(&bb.id) { continue; }
         let actual = predecessors.get(&bb.id).cloned().unwrap_or_default();
@@ -366,6 +415,60 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
         };
         for value in terminal_uses {
             check_use(value, bb.id, bb.insts.len(), "terminator")?;
+        }
+    }
+
+    // Fail closed when an operand's primitive category is *already known*.
+    // Integer widths may differ legally at source-refined ABI boundaries,
+    // so validate Bool-vs-integer only; do not falsely promise width proof.
+    let mut known: HashMap<ValueId, KnownPrimitiveKind> = HashMap::new();
+    for p in &f.params {
+        if let Some(kind) = known_primitive_type(&p.ty) { known.insert(p.value, kind); }
+    }
+    for bb in &f.blocks {
+        for inst in &bb.insts {
+            if let (Some(dest), InstKind::BindStrand { expr, .. }) = (inst.dest, &inst.kind) {
+                let kind = match expr {
+                    RValue::ConstBool(_) => Some(KnownPrimitiveKind::Bool),
+                    RValue::ConstU32(_) | RValue::ConstI64(_) => Some(KnownPrimitiveKind::Integer),
+                    _ => None,
+                };
+                if let Some(kind) = kind { known.insert(dest, kind); }
+            }
+        }
+    }
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        match &bb.term {
+            Terminator::CondBr { cond, .. } => {
+                if matches!(known.get(cond), Some(KnownPrimitiveKind::Integer)) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' CondBr type mismatch in {:?}: SSA {:?} is known integer, expected Bool",
+                        f.name, bb.id, cond
+                    ) });
+                }
+            }
+            Terminator::Switch { scrut, .. } => {
+                if matches!(known.get(scrut), Some(KnownPrimitiveKind::Bool)) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Switch type mismatch in {:?}: SSA {:?} is Bool, expected integer",
+                        f.name, bb.id, scrut
+                    ) });
+                }
+            }
+            Terminator::Return(Some(value)) => {
+                if let (Some(expected), Some(actual)) =
+                    (known_primitive_type(&f.ret), known.get(value).copied())
+                {
+                    if actual != expected {
+                        return Err(OracleError { message: format!(
+                            "oracle: function '{}' Return type mismatch in {:?}: SSA {:?} is {:?}, signature expects {:?}",
+                            f.name, bb.id, value, actual, expected
+                        ) });
+                    }
+                }
+            }
+            Terminator::Return(None) | Terminator::Br(_) => {}
         }
     }
 
