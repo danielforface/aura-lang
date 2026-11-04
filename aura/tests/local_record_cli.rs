@@ -621,3 +621,41 @@ cell main() ->:
             "public Aura {:?} must preserve nested source-qualified high-u64 Phi: {output}",args);
     }
 }
+
+#[test]
+fn public_cli_builds_real_early_return_source_without_phantom_phi_edges() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell id_high(n: High) ->:
+    yield n
+cell early_high(flag: bool, first: High, second: High) ->:
+    val hold: High = id_high(first)
+    if flag:
+        yield id_high(second)
+    yield hold
+cell both_return(flag: bool, a: u32, b: u32) ->:
+    if flag:
+        yield a
+    else:
+        yield b
+    yield a
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-191 public Aura {:?} must preserve early Return CFG and high-u64 ABI: {output}", args);
+        if args[0] == "check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 check must never claim formal proof: {output}");
+        }
+    }
+}
