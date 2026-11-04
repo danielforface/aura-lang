@@ -292,7 +292,16 @@ impl<'c> Lowerer<'c> {
 
     fn lower_block(&mut self, block_ast: &Block) -> Result<(), SemanticError> {
         for stmt in &block_ast.stmts {
+            // A nested if can terminate every reachable arm with an explicit
+            // yield. Do not append unreachable instructions or overwrite its
+            // Return with this enclosing block's implicit fallthrough.
+            if self.has_terminator() {
+                return Ok(());
+            }
             self.lower_stmt_in_place(stmt, block_ast.span)?;
+        }
+        if self.has_terminator() {
+            return Ok(());
         }
 
         let ret = if let Some(y) = &block_ast.yield_expr {
@@ -453,12 +462,13 @@ impl<'c> Lowerer<'c> {
         // then
         self.push_block(then_bb, i.then_block.span, ExecutionHint::Sequential);
         self.lower_block(&i.then_block)?;
-        if !self.has_terminator() {
+        // An explicit yield produced Return(Some(_)); that arm cannot reach
+        // the join. A block's placeholder Return(None) is fallthrough.
+        let then_reaches_join = !self.has_terminator();
+        if then_reaches_join {
             self.set_terminator(Terminator::Br(join_bb));
         }
-        // A nested control-flow statement may leave the active block at its
-        // own join, not the initial 'then_bb'. Phi incoming edges must name
-        // the *actual* predecessor whose terminator reaches join_bb.
+        // Nested CFG: capture the actual exit block, not the arm entry.
         let then_exit_bb = self.current_block_id().unwrap_or(then_bb);
         let then_locals = self.locals.clone();
 
@@ -468,19 +478,33 @@ impl<'c> Lowerer<'c> {
         if let Some(else_block) = &i.else_block {
             self.lower_block(else_block)?;
         }
-        if !self.has_terminator() {
+        let else_reaches_join = !self.has_terminator();
+        if else_reaches_join {
             self.set_terminator(Terminator::Br(join_bb));
         }
         let else_exit_bb = self.current_block_id().unwrap_or(else_bb);
         let else_locals = self.locals.clone();
 
-        // join
+        // The Phi incoming set must equal the *live* join predecessors.
+        // If both arms return, no join block exists and the enclosing block
+        // must preserve the last Return instead of lowering dead statements.
+        if !then_reaches_join && !else_reaches_join {
+            return Ok(());
+        }
         self.locals = saved_locals;
         self.push_block(join_bb, i.span, ExecutionHint::Sequential);
-        self.merge_locals_with_phi(
-            &then_locals, then_exit_bb, &else_locals, else_exit_bb, i.span
-        );
-
+        match (then_reaches_join, else_reaches_join) {
+            (true, true) => self.merge_locals_with_phi(
+                &then_locals, then_exit_bb, &else_locals, else_exit_bb, i.span
+            ),
+            (true, false) => self.merge_locals_with_phi_multi(
+                &[(then_exit_bb, then_locals)], i.span
+            ),
+            (false, true) => self.merge_locals_with_phi_multi(
+                &[(else_exit_bb, else_locals)], i.span
+            ),
+            (false, false) => unreachable!("both terminating arms handled above"),
+        }
         Ok(())
     }
 
