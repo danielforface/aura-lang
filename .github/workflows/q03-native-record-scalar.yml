@@ -27,6 +27,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_nested_abi_native -- --nocapture
       - name: Guard nominal Record Phi mismatches and scalar mixes
         run: cargo test --locked -p aura-backend-c --test record_phi_guards -- --nocapture
+      - name: EV-191 source early-return CFG and strict Clang O0 O2 (test first)
+        run: cargo test --locked -p aura-backend-c --test record_early_return_native -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
