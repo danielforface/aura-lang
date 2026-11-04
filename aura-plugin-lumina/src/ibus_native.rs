@@ -715,6 +715,19 @@ mod tests{
         for _ in 0..200{assert!(!b.tick(),"lifetime attempt cap must hold");}
         assert_eq!(b.diagnostic_status(),(3,true));
     }
+    /// Controlled PROTOCOL sequence, NOT a claimed genuine engine trace.
+    /// A D/C from the helper's idle/pre-dispatch GLib pump must never be
+    /// assigned to the *following* ProcessKeyEvent, even if an R arrives.
+    #[test]fn pre_dispatch_delayed_pair_must_not_cross_key_boundary(){
+        let stale=vec![
+            "D\t-1\t1".to_string(),
+            "C\teab080".to_string(),
+            "B".to_string(),  // proposed helper-origin key-begin marker
+            "R\t1".to_string(),
+        ];
+        assert_eq!(same_key_replace_pair(&stale),None,
+            "a D/C pair before the new key-dispatch boundary is NOT same-key");
+    }
     #[test]fn adversarial_same_key_order_has_no_delete_authority(){
         let parse=|seq:&[&str]|same_key_replace_pair(
             &seq.iter().map(|s|s.to_string()).collect::<Vec<_>>());
