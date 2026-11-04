@@ -421,21 +421,83 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
     // Fail closed when an operand's primitive category is *already known*.
     // Integer widths may differ legally at source-refined ABI boundaries,
     // so validate Bool-vs-integer only; do not falsely promise width proof.
+    // EV-195: derive primitive-category facts only where they follow from
+    // a trusted parameter, a literal, a known operation result, or the SSA
+    // equality constraint of a Phi. Iterate because loop-header Phi values
+    // and backedge Binary expressions can form a cyclic definition graph.
+    // Unknown values remain unknown: never default an unresolved producer to
+    // U32/Bool, and never reinterpret an existing known category.
     let mut known: HashMap<ValueId, KnownPrimitiveKind> = HashMap::new();
     for p in &f.params {
         if let Some(kind) = known_primitive_type(&p.ty) { known.insert(p.value, kind); }
     }
-    for bb in &f.blocks {
-        for inst in &bb.insts {
-            if let (Some(dest), InstKind::BindStrand { expr, .. }) = (inst.dest, &inst.kind) {
-                let kind = match expr {
-                    RValue::ConstBool(_) => Some(KnownPrimitiveKind::Bool),
-                    RValue::ConstU32(_) | RValue::ConstI64(_) => Some(KnownPrimitiveKind::Integer),
+    loop {
+        let mut progressed = false;
+        for bb in &f.blocks {
+            if !reachable.contains(&bb.id) { continue; }
+            for inst in &bb.insts {
+                let Some(dest) = inst.dest else { continue; };
+                let kind = match &inst.kind {
+                    InstKind::BindStrand { expr, .. } => match expr {
+                        RValue::ConstBool(_) => Some(KnownPrimitiveKind::Bool),
+                        RValue::ConstU32(_) | RValue::ConstI64(_) =>
+                            Some(KnownPrimitiveKind::Integer),
+                        RValue::Local(value) => known.get(value).copied(),
+                        _ => None,
+                    },
+                    InstKind::Unary { op: UnaryOp::Not, operand } =>
+                        (known.get(operand) == Some(&KnownPrimitiveKind::Bool))
+                            .then_some(KnownPrimitiveKind::Bool),
+                    InstKind::Unary { op: UnaryOp::Neg, operand } =>
+                        (known.get(operand) == Some(&KnownPrimitiveKind::Integer))
+                            .then_some(KnownPrimitiveKind::Integer),
+                    InstKind::Binary { op, left, right } => match op {
+                        // The IR operators below yield a Bool category
+                        // regardless of the primitive *width* of their inputs.
+                        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt |
+                        BinOp::Le | BinOp::Ge | BinOp::And | BinOp::Or =>
+                            Some(KnownPrimitiveKind::Bool),
+                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div =>
+                            (known.get(left) == Some(&KnownPrimitiveKind::Integer)
+                                && known.get(right) == Some(&KnownPrimitiveKind::Integer))
+                                .then_some(KnownPrimitiveKind::Integer),
+                    },
+                    InstKind::Phi { incomings } => {
+                        let mut candidate = None;
+                        for (_, incoming) in incomings {
+                            if let Some(actual) = known.get(incoming).copied() {
+                                if let Some(previous) = candidate {
+                                    if previous != actual {
+                                        return Err(OracleError { message: format!(
+                                            "oracle: function '{}' Phi type mismatch in {:?}: SSA {:?} has {:?} and {:?} incoming categories",
+                                            f.name, bb.id, dest, previous, actual
+                                        ) });
+                                    }
+                                } else {
+                                    candidate = Some(actual);
+                                }
+                            }
+                        }
+                        candidate
+                    }
                     _ => None,
                 };
-                if let Some(kind) = kind { known.insert(dest, kind); }
+                if let Some(actual) = kind {
+                    if let Some(previous) = known.get(&dest) {
+                        if *previous != actual {
+                            return Err(OracleError { message: format!(
+                                "oracle: function '{}' SSA type conflict for {:?} in {:?}: {:?} vs {:?}",
+                                f.name, dest, bb.id, previous, actual
+                            ) });
+                        }
+                    } else {
+                        known.insert(dest, actual);
+                        progressed = true;
+                    }
+                }
             }
         }
+        if !progressed { break; }
     }
     for bb in &f.blocks {
         if !reachable.contains(&bb.id) { continue; }
