@@ -126,7 +126,7 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
     let last=p.diagnostic_native_ibus_surrounding().unwrap();
     assert_eq!(last.0,expected[7]);
     assert_eq!(last.1 as usize,last.0.chars().count());
-    let press_ctrl=|letter:&str|{
+    let mut press_ctrl=|letter:&str|{
         xdo(&["keydown","ctrl"]);frames(&p,&app,&mut c,4);
         xdo(&["keydown",letter]);let mut events=frames(&p,&app,&mut c,6);
         xdo(&["keyup",letter]);events.extend(frames(&p,&app,&mut c,6));
