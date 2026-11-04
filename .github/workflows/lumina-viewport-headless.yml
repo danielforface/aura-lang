@@ -88,6 +88,19 @@ jobs:
             export LUMINA_IBUS_CANDIDATE_FONT_PATH="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
             export LUMINA_IBUS_ENGINE="libpinyin"
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_candidate_e2e -- --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P24_UPSTREAM_REGISTERED_HANGUL_NONE_MODE"
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            test "$(gsettings get org.freedesktop.ibus.engine.hangul preedit-mode)" = "\x27none\x27"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul || true
+            echo "LUMINA_IBUS_P24_ACTUAL_ENGINE=$(ibus engine)"
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P24_HANGUL_NOT_ACTIVE"; exit 23; }
+            export LUMINA_IBUS_ENGINE="hangul"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e -- --nocapture --test-threads=1
           '
 
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
