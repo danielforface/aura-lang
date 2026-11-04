@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::{
     BinOp, BlockId, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp, ValueId,
@@ -176,6 +176,110 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    // EV-191: a Phi is an edge-indexed selection, not an arbitrary set of
+    // block/value pairs. Establish the reachable CFG from *terminators*,
+    // independently of the incoming labels supplied by the IR.
+    let mut reachable = BTreeSet::from([f.entry]);
+    let mut pending = VecDeque::from([f.entry]);
+    let mut predecessors: BTreeMap<BlockId, BTreeSet<BlockId>> = BTreeMap::new();
+    while let Some(id) = pending.pop_front() {
+        let bb = &f.blocks[blocks_by_id[&id]];
+        let edges: Vec<BlockId> = match &bb.term {
+            Terminator::Return(_) => Vec::new(),
+            Terminator::Br(target) => vec![*target],
+            Terminator::CondBr { then_bb, else_bb, .. } => vec![*then_bb, *else_bb],
+            Terminator::Switch { default_bb, cases, .. } =>
+                std::iter::once(*default_bb)
+                    .chain(cases.iter().map(|(_, target)| *target)).collect(),
+        };
+        for successor in edges {
+            predecessors.entry(successor).or_default().insert(id);
+            if reachable.insert(successor) {
+                pending.push_back(successor);
+            }
+        }
+    }
+
+    // Fixed-point dominators over reachable blocks. Incoming SSA values must
+    // be available at the *end* of the predecessor edge (not only somewhere
+    // in the function or along a different branch).
+    let mut dominators: BTreeMap<BlockId, BTreeSet<BlockId>> = reachable.iter()
+        .map(|&bb| (bb, if bb == f.entry {
+            BTreeSet::from([bb])
+        } else {
+            reachable.clone()
+        })).collect();
+    loop {
+        let mut changed = false;
+        for &bb in &reachable {
+            if bb == f.entry { continue; }
+            let mut parent_sets = predecessors.get(&bb).into_iter()
+                .flat_map(|ps| ps.iter())
+                .map(|pred| dominators[pred].clone());
+            let Some(mut intersection) = parent_sets.next() else { continue; };
+            for parent_dom in parent_sets {
+                intersection = intersection.intersection(&parent_dom).copied().collect();
+            }
+            intersection.insert(bb);
+            if dominators[&bb] != intersection {
+                dominators.insert(bb, intersection);
+                changed = true;
+            }
+        }
+        if !changed { break; }
+    }
+    let mut definitions: HashMap<ValueId, BlockId> = HashMap::new();
+    for param in &f.params {
+        definitions.entry(param.value).or_insert(f.entry);
+    }
+    for bb in &f.blocks {
+        for inst in &bb.insts {
+            if let Some(value) = inst.dest {
+                definitions.entry(value).or_insert(bb.id);
+            }
+        }
+    }
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        let actual = predecessors.get(&bb.id).cloned().unwrap_or_default();
+        for inst in &bb.insts {
+            let InstKind::Phi { incomings } = &inst.kind else { continue; };
+            let mut present = BTreeSet::new();
+            for (from, value) in incomings {
+                if !present.insert(*from) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has duplicate incoming predecessor {:?}",
+                        f.name, bb.id, from
+                    ) });
+                }
+                if !actual.contains(from) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has incoming {:?} that is not a reachable CFG predecessor",
+                        f.name, bb.id, from
+                    ) });
+                }
+                let def_bb = definitions.get(value).ok_or_else(|| OracleError {
+                    message: format!(
+                        "oracle: function '{}' Phi in {:?} references undefined incoming SSA value {:?}",
+                        f.name, bb.id, value
+                    )
+                })?;
+                if !dominators[from].contains(def_bb) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} incoming {:?} definition in {:?} does not dominate predecessor {:?}",
+                        f.name, bb.id, value, def_bb, from
+                    ) });
+                }
+            }
+            if present != actual {
+                return Err(OracleError { message: format!(
+                    "oracle: function '{}' Phi in {:?} missing incoming predecessor(s): expected {:?}, got {:?}",
+                    f.name, bb.id, actual, present
+                ) });
             }
         }
     }
