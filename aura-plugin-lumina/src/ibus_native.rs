@@ -195,6 +195,12 @@ impl NativeIbus{
             self.surrounding_requires=self.surrounding_requires.saturating_add(1);
             return true;
         }
+        if line=="D\t0\t0"{
+            // Genuine upstream ibus-hangul sends an empty DeleteSurroundingText
+            // before the first syllable when preedit-mode=none. Valid no-op:
+            // do not disconnect, count it as a deletion, or touch EditSession.
+            return true;
+        }
         if line.starts_with("D\t"){
             let Some((offset,count))=parse_surrounding_delete_frame(line)
                 else{return false;};
