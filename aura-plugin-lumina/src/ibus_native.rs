@@ -92,6 +92,8 @@ pub(crate) struct NativeIbus{
     pub(crate) cursor_location:Option<(u32,u32,u32,u32)>,
     pub(crate) surrounding_text_acks:usize,
     pub(crate) surrounding_delete_requests:usize,
+    /// Last real bounded D frame from this IBus engine focus generation.
+    pub(crate) surrounding_last_delete:Option<(i32,u32)>,
     pub(crate) surrounding_requires:usize,
     pub(crate) surrounding_text:Option<(String,u32,u32)>,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
@@ -171,6 +173,7 @@ impl NativeIbus{
             candidate_events:0,candidate_click_acks:0,candidate_page:None,
             cursor_location_acks:0,cursor_location:None,
             surrounding_text_acks:0,surrounding_delete_requests:0,
+            surrounding_last_delete:None,
             surrounding_requires:0,surrounding_text:None})
     }
     fn send(&mut self,command:&str)->bool {
@@ -192,10 +195,21 @@ impl NativeIbus{
             self.surrounding_requires=self.surrounding_requires.saturating_add(1);
             return true;
         }
+        if line=="D\t0\t0"{
+            // Genuine upstream ibus-hangul sends an empty DeleteSurroundingText
+            // before the first syllable when preedit-mode=none. Valid no-op:
+            // do not disconnect, count it as a deletion, or touch EditSession.
+            return true;
+        }
         if line.starts_with("D\t"){
-            if parse_surrounding_delete_frame(line).is_none(){return false;}
-            // Advisory from IBus engine; do NOT mutate authoritative editor.
-            self.surrounding_delete_requests=self.surrounding_delete_requests.saturating_add(1);
+            let Some((offset,count))=parse_surrounding_delete_frame(line)
+                else{return false;};
+            // Engine-origin advisory only. Record bounded evidence and focus
+            // epoch; NEVER apply deletion to the host-owned editor here.
+            if self.focus.is_some() && self.surrounding_text.is_some(){
+                self.surrounding_delete_requests=self.surrounding_delete_requests.saturating_add(1);
+                self.surrounding_last_delete=Some((offset,count));
+            }
             return true;
         }
         false
@@ -257,6 +271,7 @@ impl NativeIbus{
         self.candidate_page=None;
         self.cursor_location=None;
         self.surrounding_text=None;
+        self.surrounding_last_delete=None;
         self.focus=None;
         if let Some(id)=target{
             if !self.send("F1"){return false;}

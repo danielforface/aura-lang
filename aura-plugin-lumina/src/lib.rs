@@ -974,6 +974,17 @@ impl AuraLuminaPlugin {
         Some((value,caret,anchor,bus.surrounding_text_acks,
             bus.surrounding_requires,bus.surrounding_delete_requests))
     }
+    /// Genuine libibus engine-origin D request observed on the currently
+    /// focused IBus input context. No edit has been performed for this signal.
+    /// None means no valid request in the current focus generation.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_deletion(&self)->Option<(usize,i32,u32)>{
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let (offset,count)=bus.surrounding_last_delete?;
+        Some((bus.surrounding_delete_requests,offset,count))
+    }
+
 
     /// Actual acknowledged libibus absolute screen rectangle; diagnostic only.
     #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
