@@ -193,3 +193,33 @@ cell loop_yield(flag: bool, n: u32) ->:
         assert_eq!(actual.return_value, Some(OracleValue::U32(want)));
     }
 }
+
+#[test]
+fn loop_header_phi_does_not_accept_mixed_u32_and_u64_predecessor_types() {
+    // Even though EV-192 can provisionally infer a type from a preheader,
+    // final C Phi emission must check every incoming and fail closed.
+    let src = r#"
+cell wide_loop(wide: u64, start: u32, limit: u32) ->:
+    val mut value: u32 = start
+    while value < limit:
+        value = value + 1
+    yield value
+"#;
+    let ast = aura_parse::parse_source(src).expect("loop source parses");
+    Checker::new().check_program(&ast).expect("loop source checks");
+    let mut ir = lower_program(&ast).expect("valid source lowers");
+    validate_module(&ir).expect("original loop Phi CFG is well formed");
+    let f = ir.functions.get_mut("wide_loop").unwrap();
+    let wide = f.params[0].value;
+    let loop_phi = f.blocks.iter_mut().flat_map(|b| b.insts.iter_mut())
+        .find(|i| matches!(i.kind, InstKind::Phi { .. }))
+        .expect("loop creates a loop-carried Phi");
+    let InstKind::Phi { incomings } = &mut loop_phi.kind else { unreachable!() };
+    assert_eq!(incomings.len(), 2);
+    incomings[1].1 = wide; // U64 defined at function entry, but wrong U32 loop ABI.
+    validate_module(&ir).expect("structural CFG/dominance valid; typed C must reject");
+    let err = emit_module(&ir, None)
+        .expect_err("provisional loop Phi inference must never hide mixed widths");
+    assert!(err.message.contains("Phi") || err.message.contains("SSA"),
+        "require explicit typed Phi/SSA refusal: {err}");
+}

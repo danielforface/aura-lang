@@ -659,3 +659,44 @@ cell main() ->:
         }
     }
 }
+
+#[test]
+fn public_cli_builds_match_and_while_early_return_source_without_phantom_phi_edges() {
+    let source = r#"
+cell early_match(n: u32, flag: bool, first: u32, second: u32) ->:
+    val mut chosen: u32 = first
+    match n:
+        0:
+            if flag:
+                yield first
+            else:
+                chosen = second
+        _:
+            chosen = first
+    yield chosen
+cell early_loop(flag: bool, n: u32) ->:
+    val mut chosen: u32 = n
+    while flag:
+        chosen = chosen + 1
+        yield chosen
+    yield chosen
+cell main() ->:
+    yield 7
+"#;
+    let fixture = SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result = fixture.run(args);
+        let output = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-192 public Aura {:?} must build real early Match/While source: {output}",args);
+        if args[0]=="check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 CLI cannot assert formal proof: {output}");
+        }
+    }
+}
