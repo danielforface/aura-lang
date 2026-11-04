@@ -109,6 +109,39 @@ void main() {
 }
 "#;
 
+/// Explicit operator-controlled native reconnect command on the ROOT App.
+/// A missing, malformed, duplicated, or noncanonical revision cannot rearm
+/// the finite IBus circuit breaker. The host must first supply a baseline.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn root_native_retry_revision(root:&UiNode)->Option<u64>{
+    if root.kind!="App"{return None;}
+    let mut values=root.props.iter().filter(|(name,_)|name=="ibus_retry_revision");
+    let (_,text)=values.next()?;
+    if values.next().is_some()||text.is_empty()||text.len()>20||
+        (text.len()>1 && text.starts_with('0')) ||
+        !text.bytes().all(|b|b.is_ascii_digit()){return None;}
+    text.parse::<u64>().ok()
+}
+#[cfg(all(test,feature="raylib",target_os="linux"))]
+#[test]fn native_retry_revision_requires_unique_canonical_root_value(){
+    let mut app=UiNode::new("App");
+    assert_eq!(root_native_retry_revision(&app),None);
+    app.set_prop("ibus_retry_revision","0");
+    assert_eq!(root_native_retry_revision(&app),Some(0));
+    app.set_prop("ibus_retry_revision","18446744073709551615");
+    assert_eq!(root_native_retry_revision(&app),Some(u64::MAX));
+    for raw in ["-1","+1","01"," 1","1 ","1x","18446744073709551616"] {
+        app.set_prop("ibus_retry_revision",raw);
+        assert_eq!(root_native_retry_revision(&app),None,"invalid retry {raw:?}");
+    }
+    app.set_prop("ibus_retry_revision","1");
+    app.props.push(("ibus_retry_revision".to_string(),"2".to_string()));
+    assert_eq!(root_native_retry_revision(&app),None,"duplicate host command");
+    let mut other=UiNode::new("TextInput");
+    other.set_prop("ibus_retry_revision","2");
+    assert_eq!(root_native_retry_revision(&other),None,"only root App can command");
+}
+
 #[cfg(feature = "raylib")]
 const INITIAL_WINDOW_W: i32 = 1920;
 
@@ -1284,10 +1317,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
             let win = win_ref.as_mut().expect("window initialized");
 
-            // Recovery occurs only for a PREVIOUSLY-LIVE native helper that
-            // was lost. The new real C child starts privacy capability OFF;
-            // no prior events, candidate pages or deletions are carried over.
-            // Retries are deterministic, frame-spaced, and capped per window.
+            // Normal recovery is capped at three attempts. After exhaustion,
+            // ONLY a strictly increasing HOST App ibus_retry_revision can
+            // rearm a *new* finite epoch; initial value is merely baseline.
+            // A fresh helper begins with surrounding capability OFF.
+            #[cfg(target_os="linux")]
+            if let Some(version)=root_native_retry_revision(tree){
+                win.native_ibus_reconnect.observe_host_retry_revision(
+                    version,win.native_ibus.is_none());
+            }
             #[cfg(target_os="linux")]
             if win.native_ibus.is_none() && win.native_ibus_reconnect.tick(){
                 if let Some(mut fresh)=ibus_native::NativeIbus::connect(){

@@ -166,13 +166,17 @@ fn same_key_replace_pair(lines:&[String])->Option<(i32,u32)>{
     let (at,offset,count)=delete?;
     (at<commit?).then_some((offset,count))
 }
-/// A fixed, per-window recovery budget. A failed Native IBus child is never
-/// respawned in an unbounded loop; retries are tied to subsequent UI frames.
+/// Fixed recovery budget per explicitly authorized host revision.
+/// Never restart a failed native child in an unbounded automatic loop;
+/// retries advance only on subsequent rendered UI frames.
 #[derive(Clone,Debug,Default)]
 pub(crate) struct IbusReconnectBudget{
     used:u8,
     countdown:u16,
     armed:bool,
+    /// Previous trusted App ibus_retry_revision. A first observation is
+    /// BASELINE ONLY, not permission to restart a missing helper.
+    host_revision:Option<u64>,
 }
 impl IbusReconnectBudget{
     const MAX_ATTEMPTS:u8=3;
@@ -185,8 +189,32 @@ impl IbusReconnectBudget{
             self.armed=true;
         }
     }
-    /// At most one reconnect attempt in any frame; attempts are permanently
-    /// capped for this window, even if a recovered helper fails again.
+    /// An explicit, strictly increasing host revision authorizes ONE fresh
+    /// 3-attempt budget only if the helper is missing. No change, rollback,
+    /// duplicate root props, invalid revision, or unobserved initial version
+    /// may silently reset the breaker. This never changes native privacy.
+    pub(crate) fn observe_host_retry_revision(
+        &mut self,revision:u64,missing_helper:bool
+    )->bool{
+        match self.host_revision {
+            None=>{
+                self.host_revision=Some(revision);
+                false
+            }
+            Some(last) if revision>last=>{
+                self.host_revision=Some(revision);
+                if !missing_helper{return false;}
+                self.used=0;
+                self.countdown=0;
+                self.armed=false;
+                self.arm();
+                true
+            }
+            _=>false,
+        }
+    }
+    /// At most one reconnect attempt in any frame; three attempts per
+    /// host-authorized recovery epoch including its natural initial epoch.
     pub(crate) fn tick(&mut self)->bool{
         if !self.armed{return false;}
         if self.countdown>0{self.countdown-=1;return false;}
@@ -642,6 +670,31 @@ impl Drop for NativeIbus{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn manually_rearm_exhausted_budget_only_on_monotonic_host_revision(){
+        let mut b=IbusReconnectBudget::default();
+        assert!(!b.observe_host_retry_revision(0,true),
+            "first host value must be baseline, not an implicit command");
+        for index in 0..IbusReconnectBudget::MAX_ATTEMPTS {
+            b.arm();
+            for _ in 0..IbusReconnectBudget::WAIT_FRAMES[index as usize]{
+                assert!(!b.tick());
+            }
+            assert!(b.tick());
+        }
+        b.arm();
+        for _ in 0..200{assert!(!b.tick(),"no automatic fourth retry");}
+        assert!(!b.observe_host_retry_revision(0,true),"stable version no reset");
+        assert!(!b.observe_host_retry_revision(1,false),
+            "revision update on a live helper is not a reconnect request");
+        assert!(!b.observe_host_retry_revision(0,true),"rollback no reset");
+        assert!(!b.observe_host_retry_revision(1,true),"replay no reset");
+        assert!(b.observe_host_retry_revision(2,true),
+            "new strictly higher host command may open one bounded epoch");
+        for _ in 0..24 { assert!(!b.tick()); }
+        assert!(b.tick(),"only the commanded bounded retry is ready");
+        assert!(!b.tick(),"cannot repeat a permitted attempt");
+        assert!(!b.observe_host_retry_revision(2,true),"same version cannot rearm");
+    }
     #[test]fn real_helper_recovery_budget_is_bounded_without_clock_or_sleep(){
         let mut b=IbusReconnectBudget::default();
         assert!(!b.tick(),"no automatic unconfigured retry");
