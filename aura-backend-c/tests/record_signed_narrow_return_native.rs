@@ -10,14 +10,14 @@ cell echo_u8(small: u8, wide: u16) ->:
     yield small
 cell echo_u16(wide: u16, small: u8) ->:
     yield wide
-cell echo_i32(signed: i32, unsigned: u32) ->:
-    yield signed
-cell select_i64(signed: i64, unsigned: u64) ->:
-    yield signed
-cell select_u64(signed: i64, unsigned: u64) ->:
-    yield unsigned
-cell forward_i64(signed: i64, unsigned: u64) ->:
-    yield select_i64(signed, unsigned)
+cell echo_i32(neg: i32, pos: u32) ->:
+    yield neg
+cell select_i64(neg: i64, pos: u64) ->:
+    yield neg
+cell select_u64(neg: i64, pos: u64) ->:
+    yield pos
+cell forward_i64(neg: i64, pos: u64) ->:
+    yield select_i64(neg, pos)
 "#;
 
 fn original_ir() -> ModuleIR {
