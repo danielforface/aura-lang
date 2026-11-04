@@ -1484,26 +1484,46 @@ fn emit_function(
                             v.0, f.name, b.id.0, b.span,
                         ),
                     })?;
-                    // EV-197: without a Checker-authenticated refined return
-                    // bound, an integer SSA may not silently change width at
-                    // the public C return ABI. In particular, implicit C
-                    // U64 -> U32 truncation and non-literal U32 -> U64
-                    // promotion must not launder a forged FunctionIR Return.
-                    // A proven U32 literal remains safe to widen to U64.
-                    // Other scalar categories and refined returns preserve
-                    // their existing independent qualification boundaries.
+                    // EV-197/198: unrefined integer SSA must preserve
+                    // its exact public C return ABI width AND signedness.
+                    // C's implicit conversions are not source/IR proof:
+                    // u16 -> u8 loses bits, u64 -> i64 may reinterpret the
+                    // high bit, and u8 -> u16 may conceal a forged Return.
+                    // The sole unrefined cross-width exception is a known,
+                    // locally derived nonnegative U32 literal whose complete
+                    // value fits the destination ABI; never treat a parameter,
+                    // Call, Binary or unproven Phi as constant provenance.
+                    // Source-authenticated refined Returns keep their earlier
+                    // independent guard-before-cast pathway below.
                     let required = map_type_to_ctype(&f.ret);
                     let return_key = if f.name == "aura_main" { "main" } else { &f.name };
+                    let integer_abi = |ty: CType| matches!(ty,
+                        CType::U8 | CType::U16 | CType::U32 | CType::U64 |
+                        CType::I8 | CType::I16 | CType::I32 | CType::I64);
+                    let literal_fits = if *actual == CType::U32 {
+                        let max = match required {
+                            CType::U8 => Some(u8::MAX as u64),
+                            CType::U16 => Some(u16::MAX as u64),
+                            CType::U32 => Some(u32::MAX as u64),
+                            CType::U64 => Some(u64::MAX),
+                            CType::I8 => Some(i8::MAX as u64),
+                            CType::I16 => Some(i16::MAX as u64),
+                            CType::I32 => Some(i32::MAX as u64),
+                            CType::I64 => Some(i64::MAX as u64),
+                            _ => None,
+                        };
+                        max.is_some_and(|max| known_u32_constants.get(v)
+                            .is_some_and(|n| *n <= max))
+                    } else {
+                        false
+                    };
                     if !source_refined_return_bounds.contains_key(return_key)
-                        && matches!(required, CType::U32 | CType::U64)
-                        && matches!(actual, CType::U32 | CType::U64)
-                        && actual != &required
-                        && !(required == CType::U64 && *actual == CType::U32
-                             && known_u32_constants.contains_key(v))
+                        && integer_abi(required) && integer_abi(*actual)
+                        && *actual != required && !literal_fits
                     {
                         return Err(CBackendError {
                             message: format!(
-                                "C return scalar type mismatch in '{}' block bb{}: SSA v{} is {:?}, declared ABI {:?}; no proven constant or refined return boundary",
+                                "C return scalar type mismatch in '{}' block bb{}: SSA v{} is {:?}, declared ABI {:?}; no proven in-range literal or refined return boundary",
                                 f.name, b.id.0, v.0, actual, required
                             ),
                         });
