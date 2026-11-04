@@ -178,7 +178,6 @@ impl IbusReconnectBudget{
     const MAX_ATTEMPTS:u8=3;
     const WAIT_FRAMES:[u16;3]=[24,72,144];
     /// Observe only bounded lifetime attempts and exhaustion, never content.
-    #[cfg(feature="lumina-diagnostics")]
     pub(crate) fn diagnostic_status(&self)->(u8,bool){
         (self.used,self.used>=Self::MAX_ATTEMPTS)
     }
