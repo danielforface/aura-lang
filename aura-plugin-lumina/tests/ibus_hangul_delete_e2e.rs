@@ -351,12 +351,29 @@ fn key(p:&AuraLuminaPlugin,t:&UiNode,c:&mut NexusContext,k:&str)->Vec<UiTextInpu
 // Phase29 never injects engine C/D/P. This sends SIGKILL to the real daemon
 // process inside the dedicated Xvfb + dbus-run-session test job; the C helper
 // is NOT killed. The old libibus bus signal must invalidate its generation.
-fn phase29_hard_kill_real_daemon(){
+struct Phase29RestoreDaemon{restored:bool}
+impl Drop for Phase29RestoreDaemon{
+    fn drop(&mut self){
+        if self.restored{return;}
+        // Test isolation: a failed real daemon test must not poison the next
+        // independent X11 test. No production recovery is simulated here.
+        let _=Command::new("ibus-daemon").args([
+            "--daemonize","--xim","--panel","disable","--cache=refresh"
+        ]).status();
+        for _ in 0..30{
+            if Command::new("ibus").args(["engine","hangul"])
+                .status().is_ok_and(|s|s.success()){break;}
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+fn phase29_hard_kill_real_daemon()->Phase29RestoreDaemon{
     let out=Command::new("pkill").args(["-KILL","-x","ibus-daemon"])
         .output().expect("procps pkill required for genuine daemon SIGKILL");
     assert!(out.status.success(),
         "must actually SIGKILL the live ibus-daemon process (not helper): {}",
         String::from_utf8_lossy(&out.stderr));
+    Phase29RestoreDaemon{restored:false}
 }
 fn phase29_start_real_daemon_hangul(){
     use std::time::Duration;
@@ -406,7 +423,7 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
     let first=key(&p,&app,&mut c,"r");
     assert_eq!(first.len(),1);
     assert_eq!(first[0].text,"HARD-ㄱ");
-    phase29_hard_kill_real_daemon();
+    let mut restore=phase29_hard_kill_real_daemon();
     assert!(frames(&p,&app,&mut c,50).is_empty(),
         "real hard-crash cannot replay old CommitText during idle frames");
     assert_eq!(p.diagnostic_native_ibus(),None,
@@ -418,6 +435,7 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
     assert_eq!(local.len(),1,"offline direct typing must remain available");
     assert_eq!(local[0].text,"HARD-ㄱz");
     phase29_start_real_daemon_hangul();
+    restore.restored=true;
     assert!(frames(&p,&app,&mut c,210).is_empty(),
         "old engine events must not replay after delayed daemon restart");
     assert_eq!(p.diagnostic_native_ibus(),Some(0),
@@ -440,7 +458,7 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
     let first=key(&p,&app,&mut c,"r");
     assert_eq!(first.len(),1);
     assert_eq!(first[0].text,"EXHAUST-ㄱ");
-    phase29_hard_kill_real_daemon();
+    let mut restore=phase29_hard_kill_real_daemon();
     assert!(frames(&p,&app,&mut c,430).is_empty(),
         "no stale engine callback may escape during long offline render");
     assert_eq!(p.diagnostic_native_ibus(),None,
@@ -448,6 +466,7 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
     assert_eq!(p.diagnostic_native_ibus_recovery_budget(),Some((3,true)),
         "three failed live native reconnect attempts must exhaust budget");
     phase29_start_real_daemon_hangul();
+    restore.restored=true;
     assert!(frames(&p,&app,&mut c,180).is_empty());
     assert_eq!(p.diagnostic_native_ibus(),None,
         "automatic helper spawning must STOP at lifetime cap even after daemon returns");
