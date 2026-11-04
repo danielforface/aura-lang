@@ -1478,12 +1478,36 @@ fn emit_function(
                             "Record ABI return in '{}' passes Record to non-Record result", f.name,
                         ) });
                     }
-                    let (_ct, c_name) = values.get(v).ok_or_else(|| CBackendError {
+                    let (actual, c_name) = values.get(v).ok_or_else(|| CBackendError {
                         message: format!(
                             "unemitted C return SSA v{} in function '{}' block bb{} at source span {:?}; refusing fabricated return",
                             v.0, f.name, b.id.0, b.span,
                         ),
                     })?;
+                    // EV-197: without a Checker-authenticated refined return
+                    // bound, an integer SSA may not silently change width at
+                    // the public C return ABI. In particular, implicit C
+                    // U64 -> U32 truncation and non-literal U32 -> U64
+                    // promotion must not launder a forged FunctionIR Return.
+                    // A proven U32 literal remains safe to widen to U64.
+                    // Other scalar categories and refined returns preserve
+                    // their existing independent qualification boundaries.
+                    let required = map_type_to_ctype(&f.ret);
+                    let return_key = if f.name == "aura_main" { "main" } else { &f.name };
+                    if !source_refined_return_bounds.contains_key(return_key)
+                        && matches!(required, CType::U32 | CType::U64)
+                        && matches!(actual, CType::U32 | CType::U64)
+                        && actual != &required
+                        && !(required == CType::U64 && *actual == CType::U32
+                             && known_u32_constants.contains_key(v))
+                    {
+                        return Err(CBackendError {
+                            message: format!(
+                                "C return scalar type mismatch in '{}' block bb{}: SSA v{} is {:?}, declared ABI {:?}; no proven constant or refined return boundary",
+                                f.name, b.id.0, v.0, actual, required
+                            ),
+                        });
+                    }
                     c_name
                 };
                 let mut return_expression = name.to_string();
