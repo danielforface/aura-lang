@@ -102,6 +102,14 @@ static void delete_surrounding(IBusInputContext *ctx,gint offset,guint count,gpo
         offset,count);
     printf("D\t%d\t%u\n",offset,count);fflush(stdout);
 }
+/* The daemon connection itself is a security-sensitive generation.
+ * An automatic libibus reconnection must NEVER revive an old context. */
+static void daemon_disconnected(IBusBus *bus,gpointer user_data){
+    (void)bus;
+    gboolean *lost=(gboolean *)user_data;
+    *lost=TRUE;
+    fputs("LUMINA_IBUS_DAEMON_GENERATION_LOST (no text logged)\n",stderr);
+}
 static int hex_decode_utf8(char *hex,char *out,size_t capacity) {
     size_t n=strlen(hex);
     if(n%2 || n>2048 || n/2>=capacity) return 0;
@@ -134,6 +142,8 @@ int main(int argc,char**argv) {
     if(!bus || !ibus_bus_is_connected(bus)){
         puts("FATAL no_live_ibus_daemon");return 3;
     }
+    gboolean daemon_lost=FALSE;
+    g_signal_connect(bus,"disconnected",G_CALLBACK(daemon_disconnected),&daemon_lost);
     IBusInputContext *ic=ibus_bus_create_input_context(bus,"lumina-native");
     if(!ic){puts("FATAL context_unavailable");return 4;}
     g_signal_connect(ic,"update-preedit-text",G_CALLBACK(update_preedit),NULL);
@@ -148,6 +158,9 @@ int main(int argc,char**argv) {
     ibus_input_context_set_capabilities(ic,base_caps);
     ibus_input_context_set_engine(ic,argv[1]);
     pump_ms(350);
+    if(daemon_lost || !ibus_bus_is_connected(bus)){
+        puts("FATAL daemon_generation_lost");return 7;
+    }
     IBusEngineDesc *initial=ibus_input_context_get_engine(ic);
     fprintf(stderr,"LUMINA_IBUS_ACTUAL_ENGINE %s\n",
         initial ? ibus_engine_desc_get_name(initial) : "(none)");
@@ -155,9 +168,23 @@ int main(int argc,char**argv) {
     /* Fixed input frame: no getline allocation before checking its size. */
     char line[2112];
     int exit_code=0;
+#define CHECK_DAEMON_GENERATION() do { \
+        if(daemon_lost || !ibus_bus_is_connected(bus)){ \
+            puts("FATAL daemon_generation_lost"); \
+            exit_code=7;goto helper_cleanup; \
+        } \
+    } while(0)
     while(fgets(line,sizeof(line),stdin)) {
         if (!strchr(line,'\n')) {
             puts("FATAL input_too_long");break;
+        }
+        pump_ms(1);
+        CHECK_DAEMON_GENERATION();
+        if(!strcmp(line,"T\n")){
+            /* Privacy-neutral read-only health probe forces dispatch of
+             * the real daemon-disconnected signal while input is idle. */
+            pump_ms(3);
+            CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strcmp(line,"V0\n") || !strcmp(line,"V1\n")){
             // Clear old text BEFORE changing the external engine capability.
@@ -172,7 +199,7 @@ int main(int argc,char**argv) {
             surrounding_enabled=enable;
             pump_ms(20);
             fprintf(stderr,"LUMINA_IBUS_SURROUNDING_POLICY enabled=%d (content redacted)\n",enable);
-            puts("A");continue;
+            CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strcmp(line,"F1\n")){
             ibus_input_context_focus_in(ic);
@@ -192,7 +219,7 @@ int main(int argc,char**argv) {
             if(!actual || strcmp(actual,argv[1])!=0) {
                 puts("FATAL requested_engine_not_active");break;
             }
-            puts("A");continue;
+            CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strcmp(line,"F0\n")){
             ibus_input_context_focus_out(ic);
@@ -201,7 +228,7 @@ int main(int argc,char**argv) {
             g_object_ref_sink(empty);
             ibus_input_context_set_surrounding_text(ic,empty,0,0);
             g_object_unref(empty);
-            pump_ms(40);puts("A");continue;
+            pump_ms(40);CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strncmp(line,"S\t",2)){
             if(!surrounding_enabled){
@@ -234,7 +261,7 @@ int main(int argc,char**argv) {
             pump_ms(10);
             fprintf(stderr,"LUMINA_IBUS_SURROUNDING_SET bytes=%zu scalars=%ld cursor=%lu anchor=%lu\n",
                 strlen(utf8),count,c,a);
-            puts("A");continue;
+            CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strncmp(line,"G\t",2)){
             char *cursor=line+2;
@@ -253,7 +280,7 @@ int main(int argc,char**argv) {
             pump_ms(10);
             fprintf(stderr,"LUMINA_IBUS_CURSOR_LOCATION x=%lu y=%lu w=%lu h=%lu\n",
                 x,y,w,h);
-            puts("A");continue;
+            CHECK_DAEMON_GENERATION(); puts("A");continue;
         }
         if(!strncmp(line,"K\t",2)){
             char *cursor=line+2;
@@ -276,10 +303,12 @@ int main(int argc,char**argv) {
             fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY keysym=%lu modifiers=%lu release=%lu code=%lu handled=%d\n",
                 sym,mod,release,code,handled);
             pump_ms(25);
+            CHECK_DAEMON_GENERATION();
             printf("R\t%d\n",!!handled);continue;
         }
         puts("FATAL invalid_command");break;
     }
+helper_cleanup:
     ibus_input_context_focus_out(ic);
     g_object_unref(ic);
     g_object_unref(bus);

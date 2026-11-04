@@ -283,6 +283,17 @@ impl NativeIbus{
         }
         false
     }
+    /// Neutral daemon-generation health check: pumps libibus real
+    /// disconnected signal while idle. FATAL permanently poisons this child.
+    pub(crate) fn probe_daemon_generation(&mut self)->bool{
+        if self.disconnected || !self.send("T") || !self.await_ack(){
+            self.disconnected=true;
+            self.context_epoch=None;
+            self.native_replacements.clear();
+            return false;
+        }
+        true
+    }
     /// Explicit privacy fence. The native helper starts with surrounding
     /// disabled. An ACKed switch invalidates all previous editor authority.
     pub(crate) fn set_surrounding_enabled(&mut self,enabled:bool)->bool{
