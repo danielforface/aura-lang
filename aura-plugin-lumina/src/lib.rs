@@ -311,6 +311,36 @@ struct FocusedTextInput {
     visual_affinity: Option<usize>,
 }
 
+/// Keep the engine's committed surrounding snapshot current *before* keys
+/// (and again after edits). A host rebase resets the IME generation; local
+/// edits keep composition continuity. No new public injection surface.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn sync_native_ibus_context(
+    bus:&mut ibus_native::NativeIbus,fi:&FocusedTextInput
+)->bool{
+    let cb=fi.on_change;
+    if !bus.sync_authority_generation(cb,fi.session.rebase_generation()){
+        return false;
+    }
+    let scalar_at=|idx:usize|{
+        let byte=fi.session.buffer.grapheme_indices(true)
+            .nth(idx).map(|(b,_)|b).unwrap_or(fi.session.buffer.len());
+        u32::try_from(fi.session.buffer[..byte].chars().count()).ok()
+    };
+    let (Some(caret),Some(anchor))=
+        (scalar_at(fi.session.caret),scalar_at(fi.session.anchor))
+        else{return false;};
+    let unsafe_context=fi.session.buffer.len()>1024 ||
+        fi.session.buffer.chars().any(|c|c.is_control() ||
+            matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'));
+    let sent=if unsafe_context {
+        bus.sync_surrounding_text(cb,"",0,0)
+    }else{
+        bus.sync_surrounding_text(cb,&fi.session.buffer,caret,anchor)
+    };
+    sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
+}
+
 #[cfg(feature = "raylib")]
 fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
@@ -984,6 +1014,13 @@ impl AuraLuminaPlugin {
         let (offset,count)=bus.surrounding_last_delete?;
         Some((bus.surrounding_delete_requests,offset,count))
     }
+    /// Number of D→C tokens actually produced by the real libibus adapter,
+    /// not the count of trusted or applied host edit transactions.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_replacements(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.native_replacement_pairs)
+    }
 
 
     /// Actual acknowledged libibus absolute screen rectangle; diagnostic only.
@@ -1386,6 +1423,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                     let available=bus.sync_focus(focus);
                     if available && focus.is_some() {
+                        if let Some(fi)=win.focused_input.as_ref(){
+                            let _=sync_native_ibus_context(bus,fi);
+                        }
                         let shift=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                             ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
                         let alt=win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
@@ -1474,6 +1514,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }
 
+            // Private native queue is populated ONLY by a real libibus key
+            // with exactly one positive D before its matching C. A public
+            // CompositionEvent cannot manufacture a NativeReplace.
+            #[cfg(target_os="linux")]
+            let native_replacements=win.native_ibus.as_mut()
+                .map(|bus|bus.take_native_replacements()).unwrap_or_default();
             // Composition events are distinct from Raylib committed-char
             // queue. Match the currently focused widget and monotonic serial.
             // Never emit callbacks for preedit updates or cancellation.
@@ -1510,6 +1556,31 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                 });
                             }
                         }
+                    }
+                }
+            }
+            // Apply one authoritative transaction for real engine-origin D
+            // followed by C. Even a genuine D never edits host text by itself.
+            // Snapshot, scalar caret, focus and EditSession authority epoch
+            // are checked again AFTER reconciliation and other queued events.
+            #[cfg(target_os="linux")]
+            for replacement in native_replacements {
+                let Some(fi)=win.focused_input.as_mut()else{continue;};
+                if fi.on_change!=replacement.callback_id{continue;}
+                if let Some(changed)=fi.session.replace_surrounding_if_snapshot(
+                    replacement.authority_epoch,&replacement.expected,
+                    replacement.caret_scalar,replacement.anchor_scalar,
+                    replacement.offset,replacement.count,&replacement.text,
+                    replacement.sequence
+                ){
+                    composition_consumed=true;
+                    if changed{
+                        fi.visual_affinity=None;
+                        fi.revision.record_local_edit(&fi.session.buffer);
+                        fb.text_input_events.push(UiTextInputEvent{
+                            callback_id:fi.on_change,
+                            text:fi.session.buffer.clone(),submitted:false,
+                        });
                     }
                 }
             }
@@ -1578,33 +1649,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
-            // Read-only native IBus surrounding text uses COMMITTED editor
-            // buffer only: preedit projection is not host-authoritative.
-            // Cursor/anchor must be Unicode scalars, never UTF-8 byte offsets
-            // or grapheme IDs. Focus/revision/blur are checked by the adapter.
             #[cfg(target_os="linux")]
             if let (Some(bus),Some(fi))=
                 (win.native_ibus.as_mut(),win.focused_input.as_ref()){
-                let scalar_at=|idx:usize|{
-                    let byte=fi.session.buffer.grapheme_indices(true)
-                        .nth(idx).map(|(b,_)|b).unwrap_or(fi.session.buffer.len());
-                    u32::try_from(fi.session.buffer[..byte].chars().count()).ok()
-                };
-                if let (Some(caret),Some(anchor))=
-                    (scalar_at(fi.session.caret),scalar_at(fi.session.anchor)){
-                    // Fail closed: a too-large or unsafe host value
-                    // clears the *previous* IME snapshot rather than leaving
-                    // stale text visible to the newly rebased authority epoch.
-                    let unsafe_context=fi.session.buffer.len()>1024 ||
-                        fi.session.buffer.chars().any(|c|c.is_control() ||
-                            matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'));
-                    if unsafe_context {
-                        let _=bus.sync_surrounding_text(fi.on_change,"",0,0);
-                    }else{
-                        let _=bus.sync_surrounding_text(fi.on_change,
-                            &fi.session.buffer,caret,anchor);
-                    }
-                }
+                let _=sync_native_ibus_context(bus,fi);
             }
             ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
                 &planned_layout,&win.focused_input,&win.input_sessions);
