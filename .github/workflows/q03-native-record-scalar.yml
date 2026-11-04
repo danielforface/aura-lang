@@ -39,6 +39,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_typed_ssa_provenance -- --nocapture
       - name: EV-196 typed user-Cell Call SSA return/argument Phi and optimized strict native (test first)
         run: cargo test --locked -p aura-backend-c --test record_typed_call_ssa -- --nocapture
+      - name: EV-197 exact U32/U64 Return ABI source native O0 O2 and adversarial IR (test first)
+        run: cargo test --locked -p aura-backend-c --test record_return_width_native -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
