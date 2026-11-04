@@ -600,7 +600,9 @@ fn phase29_live_field(prefix:&str,cb:u64)->(AuraLuminaPlugin,UiNode,NexusContext
 /// the registered upstream Hangul engine emits genuine nonempty D. A second
 /// OS thread SIGKILLs the real ibus-daemon while that helper is stopped
 /// inside the D callback, then SIGCONTs it before normal key completion.
-#[test]fn zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity(){
+#[test]
+#[ignore = "run only with separately compiled diagnostic helper under isolated session"]
+fn zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity(){
     use std::{path::Path,time::Duration};
     assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
     assert!(std::env::var_os("LUMINA_IBUS_TEST_HANGUL_SWITCH").is_none());

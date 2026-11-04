@@ -143,7 +143,7 @@ jobs:
             export LUMINA_IBUS_ENGINE="hangul"
             export LUMINA_IBUS_P31_DIAGNOSTIC_INFLIGHT="1"
             unset LUMINA_IBUS_TEST_HANGUL_SWITCH
-            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity -- --exact --nocapture --test-threads=1
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity -- --ignored --exact --nocapture --test-threads=1
           '
 
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
