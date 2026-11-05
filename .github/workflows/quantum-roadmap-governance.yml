@@ -29,3 +29,5 @@ jobs:
           else
             python3 tools/qualification/check_governance.py
           fi
+      - name: Independently verify V1/V2/V3 preservation and planned statuses
+        run: python3 tools/qualification/test_quantum_roadmap_v3.py
