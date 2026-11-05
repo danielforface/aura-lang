@@ -813,14 +813,14 @@ mod tests{
         // Both CommitText frames are untrusted CONTROLLED protocol data.
         // A second C in one key must not yield two host edits/Undo records.
         let (events,replacements,_) = process_controlled_post_begin_key(
-            &["B","C\\teab080","C\\teab098","R\\t1"]);
+            &["B","C\teab080","C\teab098","R\t1"]);
         assert!(events.is_empty(),
             "duplicate key-local CommitText must produce ZERO authoritative events: {events:?}");
         assert!(replacements.is_empty(),"duplicate C cannot create NativeReplace");
     }
     #[test]fn single_post_begin_commit_keeps_existing_authoritative_path(){
         let (events,replacements,disconnected)=process_controlled_post_begin_key(
-            &["B","C\\teab080","R\\t1"]);
+            &["B","C\teab080","R\t1"]);
         assert!(!disconnected,"valid one-commit cycle must remain usable");
         assert_eq!(events.iter().filter(|e|
             matches!(e,CompositionEvent::Commit{..})).count(),1);
