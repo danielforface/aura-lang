@@ -2,6 +2,9 @@
 
 > **2026-10-28 expanded product mandate (PROPOSED, NOT complete):** [Master V2](docs/qualification/MASTER_ROADMAP_V2.md) preserves all 88 original Q00–Q11 tasks and R0–R8 while adding 102 Q12–Q18/R9–R15 commitments for a full modern, accessible, developer-friendly Aura-built Desktop/Web/Android/iOS app platform. Old checkbox marks below are **historical signals, not independent qualification evidence**. Current active work remains Q03-001 / [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57); inspect the latest [PROGRESS](docs/qualification/PROGRESS.md), [CONTEXT_HANDOFF](docs/qualification/CONTEXT_HANDOFF.md) and live CI. No merge or release implied.
 
+
+> **2026-11-05 confirmed strategic Quantum mandate:** Aura Quantum WILL be developed. [Proposed Master V3](docs/qualification/MASTER_ROADMAP_V3.md) carries all original Q00–Q18 tasks unchanged and adds 284 new Q19–Q38 obligations, with R16–R35 future trains. [Quantum program documents](docs/quantum/README.md) provide detailed design, science, ownership and acceptance. This is a future target only, all quantum gates NOT_STARTED, never proof of functionality. Existing V1/V2 plans and Agent A/B branches are preserved.
+
 This is the roadmap converted into a **future checklist**.
 
 Legend:
@@ -1354,3 +1357,16 @@ Additional DoD (for new strategic pillars):
 - [ ] Synthesis of correct-by-construction code (v2.0 feature)
 - [ ] Distributed verification for large codebases (v2.0+)
 - [ ] Educational materials and certification program (v1.5+)
+
+
+## Future program: Aura Quantum — Q19–Q38 / R16–R35 (MANDATED, NOT IMPLEMENTED)
+
+The owner has approved entering Quantum software development. Technical scope remains a Draft proposal under [Master V3](docs/qualification/MASTER_ROADMAP_V3.md), separate from existing Q00–Q18 stability and UI deliverables. All items below are planned, and marked unchecked regardless of earlier historical checkbox content.
+
+- [ ] Q19–Q23: scientific product profiles, linear qubits, source syntax, Quantum IR and operational/denotational semantics.
+- [ ] Q24–Q26: honest quantum equivalence, checked compiler rewrites, target topology/routing/scheduling.
+- [ ] Q27–Q30: OpenQASM 3.1, QIR, bounded simulator, hybrid runtime and permissioned QPU providers.
+- [ ] Q31–Q34: noise/error mitigation, research-grade QEC, pulse/calibration and quantum libraries.
+- [ ] Q35–Q38: Sentinel Quantum Studio, SDK/LSP/DX, independent adversarial CI and external quantum release qualification.
+
+Implementation begins ONLY through reviewed task IDs, isolated owner branches and explicit trust/cost controls. Quantum is opt-in and cannot postpone a separately qualified Aura Core or Lumina release.

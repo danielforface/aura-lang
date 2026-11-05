@@ -1,5 +1,13 @@
 # Aura
 
+
+## Aura Quantum — strategic full-stack extension (2026-11-05)
+
+The maintainer has **decided to enter quantum computing**. This is a future product mandate, not an existing implementation or qualification result. The [proposed Master Roadmap V3](docs/qualification/MASTER_ROADMAP_V3.md) **preserves the 190 inherited Q00–Q18 tasks** from the V2 proposal and adds **284 measurable quantum acceptance tasks across Q19–Q38 and R16–R35**. The [Quantum documentation program](docs/quantum/README.md) includes scientific semantics, linear qubit ownership, Quantum IR, checker-integrated optimization, OpenQASM/QIR, local simulation, hardware targets, QPU jobs, noise/QEC/pulse research, Sentinel Quantum Studio, security and independent external qualification.
+
+**Current status:** planning only, all quantum gates NOT_STARTED. No quantum code, simulator, QIR exporter, real QPU submission or proof has been implemented or certified by this documentation change. V1 and V2 remain unchanged; V2 and V3 technical scope are still Draft review. This does not divert Agent A Q03/PR #57 or Agent B Lumina, authorize merges, paid device execution or broaden existing release claims.
+
+
 **A proof-driven systems programming language and developer platform.**
 
 Aura brings program verification into the normal edit → build → run loop. The repository contains the language frontend, semantic core, Aura IR, verification engine, development VM, native-oriented backends, package tooling, language server, Sentinel desktop IDE, SDK, standard library, plugins, Lumina UI runtime, FFI tooling, examples, release tooling, and Android build support.

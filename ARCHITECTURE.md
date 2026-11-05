@@ -297,3 +297,17 @@ The most important repository-wide architecture work before a stable release is 
 7. publish reproducible benchmark methodology before performance SLOs become headline claims.
 
 That work turns a large implementation into a trustworthy language product.
+
+
+## Future Layer 15 — Aura Quantum (proposed, NOT IMPLEMENTED)
+
+**Strategic status:** the maintainer decided Aura WILL enter quantum development, 2026-11-05. The technical architecture is a Draft proposal and does not alter currently qualified Aura semantics. See [Quantum architecture](docs/quantum/ARCHITECTURE_AND_INTEROP.md), [formal and trust boundaries](docs/quantum/SEMANTIC_AND_TRUST_CONTRACT.md) and [Master V3 Q19–Q38](docs/qualification/MASTER_ROADMAP_V3.md).
+
+```text
+Source Edition/Quantum Types → Hybrid Quantum IR/Effects → Structural Validator
+    → specialized equivalence/verification → checked compilation passes
+    → target constraint mapping → QIR/OpenQASM or local simulator/provider
+    → receipt / evidence / statistical estimate → Sentinel Quantum Studio
+```
+
+Quantum qubits are opaque linear handles, not raw C pointers or retyped integers. Quantum measurement effects, probabilistic semantics, target calibration and exact-versus-approximate checking have separate specifications. The current Z3 verifier remains a classical SMT engine until new sound integration is independently proved. No backend path can silently discard unsupported quantum effects. Device access is explicitly permissioned and subject to cost/credential boundaries. Original architecture layers 1–14 and Q00–Q18 acceptance remain authoritative for their own domains.

@@ -67,3 +67,14 @@ If head differs from recorded notes, **GitHub is the authority for code and bran
 ## 8. Scope expansion with no implementation diversion
 
 Future development chats MUST see the new eventual Desktop/Web/iOS/Android application-platform goal (Q12–Q18), but MUST continue Q03-001 on Draft PR #57 as the current implementation stream until maintainer direction changes it. A roadmap amendment never authorizes a source rebase/merge, automatic implementation switch, removal of earlier requirements, or all-platform stability claim. Preserve V1, require reviewed supersession for V2, keep PROGRESS/HANDOFF updated together and EVIDENCE_LOG append-only. Core releases and separately qualified UI releases remain distinct; no software evidence exists merely because a document is updated.
+
+
+## 9. Quantum V3 additive mandate and concurrent-agent operations (2026-11-05)
+
+- The maintainer has confirmed Aura WILL enter quantum software engineering. This is an approved **direction**, not automatic acceptance of unreviewed V3 technical task scope, V2 supersession or release.
+- [Master V3](MASTER_ROADMAP_V3.md) is new and additive; exactly 190 inherited requirements from V2 must be preserved byte-for-byte. V1 and V2 remain unchanged. Gate IDs Q19–Q38 and trains R16–R35 are assigned as NOT_STARTED pending actual evidence.
+- Quantum agent claim: GitHub Issue includes stable Q ID, exact allowed/forbidden files, base SHA, owner, reviewers and schema dependencies. Shared immutable contract docs are read by everyone. Active status and evidence go through GitHub PR/Issue comments and an **integration-agent-serialized** central ledger update; agents must NOT independently modify the same large PROGRESS, HANDOFF or EVIDENCE files.
+- No agent may write to Agent A Q03/PR #57, Agent B Lumina/IBus branches, `main`, frozen V1/V2, `Cargo.lock`, shared Core semantics or runtime API absent reviewed interface ownership transfer.
+- Quantum test gates require exact-SHA positive+negative reproducibility, soundness-specific trust manifests, no fabricated proofs, versioned OpenQASM/QIR/target profiles and independent scientific review before broad claims.
+- QPU/provider submissions are NEVER inferred from authorization for source development; physical job spending, private keys and calibration/pulse control require separate explicit permission and cost caps.
+- A no-code planning CI result establishes plan integrity only, not quantum source semantics or device qualification.

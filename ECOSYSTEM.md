@@ -216,3 +216,10 @@ The website should consume the same status/claims policy as the repository so th
 5. define stdlib compatibility guarantees,
 6. turn CI evidence into measured, non-hardcoded release proof,
 7. publish a stable language specification/edition boundary.
+
+
+## Aura Quantum ecosystem — approved future product direction, no runtime yet
+
+The 2026-11-05 mandate extends Aura with an **optional quantum domain** while preserving the existing Core, AI, IoT, Lumina, packages and Sentinel ecosystems. The [Quantum charter](docs/quantum/PRODUCT_CHARTER.md) and [V3 acceptance plan](docs/qualification/MASTER_ROADMAP_V3.md) define separate proposed packages for quantum types, IR, verification, synthesis, target models, simulation, interop, providers, QEC and SDK. None is an implemented current product merely because it appears in this document.
+
+Interoperability explicitly targets supported profiles of OpenQASM 3.1 and QIR, with independent compiler and checker evidence. Provider adapters require secrets, billing consent and target capability attestation. Quantum SDK and packages must obey Q09 supply-chain, Q10 tooling and Q18 cross-platform trust gates. Sentinel will present proof status and physical experimental data distinctly. External partnerships, public comparisons and reference programs are tracked by Q38, not assumed achieved.

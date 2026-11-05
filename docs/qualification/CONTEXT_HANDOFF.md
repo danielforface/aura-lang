@@ -1005,3 +1005,18 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 
 - **Plan review:** [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58), head `plan/lumina-full-platform-qualification-v2`, base `qual/Q03-001-native-record-scalar`. It proposes immutable successor `MASTER_ROADMAP_V2.md`, plus mother docs and governance; original V1 and release ledger untouched. Proposed and NOT merged/approved. Static ID check: 88 original rows retained, 102 new, 19 gates; new platform gates NOT_STARTED. Actual CI/any job success for this documentation PR NOT YET OBSERVED. Docs-only, no runtime work or releases.
 - **Implementation priority unchanged:** Return to [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57) / Q03-001 and latest separate Q03 handoff and live CI. The UI roadmap does not interrupt Record/Native semantics, reorder the existing tasks, authorize merging the stack or imply modern UI capability already exists. The NEXT SAFE ACTION remains to inspect PR #57 and continue its precise test-first scoped acceptance after checking full four-job CI; review PR #58 independently when convenient. Always update progress/handoff together in subsequent changes.
+
+
+## 2026-11-05 — Strategic Quantum entry decision, proposed Master Roadmap V3
+
+**User decision:** Aura WILL enter advanced quantum computing development, with a complete rigorous, staged proof-driven product domain. This is not hypothetical. The developer was instructed to update future roadmap and documentation *now*; preserve actual release truths.
+
+**Documentation implementation:** branch `plan/aura-quantum-full-stack-v3` based on proposed V2 planning branch exact `2d300a7b61316bb722ca6570f18bae6f9374d0ff`. New [Master V3](MASTER_ROADMAP_V3.md) contains all 190 original Q00–Q18 rows unchanged plus **284 new Q19–Q38 acceptance obligations** and 20 R16–R35 release-train entries. Associated `docs/quantum/` charter, semantic trust contract, architecture/interoperability, qualification/negative tests, agent coordination, references, reference programs and RFC govern planning. V1/V2 untouched.
+
+**Authority:** maintainer **committed the strategic direction**, but technical V3 details still Draft/reviewable. Do not treat planning as implementation, CI as a proof, or partner capability as Aura support. Q19–Q38 all NOT_STARTED. QIR/OpenQASM versioned planned interop, classical Z3 is NOT universal quantum checker, simulator samples are NOT exact mathematical proof, nondestructive repeat measurement is allowed by physics, and resource ownership prevents invalid duplication of handles rather than asserting every No-Cloning theorem by compilation.
+
+**Agent coordination:** Current Agent A remains working Q03/PR #57, Agent B remains on its Lumina/IBus Draft chain. New Quantum work claims independent Issues and exclusive file ownership. Central PROGRESS/HANDOFF/EVIDENCE managed serially by integration agent, GitHub issues/PRs are the cross-branch shared truth. No quantum agent ownership implied merely by this documentation.
+
+**Governance:** versioned V3 additive plan; check 474 unique IDs and original 190 verbatim rows, Q00–Q38 status rows, no modification of V1/V2, and no unqualified proof/hardware claim. Continue normal CI for each exact docs-inclusive HEAD. No merge/force/rebase/direct-main or QPU spend authorized.
+
+**Next safe action:** verify actual Draft PR head and CI status of proposed V3, obtain technical plan review, open small independent Q19 and Q27/Q28/Q37 acceptance Issues (test-first / formal specification), coordinate ownership, and continue existing Q03 and Lumina work on their respective exact active branches.

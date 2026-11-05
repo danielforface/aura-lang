@@ -37,6 +37,26 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Q16 | Android and iOS real apps | NOT_STARTED | V2 proposal only |
 | Q17 | Developer UX and UI ecosystem | NOT_STARTED | V2 proposal only |
 | Q18 | Cross-platform assurance and qualification | NOT_STARTED | V2 proposal only |
+| Q19 | Quantum scientific charter, governance and profiles | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q20 | Linear quantum ownership/effects | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q21 | Quantum language frontend | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q22 | Quantum IR and effects | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q23 | Formal quantum semantics | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q24 | Equivalence and translation validation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q25 | Quantum optimizer and synthesis | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q26 | Target routing and scheduling | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q27 | OpenQASM/QIR interoperability | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q28 | Quantum simulation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q29 | Hybrid job orchestration | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q30 | Provider/QPU adapters | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q31 | Noise and mitigation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q32 | QEC and fault tolerance research | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q33 | Pulse and calibration research | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q34 | Quantum libraries and algorithms | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q35 | Sentinel Quantum Studio | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q36 | Quantum SDK and DX | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q37 | Security, performance and CI | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q38 | External qualification and research ecosystem | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 
 ## Active Q00 task tracker
 
@@ -780,3 +800,12 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-28 — V2 platform plan submitted for explicit review in Draft PR #58 (EV-171)
 
 - [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58) is OPEN/DRAFT, head `plan/lumina-full-platform-qualification-v2`, base `qual/Q03-001-native-record-scalar` ([active compiler PR #57](https://github.com/danielforface/aura-lang/pull/57)). Actual GitHub changed-file list confirms a 12-file documentation/governance-only diff, new V2 plan and original V1/RELEASE_LEDGER unchanged. Verified statically all 88 old requirement rows are preserved, 102 new distinct tasks and Q00–Q18 tracked with Q12–Q18 NOT_STARTED. CI validation for the new PR is NOT YET OBSERVED, runtime/UI tests NOT RUN. The maintainer has NOT merged/approved V2. **Keep current implementation on Q03-001 / PR #57**; this is future-scope review only.
+
+
+## 2026-11-05 — Aura Quantum strategic mandate / V3 proposal only
+
+- Maintainer explicitly decided Aura WILL enter quantum development. Technical scope is captured in [proposed V3](MASTER_ROADMAP_V3.md), stacked as a docs-only planning branch on the untouched proposed V2 snapshot. V1/V2 accepted tasks are unchanged in place.
+- 20 new gates Q19–Q38, **284 stable new quantum tasks**, 20 future R16–R35 qualification trains. Exact older 190 task rows preserved; total **474**. All new gates **NOT_STARTED** and no Quantum feature marked VERIFIED, RELEASABLE or IMPLEMENTED.
+- New docs `docs/quantum/`: charter, semantics/trust, architecture, qualification, ownership, references, reference programs and RFC. Governance checker extended for Q00–Q38 and frozen V1/V2/V3 protection.
+- **What did NOT happen:** no compiler/Quantum IR/SDK change, no actual quantum simulation, proof, hardware invocation, QPU spend, merge/rebase or interruption of Agent A / Agent B. A documentation-only CI pass cannot establish runtime properties.
+- **Next safe action:** review technical V3 scope and agent ownership, run plan-integrity CI, open bounded Q19 research/contract Issues after reviewed approval; independently continue existing Q03 and Lumina work.

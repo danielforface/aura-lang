@@ -189,3 +189,10 @@ Aura should **not yet** be presented as:
 - a JIT/hybrid compiler that automatically promotes AVM execution to LLVM.
 
 That framing is stronger, not weaker: it gives technical readers a precise surface they can trust.
+
+
+## Quantum strategic decision and implementation truth (2026-11-05)
+
+**Decision:** Aura Quantum WILL be pursued as a future optional programming domain. **Code readiness:** NOT_STARTED; **proof/SDK/hardware status:** NOT_QUALIFIED; **release:** NONE. This status concerns quantum-specific functionality and does not change earlier component audit dates or mark existing Core/Lumina tasks complete.
+
+The [proposed Master V3](docs/qualification/MASTER_ROADMAP_V3.md) preserves all 190 V2 tasks and adds 284 quantum acceptance tasks Q19–Q38 and trains R16–R35. [Quantum program documentation](docs/quantum/README.md) includes explicit scientific/physical boundaries, OpenQASM/QIR plans, QPU security and external review. No new quantum source implementation, provider API call, hardware receipt or independent scientific proof was performed as part of this documentation work. V1/V2 continue unchanged, Draft/unmerged, with Agent A/B unmodified.

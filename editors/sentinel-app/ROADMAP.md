@@ -62,3 +62,10 @@ This checklist is derived from the “Big upgrade roadmap” you provided and is
 - [x] Frontend tests (diagnostics rendering + jump/hover)
 - [x] “Golden file” tests (proofs response formatting)
 - [x] Debug protocol smoke test (hello + perfReport)
+
+
+## Future Sentinel Quantum Studio (2026-11-05 strategic mandate; NOT IMPLEMENTED)
+
+The maintainer committed Aura to a quantum development domain. [Quantum gates Q35 and Q36](../../docs/qualification/MASTER_ROADMAP_V3.md) require a separate source-linked circuit DAG, qubit ownership diagnostics, physical/logical mapping, checkable equivalence proof statuses, entanglement may-vs-must analysis, simulation confidence bounds, real QPU receipt/cost controls, accessibility and stale-proof fencing. Details: [Quantum semantic contract](../../docs/quantum/SEMANTIC_AND_TRUST_CONTRACT.md) and [agent plan](../../docs/quantum/AGENT_WORKSTREAMS.md).
+
+All new quantum UI tasks remain NOT_STARTED. Historical `[x]` checkboxes above describe prior work only; they do not qualify quantum feature readiness. Agent B owns ongoing native text/IME, so quantum Studio work must use a separately owned namespace with versioned read-only mock contracts and no edits to Agent B paths.

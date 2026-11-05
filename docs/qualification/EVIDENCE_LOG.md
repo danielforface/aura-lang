@@ -346,3 +346,13 @@ Use a new ID (EV-022 onward), with `task-id | source commit | OS/arch/compiler/f
 
 
 - **EV-171 (2026-10-28; GitHub PR metadata / plan integrity only, not software qualification):** [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58) opened as an independent documentation/governance proposal stacked on Q03 source branch underlying [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57). GitHub PR changed-file list showed 12 files, including proposed V2, progress/handoff/evidence, index, protocol, public/legacy roadmap, README/Lumina docs and governance script; `MASTER_ROADMAP_V1.md`, release ledger and all compiler sources absent from diff. Static validation via connected GitHub reads: all 88 original V1 acceptance rows retained verbatim in V2, 102 additional unique Q12–Q18 task IDs, 19 gate tracker rows and all Q12–Q18 NOT_STARTED. Draft pending review; CI not yet observed; no dynamic tests, compiler changes, proof claims, merges or releases. Current Q03-001 work continues separately.
+
+
+## Planning-only evidence — 2026-11-05 Quantum V3 strategic decision
+
+- **Authorization:** maintainer explicitly selected entry into quantum programming; requested substantive updates to all relevant future roadmap/documentation. This authorizes documentation planning, NOT merge, release, QPU cost, private credentials or new proof claims.
+- **Input:** exact proposed V2 snapshot `2d300a7b61316bb722ca6570f18bae6f9374d0ff` on Draft #58. Master V1/V2 historical immutable contents preserved.
+- **Static plan claim (must be checked by CI):** 190 inherited Q00–Q18 rows unchanged; 284 new unique Q19–Q38 rows; total 474; 20 new R16–R35 trains, statuses all NOT_STARTED, 0 quantum runtime/proof acceptance executions.
+- **Sources reviewed for planning:** official OpenQASM 3.1 repository, QIR Alliance Base Profile, Guppy linear type specification, MQT QCEC equivalence, Qiskit Target model. External documentation is not evidence that Aura supports these technologies.
+- **What is not verified:** no quantum unit test, no simulated Bell/GHZ result, no quantum equivalence proof, no native hardware, no paid job, no Quantum LSP/Sentinel feature, no production release. Governance checker CI and GitHub PR checks must be observed after final docs-inclusive SHA before calling the plan review-ready.
+- **Protected:** Agent A Q03, Agent B Lumina, frozen V1/V2, `main`, release ledger and other implementation code untouched.
