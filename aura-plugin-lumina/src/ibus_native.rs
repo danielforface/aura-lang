@@ -773,6 +773,59 @@ mod tests{
         assert_eq!(same_key_replace_pair(&stale),None,
             "a D/C pair before the new key-dispatch boundary is NOT same-key");
     }
+    /// CONTROLLED helper-wire frames, not an upstream IBus engine trace.
+    /// This exercises the full native key parser and emitted host events
+    /// without injecting events into any real daemon or live window.
+    fn process_controlled_post_begin_key(lines:&[&str])
+        ->(Vec<CompositionEvent>,Vec<NativeReplace>,bool) {
+        // This harmless local process is just a writable stdin endpoint for
+        // the private NativeIbus transport. It emits NO stdout or IBus data.
+        let mut child=Command::new("sh").arg("-c").arg("cat >/dev/null")
+            .stdin(Stdio::piped()).stdout(Stdio::null())
+            .stderr(Stdio::null()).spawn().expect("local test sink");
+        let input=child.stdin.take().expect("test stdin");
+        let (tx,output)=mpsc::sync_channel(32);
+        for line in lines{
+            tx.send((*line).to_owned()).expect("test frame queue");
+        }
+        drop(tx);
+        let mut bus=NativeIbus{
+            child,input,output,focus:Some(1201),serial:0,
+            composing:false,disconnected:false,surrounding_enabled:true,
+            engine_events:0,key_acks:0,release_acks:0,shifted_acks:0,
+            candidate_events:0,candidate_click_acks:0,
+            cursor_location_acks:0,cursor_location:None,
+            surrounding_text_acks:0,surrounding_delete_requests:0,
+            surrounding_last_delete:None,surrounding_requires:0,
+            surrounding_text:None,context_epoch:None,
+            authority_generation:None,native_replacements:Vec::new(),
+            native_replacement_pairs:0,candidate_page:None,
+        };
+        let (_,events)=bus.process_ibus_key_event(
+            NativeKeyEvent::from_char('k',0).expect("valid key"),
+            Some(1201),
+        ).expect("controlled key result");
+        let replacements=bus.take_native_replacements();
+        let disconnected=bus.disconnected;
+        (events,replacements,disconnected)
+    }
+    #[test]fn duplicate_post_begin_commit_must_never_emit_partial_authoritative_edits(){
+        // Both CommitText frames are untrusted CONTROLLED protocol data.
+        // A second C in one key must not yield two host edits/Undo records.
+        let (events,replacements,_) = process_controlled_post_begin_key(
+            &["B","C\\teab080","C\\teab098","R\\t1"]);
+        assert!(events.is_empty(),
+            "duplicate key-local CommitText must produce ZERO authoritative events: {events:?}");
+        assert!(replacements.is_empty(),"duplicate C cannot create NativeReplace");
+    }
+    #[test]fn single_post_begin_commit_keeps_existing_authoritative_path(){
+        let (events,replacements,disconnected)=process_controlled_post_begin_key(
+            &["B","C\\teab080","R\\t1"]);
+        assert!(!disconnected,"valid one-commit cycle must remain usable");
+        assert_eq!(events.iter().filter(|e|
+            matches!(e,CompositionEvent::Commit{..})).count(),1);
+        assert!(replacements.is_empty());
+    }
     #[test]fn adversarial_same_key_order_has_no_delete_authority(){
         let parse=|seq:&[&str]|same_key_replace_pair(
             &seq.iter().map(|s|s.to_string()).collect::<Vec<_>>());
