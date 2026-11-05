@@ -607,6 +607,19 @@ impl NativeIbus{
                 .map(|(offset,count)|(i,offset,count))).collect();
         let commits:Vec<usize>=lines.iter().enumerate()
             .filter_map(|(i,line)|line.starts_with("C\t").then_some(i)).collect();
+        // A key may produce at most ONE authoritative CommitText. Checking
+        // the COMPLETE bounded wire batch *before* emitting ANY events is
+        // required even when no DeleteSurroundingText was requested:
+        // otherwise C+C would create two editor Undo/on_change mutations.
+        // Engine-origin multi-commit semantics are not yet qualified, so
+        // ambiguous keys fail closed rather than partially applying a prefix.
+        if commits.len()>1 {
+            self.disconnected=true;
+            self.native_replacements.clear();
+            self.candidate_page=None;
+            self.composing=false;
+            return Some((true,Vec::new()));
+        }
         // Engine-proven D alone NEVER mutates the editor. Only one positive
         // D preceding one real C during this SAME ProcessKeyEvent can produce
         // an internal NativeReplace. Reject missing/stale contexts/epochs.
