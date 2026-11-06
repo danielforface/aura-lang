@@ -53,6 +53,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_c_extern_scalar_abi_native -- --nocapture
       - name: EV-203 source extern heterogeneous args SSA Phi linked O0 O2 and forged ABI RED first
         run: cargo test --locked -p aura-backend-c --test record_c_extern_phi_native -- --nocapture
+      - name: EV-204 C keyword extern spelling native Clang RED-first and safe dotted control
+        run: cargo test --locked -p aura-backend-c --test record_c_extern_keyword_native -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
