@@ -222,3 +222,106 @@ fn p35_diagnostic_idle_probe_refuses_over_budget(){
         "invalid diagnostic duration must be rejected without dispatch");
 }
 
+
+/// Phase36 controlled SCHEDULING of REAL upstream ibus-hangul callbacks.
+/// A separate diagnostic-only helper suppresses its usual 25ms POST-CALL
+/// GLib pump. No engine C/D/P signal is synthesized or directly injected.
+/// This demonstrates an observed timing boundary, NOT an externally issued
+/// key transaction ID and NOT normal production 25ms helper behavior.
+#[test]
+fn p36_genuine_registered_hangul_post_r_callbacks_under_deferred_test_pump(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    assert_eq!(std::env::var("LUMINA_IBUS_P36_DEFER_POST_KEY_PUMP").unwrap(),"1");
+    let bin=std::env::var_os("LUMINA_IBUS_HELPER_BIN")
+        .expect("separate phase36 real engine test binary");
+    let mut child=Command::new(bin).arg("hangul")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("REAL registered IBus engine helper");
+    let mut stdin=child.stdin.take().expect("diagnostic helper stdin");
+    let stdout=child.stdout.take().expect("diagnostic helper stdout");
+    let mut stderr=child.stderr.take().expect("diagnostic helper stderr");
+    let (tx,rx)=mpsc::sync_channel(64);
+    let reader=std::thread::spawn(move||{
+        for item in BufReader::new(stdout).lines(){
+            let Ok(line)=item else{break;};
+            if tx.send(line).is_err(){break;}
+        }
+    });
+    let err_reader=std::thread::spawn(move||{
+        let mut out=String::new();
+        stderr.read_to_string(&mut out).expect("bounded text-free diagnostics");
+        out
+    });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(8)).unwrap(),"READY");
+    assert_eq!(request(&mut stdin,&rx,"V1","A").last().map(String::as_str),Some("A"));
+    assert_eq!(request(&mut stdin,&rx,"F1","A").last().map(String::as_str),Some("A"));
+    assert_eq!(request(&mut stdin,&rx,
+        &format!("S\t{}\t4\t4",content_hex("BASE")),"A")
+        .last().map(String::as_str),Some("A"));
+    // After K(r), deliberately defer helper-owned GLib dispatch until a
+    // separate I(200) command. Both K and I talk to the *real* engine.
+    let key1=request(&mut stdin,&rx,"K\t114\t0\t0\t0","R");
+    assert_eq!(key1.first().map(String::as_str),Some("B"));
+    assert_eq!(key1.last().map(String::as_str),Some("R\t1"));
+    let key1_pre_r=commit_values(&key1);
+    let idle1=request(&mut stdin,&rx,"I\t200","A");
+    assert_eq!(idle1.last().map(String::as_str),Some("A"));
+    assert!(!idle1.iter().any(|s|s=="B"||s.starts_with("R\t")),
+        "read-only idle drain cannot manufacture a physical key");
+    let idle1_c=commit_values(&idle1);
+    eprintln!("LUMINA_IBUS_P36_REAL_FIRST pre_R_commits={} post_R_idle_commits={} post_R_idle_D={} idle_frames={}",
+        key1_pre_r.len(),idle1_c.len(),
+        idle1.iter().filter(|s|s.starts_with("D\t")).count(),idle1.len());
+    assert!(key1_pre_r.is_empty(),
+        "test-only deferred pump must produce R before genuine upstream C");
+    assert_eq!(idle1_c,vec!["ㄱ"],
+        "real upstream Hangul commit should be delivered AFTER prior R");
+    assert!(idle1.iter().any(|s|s=="D\t0\t0"),
+        "genuine upstream initial D(0,0) also crossed R");
+
+    // ACK now-authoritative host text before the second REAL key. No
+    // stale callback may be attributed to a fabricated B in the I command.
+    assert_eq!(request(&mut stdin,&rx,
+        &format!("S\t{}\t5\t5",content_hex("BASEㄱ")),"A")
+        .last().map(String::as_str),Some("A"));
+    let key2=request(&mut stdin,&rx,"K\t107\t0\t0\t0","R");
+    assert_eq!(key2.first().map(String::as_str),Some("B"));
+    assert_eq!(key2.last().map(String::as_str),Some("R\t1"));
+    let key2_pre_r=commit_values(&key2);
+    let idle2=request(&mut stdin,&rx,"I\t200","A");
+    assert_eq!(idle2.last().map(String::as_str),Some("A"));
+    assert!(!idle2.iter().any(|s|s=="B"||s.starts_with("R\t")));
+    let idle2_c=commit_values(&idle2);
+    eprintln!("LUMINA_IBUS_P36_REAL_SECOND pre_R_commits={} post_R_idle_commits={} post_R_idle_D={} idle_frames={}",
+        key2_pre_r.len(),idle2_c.len(),
+        idle2.iter().filter(|s|s.starts_with("D\t")).count(),idle2.len());
+    assert!(key2_pre_r.is_empty(),
+        "genuine second C must be deferred beyond R under test-only policy");
+    assert!(idle2.iter().any(|s|s=="D\t-1\t1"),
+        "REAL upstream replacement D(-1,1) must be delivered AFTER R");
+    assert_eq!(idle2_c,vec!["가"],
+        "REAL upstream Hangul replacement C(가) must be delivered AFTER R");
+    let idle3=request(&mut stdin,&rx,"I\t25","A");
+    assert_eq!(idle3.last().map(String::as_str),Some("A"));
+    let idle3_dc=idle3.iter().filter(|s|
+        s.starts_with("C\t")||s.starts_with("D\t")).count();
+    eprintln!("LUMINA_IBUS_P36_POST_R_EXTRA_IDLE_WINDOW observed_DC={idle3_dc}");
+    drop(stdin);
+    assert!(child.wait().expect("normal test helper exit").success());
+    reader.join().expect("native stdout reader");
+    let diagnostics=err_reader.join().expect("native stderr reader");
+    let kind_phase=diagnostics.lines().filter(|line|
+        line.starts_with("LUMINA_IBUS_P34_CALLBACK ")).collect::<Vec<_>>();
+    let idle_c=kind_phase.iter().filter(|line|
+        line.contains("kind=C phase=IDLE")).count();
+    let idle_d=kind_phase.iter().filter(|line|
+        line.contains("kind=D phase=IDLE")).count();
+    assert!(diagnostics.contains("LUMINA_IBUS_P36_TEST_DEFER_POST_KEY_PUMP"),
+        "the distinct diagnostic scheduling policy must be explicitly proven");
+    assert!(idle_c>=2&&idle_d>=2,
+        "genuine post-R callbacks must have helper-local IDLE delivery phase");
+    assert!(!diagnostics.contains("BASE")&&!diagnostics.contains("42415345"),
+        "phase diagnostics must not disclose the authoritative host text");
+    eprintln!("LUMINA_IBUS_P36_GENUINE_POST_R_BOUNDARY_PROOF late_commits=2 late_deletes=2 idle_C={idle_c} idle_D={idle_d} diagnostic_only=true");
+}
+
