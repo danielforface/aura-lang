@@ -109,3 +109,51 @@ fn heterogeneous_extern_call_ir_operand_corruption_refuses_ambiguous_native_abi(
         || err.message.contains("type mismatch"),
         "unsafe external argument mutation incorrectly diagnosed: {err}");
 }
+
+
+#[test]
+fn extern_symbol_occupied_by_runtime_or_stdio_header_must_fail_closed() {
+    // EV-203 second RED gate: EV-200 already protects *local* Cell
+    // exports from stdio.h. EV-201 protects extern↔Cell/extern aliases,
+    // but an extern mapping directly into a preincluded C header or
+    // Aura runtime symbol is a distinct ABI conflict. Unlike a local
+    // Cell, an external C linker name cannot be renamed transparently.
+    for (source_extern,source) in [
+        ("getchar", "trusted extern cell getchar(n: u32) -> u32\ncell forward_header(n: u32) ->:\n    yield getchar(n)\n"),
+        ("aura_io_println", "trusted extern cell aura_io_println(n: u32) -> u32\ncell forward_header(n: u32) ->:\n    yield aura_io_println(n)\n"),
+    ] {
+        let ast=aura_parse::parse_source(source).expect("source extern name must parse");
+        Checker::new().check_program(&ast).expect("valid Aura extern source must check");
+        let ir=lower_program(&ast).expect("valid external source must lower");
+        validate_module(&ir).expect("real source SSA validates");
+        match emit_module(&ir,None) {
+            Err(err) => {
+                assert!(err.message.contains("extern C symbol collision")
+                    && err.message.contains(source_extern)
+                    && (err.message.contains("runtime") || err.message.contains("header")),
+                    "{source_extern}: must diagnose occupied runtime/header ABI explicitly: {err}");
+            }
+            Ok(c) => {
+                // Prove RED is the backend accepting a *real* Clang
+                // conflict, not an arbitrary error-message expectation.
+                let root=Scratch::new();
+                fs::write(root.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+                fs::write(root.0.join("module.c"), &c.module_c).unwrap();
+                let compile=Command::new("clang")
+                    .args(["-std=gnu11","-Wall","-Werror","-O0","-I"])
+                    .arg(&root.0).arg("-c").arg(root.0.join("module.c"))
+                    .arg("-o").arg(root.0.join("module.o"))
+                    .output().expect("Clang installed in Native CI");
+                assert!(!compile.status.success(),
+                    "{source_extern}: unexpectedly compatible native C, not a genuine collision");
+                let errors=String::from_utf8_lossy(&compile.stderr);
+                assert!(errors.contains("conflicting types") || errors.contains("redefinition"),
+                    "{source_extern}: wrong native failure: {errors}");
+                panic!("{source_extern}: C emitter accepted header/runtime external symbol collision, Clang proves the native ABI fails: {errors}");
+            }
+        }
+        assert!(emit_module_with_source_contract(&ast,&ir,None)
+            .err().is_some_and(|e| e.message.contains("extern C symbol collision")),
+            "{source_extern}: source-anchored C emitter also must refuse the invalid ABI");
+    }
+}
