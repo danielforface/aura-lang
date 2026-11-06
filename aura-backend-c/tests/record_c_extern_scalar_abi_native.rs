@@ -105,3 +105,78 @@ fn ordinary_local_cell_still_keeps_public_c_abi_when_no_extern_is_linked() {
             "int main(void){return independent_native(19u)==19u?0:1;}\n"
         ), "local_control");
 }
+
+
+#[test]
+fn u64_i64_bool_and_no_arg_externs_keep_exact_independently_linked_abi() {
+    // Each scenario is a separately parsed/checked/lowered Aura program.
+    // The external C body lives in another translation unit, so the C ABI
+    // (including 64-bit high bits and sign) must truly match on both opt levels.
+    linked_c(
+        "trusted extern cell native.wide(n: u64) -> u64\ncell forward_wide(n: u64) ->:\n    yield native.wide(n)\n",
+        "#include <stdint.h>\nuint64_t native_wide(uint64_t n){return n-7ULL;}\n",
+        concat!(
+            "#include <stdint.h>\nuint64_t forward_wide(uint64_t);\n",
+            "int main(void){return forward_wide(4294967305ULL)==4294967298ULL?0:1;}\n"
+        ), "u64_high_bits");
+    linked_c(
+        "trusted extern cell native.negative(n: i64) -> i64\ncell forward_negative(n: i64) ->:\n    yield native.negative(n)\n",
+        "#include <stdint.h>\nint64_t native_negative(int64_t n){return n-11LL;}\n",
+        concat!(
+            "#include <stdint.h>\nint64_t forward_negative(int64_t);\n",
+            "int main(void){return forward_negative(-4294967301LL)==-4294967312LL?0:1;}\n"
+        ), "i64_signed");
+    linked_c(
+        "trusted extern cell native.switch(n: bool) -> bool\ncell forward_switch(n: bool) ->:\n    yield native.switch(n)\n",
+        "#include <stdbool.h>\nbool native_switch(bool n){return !n;}\n",
+        concat!(
+            "#include <stdbool.h>\nbool forward_switch(bool);\n",
+            "int main(void){return forward_switch(true)==false && forward_switch(false)==true?0:1;}\n"
+        ), "bool_flip");
+    linked_c(
+        "trusted extern cell native.ping() -> Unit\ncell forward_ping(n: u32) ->:\n    native.ping()\n    yield n\n",
+        concat!(
+            "#include <stdint.h>\nuint32_t native_ping_count=0;\n",
+            "void native_ping(void){++native_ping_count;}\n"
+        ),
+        concat!(
+            "#include <stdint.h>\nuint32_t forward_ping(uint32_t);\n",
+            "extern uint32_t native_ping_count;\n",
+            "int main(void){return forward_ping(13u)==13u && native_ping_count==1u?0:1;}\n"
+        ), "unit_no_args");
+}
+
+#[test]
+fn mutable_ir_extern_width_and_unsupported_abi_are_rejected_before_c_output() {
+    // Even an originally source-qualified call is not proof that its later
+    // mutable IR extern signature still matches the operands at this point.
+    let source = "trusted extern cell native.bump(n: u32) -> u32\ncell forward_external(n: u32) ->:\n    yield native.bump(n)\n";
+    let (ast, original) = qualified(source);
+    let good = emit_module_with_source_contract(&ast, &original, None)
+        .expect("original source-qualified scalar ABI remains valid");
+    assert!(good.module_c.contains("extern uint32_t native_bump(uint32_t);"),
+        "extern header must be type-qualified: {}", good.module_c);
+    let mut changed_width = original.clone();
+    changed_width.externs.get_mut("native.bump").unwrap().params[0] = aura_ir::Type::U64;
+    let error = emit_module(&changed_width, None)
+        .expect_err("mutated U64 ABI must not take U32 SSA argument");
+    assert!(error.message.contains("extern C ABI call") || error.message.contains("IR validation"),
+        "width mismatch must fail closed at IR or native ABI: {error}");
+    assert!(emit_module_with_source_contract(&ast, &changed_width, None).is_err(),
+        "original trusted source must reject rewritten extern contract");
+
+    let mut unsupported = original.clone();
+    unsupported.externs.get_mut("native.bump").unwrap().ret = aura_ir::Type::Tensor;
+    let error = emit_module(&unsupported, None)
+        .expect_err("opaque Tensor cannot be silently used as a native C scalar");
+    assert!(error.message.contains("unqualified extern C scalar ABI")
+        || error.message.contains("IR validation"),
+        "unsupported extern result must fail closed: {error}");
+
+    let mut non_c_abi = original.clone();
+    non_c_abi.externs.get_mut("native.bump").unwrap().call_conv = aura_ir::CallConv::Stdcall;
+    let error = emit_module(&non_c_abi, None)
+        .expect_err("unsupported calling convention cannot be emitted as C ABI");
+    assert!(error.message.contains("calling convention") || error.message.contains("IR validation"),
+        "unqualified calling convention must fail closed: {error}");
+}
