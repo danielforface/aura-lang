@@ -159,7 +159,7 @@ fn mutable_ir_extern_width_and_unsupported_abi_are_rejected_before_c_output() {
     let mut changed_width = original.clone();
     changed_width.externs.get_mut("native.bump").unwrap().params[0] = aura_ir::Type::U64;
     let error = emit_module(&changed_width, None)
-        .expect_err("mutated U64 ABI must not take U32 SSA argument");
+        .err().expect("mutated U64 ABI must not take U32 SSA argument");
     assert!(error.message.contains("extern C ABI call") || error.message.contains("IR validation"),
         "width mismatch must fail closed at IR or native ABI: {error}");
     assert!(emit_module_with_source_contract(&ast, &changed_width, None).is_err(),
@@ -168,7 +168,7 @@ fn mutable_ir_extern_width_and_unsupported_abi_are_rejected_before_c_output() {
     let mut unsupported = original.clone();
     unsupported.externs.get_mut("native.bump").unwrap().ret = aura_ir::Type::Tensor;
     let error = emit_module(&unsupported, None)
-        .expect_err("opaque Tensor cannot be silently used as a native C scalar");
+        .err().expect("opaque Tensor cannot be silently used as a native C scalar");
     assert!(error.message.contains("unqualified extern C scalar ABI")
         || error.message.contains("IR validation"),
         "unsupported extern result must fail closed: {error}");
@@ -176,7 +176,7 @@ fn mutable_ir_extern_width_and_unsupported_abi_are_rejected_before_c_output() {
     let mut non_c_abi = original.clone();
     non_c_abi.externs.get_mut("native.bump").unwrap().call_conv = aura_ir::CallConv::Stdcall;
     let error = emit_module(&non_c_abi, None)
-        .expect_err("unsupported calling convention cannot be emitted as C ABI");
+        .err().expect("unsupported calling convention cannot be emitted as C ABI");
     assert!(error.message.contains("calling convention") || error.message.contains("IR validation"),
         "unqualified calling convention must fail closed: {error}");
 }
