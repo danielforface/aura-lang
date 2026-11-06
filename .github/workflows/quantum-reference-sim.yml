@@ -1,0 +1,37 @@
+name: Quantum Q28 Reference Simulator
+
+on:
+  push:
+    branches:
+      - quantum/agent-c-q28-reference-simulator-001
+    paths:
+      - 'aura-quantum-sim/**'
+      - 'docs/quantum/agent-c/**'
+      - '.github/workflows/quantum-reference-sim.yml'
+  pull_request:
+    branches:
+      - plan/aura-quantum-full-stack-v3
+    paths:
+      - 'aura-quantum-sim/**'
+      - 'docs/quantum/agent-c/**'
+      - '.github/workflows/quantum-reference-sim.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  q28-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Run independent statevector reference suite
+        run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
+      - name: Fail on Rust Clippy warnings
+        run: cargo clippy --manifest-path aura-quantum-sim/Cargo.toml --all-targets -- -D warnings
