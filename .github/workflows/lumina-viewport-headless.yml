@@ -243,7 +243,7 @@ jobs:
             export LUMINA_IBUS_ENGINE="hangul"
             export LUMINA_IBUS_P37_RUST_ACK_FENCE="1"
             unset LUMINA_IBUS_TEST_HANGUL_SWITCH
-            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative -- --exact --nocapture --test-threads=1
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib ibus_native::tests::p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative -- --exact --nocapture --test-threads=1
           '
 
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
