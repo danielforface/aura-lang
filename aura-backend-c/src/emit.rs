@@ -1004,12 +1004,18 @@ fn emit_function(
     // Preserve source-level names for AVM-compatible `{ident}` interpolation.
     let mut named_values: HashMap<String, (CType, String)> = HashMap::new();
 
+    // AVM interpolates nominal Record values as `<RecordName>`, rather than
+    // exposing fields or preserving the `{ident}` placeholder. Track source
+    // bindings separately from scalar printf operands; no C struct ABI cast.
+    let mut named_record_types: HashMap<String, String> = HashMap::new();
+
     // Keep the raw template associated with a string SSA value so io.println
     // can lower interpolation instead of forwarding literal braces.
     let mut string_literals: HashMap<ValueId, String> = HashMap::new();
 
     for (index, p) in f.params.iter().enumerate() {
         if let Some(record) = qualified_record_abi_type(&p.ty, record_layouts)? {
+            named_record_types.insert(p.name.clone(), record.clone());
             records.insert(p.value, (record, c_names.formal(source_name, index).to_string()));
         } else {
             let binding = (map_type_to_ctype(&p.ty), c_names.formal(source_name, index).to_string());
@@ -1588,6 +1594,8 @@ fn emit_function(
                                 let cname = format!("v{}", dest.0);
                                 out.push_str(&format!("  {} {} = {};\n",
                                     record_type_symbol(&record), cname, from));
+                                named_values.remove(name);
+                                named_record_types.insert(name.clone(), record.clone());
                                 records.insert(dest, (record, cname));
                                 continue;
                             }
@@ -1620,6 +1628,7 @@ fn emit_function(
 
                         let binding = (ct, format!("v{}", dest.0));
                         values.insert(dest, binding.clone());
+                        named_record_types.remove(name);
                         named_values.insert(name.clone(), binding);
 
                         match expr {
@@ -1844,7 +1853,7 @@ fn emit_function(
                     }
                     emit_call(
                         out, inst.dest, callee, args, &mut call_values, &records, ret_map,
-                        &string_literals, &named_values, c_names,
+                        &string_literals, &named_values, &named_record_types, c_names,
                     );
                     if let Some(dest) = inst.dest {
                         if let Some(binding) = call_values.get(&dest).cloned() {
@@ -2116,6 +2125,7 @@ fn emit_interpolated_println(
     out: &mut String,
     template: &str,
     named_values: &HashMap<String, (CType, String)>,
+    named_record_types: &HashMap<String, String>,
 ) -> bool {
     let mut format_string = String::with_capacity(template.len() + 8);
     let mut arguments: Vec<String> = Vec::new();
@@ -2153,6 +2163,12 @@ fn emit_interpolated_println(
             format_string.push_str(specifier);
             arguments.push(argument);
             replaced_any = true;
+        } else if let Some(record) = named_record_types.get(key) {
+            // Mirror AVM's nominal Record display, e.g. <Point>. This is
+            // a static type tag, not stringification of the struct payload.
+            // Escape printf meta-characters in the nominal type name.
+            push_c_printf_literal(&mut format_string, &format!("<{record}>"));
+            replaced_any = true;
         } else {
             // Match AVM behavior: unknown/unsupported identifiers remain
             // visible as their original `{ident}` text.
@@ -2187,13 +2203,14 @@ fn emit_call(
     ret_map: &HashMap<String, CType>,
     string_literals: &HashMap<ValueId, String>,
     named_values: &HashMap<String, (CType, String)>,
+    named_record_types: &HashMap<String, String>,
     c_names: &CNameMap,
 ) {
     let c_fn = c_names.callee(callee);
 
     if c_fn == "aura_io_println" && args.len() == 1 {
         if let Some(template) = string_literals.get(&args[0]) {
-            if emit_interpolated_println(out, template, named_values) {
+            if emit_interpolated_println(out, template, named_values, named_record_types) {
                 return;
             }
         }

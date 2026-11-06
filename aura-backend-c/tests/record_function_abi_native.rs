@@ -217,3 +217,60 @@ fn record_abi_refuses_returning_the_wrong_nominal_record() {
     assert!(err.message.contains("Record ABI return") &&
         err.message.contains("expects nominal 'Twin'"), "{err}");
 }
+
+
+#[test]
+fn record_interpolation_preserves_avm_nominal_display_for_param_and_local() {
+    // AVM interpolates a Record env binding as "<Point>". Native C previously
+    // printed the literal "{p}" because only scalar names were available
+    // to the interpolation emitter. Test the actual Aura source, nominal
+    // function ABI and observable executable stdout, not just C text.
+    let source = r#"
+type Point = record { x: u32, y: u32 }
+cell render_param(p: Point) ->:
+    io.println("param={p}")
+    yield p.x
+cell render_local() ->:
+    val p: Point = Point { x: 7, y: 13 }
+    io.println("local={p}")
+    io.println("missing={unbound}")
+    yield render_param(p)
+"#;
+    let ast = aura_parse::parse_source(source).expect("Record print source parses");
+    Checker::new().check_program(&ast).expect("source-qualified Record print checks");
+    let ir = lower_program(&ast).expect("Record print lowers to real source IR");
+    validate_module(&ir).expect("source Record interpolation IR validates");
+    let output = emit_module(&ir, None).expect("Record interpolation emits native C");
+    assert!(output.module_c.contains("local=<Point>"),
+        "native C must interpolate Record local nominal identity: {}", output.module_c);
+    assert!(output.module_c.contains("param=<Point>"),
+        "native C must interpolate Record parameter nominal identity: {}", output.module_c);
+    assert!(!output.module_c.contains("local={p}") && !output.module_c.contains("param={p}"),
+        "Record placeholder must not leak into native stdout");
+
+    let tmp = Scratch::new();
+    fs::write(tmp.0.join("aura_runtime.h"), &output.runtime_h).unwrap();
+    fs::write(tmp.0.join("module.c"), &output.module_c).unwrap();
+    fs::write(tmp.0.join("driver.c"), concat!(
+        "#include <stdint.h>\n",
+        "uint32_t render_local(void);\n",
+        "int main(void) { return render_local() == 7u ? 0 : 1; }\n"
+    )).unwrap();
+    for opt in ["-O0", "-O2"] {
+        let exe = tmp.0.join(format!("record_interpolation_{}", &opt[1..]));
+        let cc = Command::new("clang")
+            .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+            .arg(&tmp.0).arg(tmp.0.join("module.c"))
+            .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+            .output().expect("Clang available in Native CI");
+        assert!(cc.status.success(), "{opt} C compilation failed: {}\n{}",
+            String::from_utf8_lossy(&cc.stderr), output.module_c);
+        let run = Command::new(&exe).output().expect("native Record executable runs");
+        assert!(run.status.success(), "{opt} Record native call failed: {}",
+            String::from_utf8_lossy(&run.stderr));
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "local=<Point>\nmissing={unbound}\nparam=<Point>\n",
+            "{opt}: Native must match AVM nominal string interpolation");
+    }
+}
