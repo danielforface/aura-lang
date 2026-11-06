@@ -452,6 +452,65 @@ impl CNameMap {
             "printf", "fprintf", "puts", "malloc", "calloc", "realloc",
             "free", "abort", "exit", "fwrite",
             "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
+            // Names and object-like macros from the C11 headers that
+            // emit_runtime_h() actually includes. These occupy the same C
+            // ordinary-identifier namespace as user Cell exports, or are
+            // preprocessor macros that would rewrite those exports.
+            // Keep this policy explicit: accidental overlap with libc is
+            // not a public Aura ABI contract and must not be emitted raw.
+            //
+            // <stdio.h>: public functions, stream objects/macros, typedefs
+            // and constant-like macros.
+            "FILE", "fpos_t", "stdin", "stdout", "stderr", "BUFSIZ",
+            "EOF", "FILENAME_MAX", "FOPEN_MAX", "L_tmpnam",
+            "SEEK_CUR", "SEEK_END", "SEEK_SET", "TMP_MAX",
+            "_IOFBF", "_IOLBF", "_IONBF",
+            "clearerr", "fclose", "feof", "ferror", "fflush",
+            "fgetc", "fgetpos", "fgets", "fopen", "freopen",
+            "fputc", "fputs", "fread", "fscanf", "fseek",
+            "fsetpos", "ftell", "getc", "getchar", "perror",
+            "putc", "putchar", "remove", "rename", "rewind",
+            "scanf", "setbuf", "setvbuf", "snprintf", "sprintf",
+            "sscanf", "tmpfile", "tmpnam", "ungetc", "vfprintf",
+            "vfscanf", "vprintf", "vscanf", "vsnprintf",
+            "vsprintf", "vsscanf",
+            // <stdlib.h>: public functions, typedefs and macros.
+            "EXIT_SUCCESS", "EXIT_FAILURE", "RAND_MAX", "MB_CUR_MAX",
+            "div_t", "ldiv_t", "lldiv_t", "atof", "atoi",
+            "atol", "atoll", "strtod", "strtof", "strtold",
+            "strtol", "strtoll", "strtoul", "strtoull", "rand",
+            "srand", "aligned_alloc", "atexit", "at_quick_exit",
+            "quick_exit", "_Exit", "getenv", "system", "bsearch",
+            "qsort", "abs", "labs", "llabs", "div", "ldiv",
+            "lldiv", "mblen", "mbtowc", "wctomb", "mbstowcs",
+            "wcstombs",
+            // <threads.h>: C11 threading names from the runtime's
+            // conditional asynchronous code path.
+            "thrd_t", "thrd_create", "thrd_current", "thrd_detach",
+            "thrd_equal", "thrd_exit", "thrd_join", "thrd_sleep",
+            "thrd_yield", "thrd_success", "thrd_timedout",
+            "thrd_busy", "thrd_error", "mtx_t", "mtx_init",
+            "mtx_destroy", "mtx_lock", "mtx_trylock",
+            "mtx_timedlock", "mtx_unlock", "mtx_plain",
+            "mtx_recursive", "mtx_timed", "cnd_t", "cnd_init",
+            "cnd_destroy", "cnd_signal", "cnd_broadcast",
+            "cnd_wait", "cnd_timedwait", "tss_t", "tss_create",
+            "tss_delete", "tss_get", "tss_set", "tss_dtor_t",
+            "TSS_DTOR_ITERATIONS", "once_flag", "ONCE_FLAG_INIT",
+            "call_once",
+            // <stddef.h>/<stdint.h>/<inttypes.h> common exposed types
+            // and C library declarations; additional header macro
+            // families remain outside this explicitly tested subset.
+            "wchar_t", "max_align_t", "intmax_t", "uintmax_t",
+            "int_fast8_t", "int_fast16_t", "int_fast32_t",
+            "int_fast64_t", "uint_fast8_t", "uint_fast16_t",
+            "uint_fast32_t", "uint_fast64_t", "int_least8_t",
+            "int_least16_t", "int_least32_t", "int_least64_t",
+            "uint_least8_t", "uint_least16_t", "uint_least32_t",
+            "uint_least64_t", "imaxabs", "imaxdiv", "strtoimax",
+            "strtoumax", "wcstoimax", "wcstoumax", "imaxdiv_t",
+            "INT8_MAX", "INT16_MAX", "INT32_MAX", "INT64_MAX",
+            "UINT8_MAX", "UINT16_MAX", "UINT32_MAX", "UINT64_MAX",
         ].into_iter().map(str::to_owned).collect();
         for record in module.record_layouts.keys() {
             used.insert(record_type_symbol(record));
