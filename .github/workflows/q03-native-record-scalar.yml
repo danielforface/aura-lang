@@ -47,6 +47,8 @@ jobs:
         run: cargo test --locked -p aura-backend-c --test record_c_identifier_hygiene_native -- --nocapture
       - name: EV-200 real Aura C stdio runtime namespace collision linked Clang O0/O2 (test first)
         run: cargo test --locked -p aura-backend-c --test record_c_runtime_namespace_native -- --nocapture
+      - name: EV-201 extern Cell C-link symbol alias / local-Cell shadowing RED-first
+        run: cargo test --locked -p aura-backend-c --test record_c_extern_symbol_alias_native -- --nocapture
       - name: Record source field assignment parser and formatter round trip
         run: cargo test --locked -p aura-parse --test record_field_assign_format -- --nocapture
       - name: True Aura source Record field assignment Native and checker negatives
