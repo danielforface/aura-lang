@@ -630,9 +630,45 @@ fn emit_function_signature(
     Ok(())
 }
 
+// An Aura extern keeps the target's existing native-linker name. Unlike
+// locally defined Cells it cannot be hex-renamed without silently changing
+// the external library ABI. The legacy map_callee() flattens qualified names,
+// so distinct source symbols can coincide in the C linker namespace.
+//
+// Validate the entire declared extern namespace before emitting *any* C,
+// including for unused declarations. Otherwise optimization, call ordering,
+// or whether a caller is present could change the meaning of a public ABI.
+fn validate_extern_c_symbol_namespace(
+    module: &ModuleIR,
+    c_names: &CNameMap,
+) -> Result<(), CBackendError> {
+    let mut extern_by_c_symbol: BTreeMap<String, String> = BTreeMap::new();
+    for source_extern in module.externs.keys() {
+        let c_symbol = map_callee(source_extern);
+        for (source_cell, exported_c_symbol) in &c_names.exports {
+            if exported_c_symbol == &c_symbol {
+                return Err(CBackendError { message: format!(
+                    "extern C symbol collision: external '{}' and local Cell '{}' both map to native '{}'; refusing ambiguous ABI",
+                    source_extern, source_cell, c_symbol
+                ) });
+            }
+        }
+        if let Some(previous_extern) =
+            extern_by_c_symbol.insert(c_symbol.clone(), source_extern.clone())
+        {
+            return Err(CBackendError { message: format!(
+                "extern C symbol collision: external '{}' and external '{}' both map to native '{}'; refusing ambiguous ABI",
+                previous_extern, source_extern, c_symbol
+            ) });
+        }
+    }
+    Ok(())
+}
+
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     let c_names = CNameMap::new(module);
+    validate_extern_c_symbol_namespace(module, &c_names)?;
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
 
