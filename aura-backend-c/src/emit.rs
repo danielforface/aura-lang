@@ -2211,6 +2211,14 @@ fn emit_call(
     if c_fn == "aura_io_println" && args.len() == 1 {
         if let Some(template) = string_literals.get(&args[0]) {
             if emit_interpolated_println(out, template, named_values, named_record_types) {
+                // The template SSA is deliberately retained because the
+                // interpolation dependency is not first-class in IR/DCE.
+                // This printf substitutes the template; its original C
+                // const-string binding must still count as used under
+                // strict -Wall -Werror, without discarding other consumers.
+                if let Some((_, source_name)) = values.get(&args[0]) {
+                    out.push_str(&format!("  (void)({source_name});\n"));
+                }
                 return;
             }
         }
