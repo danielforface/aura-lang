@@ -162,3 +162,91 @@ fn teleportation_bell_measurement_register_is_uniform_analytically_and_by_shots(
         assert!((observed - 0.25).abs() < 0.035, "observed {observed}");
     }
 }
+
+
+/// Independent test-only Xorshift64* generator, deliberately distinct from
+/// the simulator's versioned SplitMix64 sampling stream.
+fn test_next(rng: &mut u64) -> u64 {
+    *rng ^= *rng >> 12;
+    *rng ^= *rng << 25;
+    *rng ^= *rng >> 27;
+    (*rng).wrapping_mul(0x2545_f491_4f6c_dd1d)
+}
+
+fn test_unit_interval(rng: &mut u64) -> f64 {
+    ((test_next(rng) >> 11) as f64) * (1.0 / 9_007_199_254_740_992.0)
+}
+
+fn test_gate(rng: &mut u64, n: usize, gate_family: usize) -> Gate {
+    let a = test_next(rng) as usize % n;
+    let b = if n > 1 {
+        (a + 1 + test_next(rng) as usize % (n - 1)) % n
+    } else {
+        a
+    };
+    match gate_family {
+        0 => Gate::H(a),
+        1 => Gate::X(a),
+        2 => Gate::Y(a),
+        3 => Gate::Z(a),
+        4 => Gate::S(a),
+        5 => Gate::T(a),
+        6 => Gate::Cnot { control: a, target: b },
+        7 => Gate::Cz { control: a, target: b },
+        8 => Gate::Swap { a, b },
+        _ => unreachable!("fixture gate family must be within 0..9"),
+    }
+}
+
+#[test]
+fn seeded_multiqubit_circuit_corpus_agrees_with_independent_dense_oracle() {
+    const CASES_PER_WIDTH: u64 = 32;
+    const DEPTH: usize = 63;
+    const LIMIT: f64 = 2e-11;
+    let mut covered = [false; 9];
+    let mut gates_checked = 0usize;
+
+    for n in 1usize..=4 {
+        let length = 1usize << n;
+        for case in 0..CASES_PER_WIDTH {
+            let mut rng = 0xd15f_344d_823b_84c7_u64
+                ^ ((n as u64) << 48)
+                ^ case.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let mut input: Vec<Complex> = (0..length)
+                .map(|_| Complex::new(test_unit_interval(&mut rng) - 0.5, test_unit_interval(&mut rng) - 0.5))
+                .collect();
+            let norm = input.iter().map(|z| z.norm_squared()).sum::<f64>().sqrt();
+            for z in &mut input {
+                z.re /= norm;
+                z.im /= norm;
+            }
+            let mut simulator = Statevector::from_amplitudes(
+                n, input.clone(), DEFAULT_MEMORY_BUDGET
+            ).unwrap();
+            let mut dense = input;
+            for depth in 0..DEPTH {
+                let family = if n == 1 { depth % 6 } else { depth % 9 };
+                covered[family] = true;
+                let gate = test_gate(&mut rng, n, family);
+                dense = dense_oracle_apply(&dense, &gate);
+                simulator.apply(gate.clone()).unwrap();
+                gates_checked += 1;
+                for (basis, expected) in dense.iter().enumerate() {
+                    let actual = simulator.amplitude(basis).unwrap();
+                    assert!(
+                        (actual.re - expected.re).abs() <= LIMIT
+                        && (actual.im - expected.im).abs() <= LIMIT,
+                        "n={n}, case={case}, depth={depth}, gate={gate:?}, basis={basis}: got {actual:?}, expected {expected:?}"
+                    );
+                }
+                let numerical_norm = simulator.norm_squared().unwrap();
+                assert!(
+                    (numerical_norm - 1.0).abs() <= LIMIT,
+                    "norm drift n={n}, case={case}, depth={depth}: {numerical_norm}"
+                );
+            }
+        }
+    }
+    assert!(covered.into_iter().all(|gate| gate));
+    assert_eq!(gates_checked, 4 * CASES_PER_WIDTH as usize * DEPTH);
+}
