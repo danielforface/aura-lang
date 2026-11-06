@@ -5,6 +5,8 @@
 //! Matrix operations act on one pure state and have no classical control/IR ABI.
 #![forbid(unsafe_code)]
 
+pub mod circuit;
+
 use std::mem::size_of;
 
 pub const ENGINE_VERSION: &str = "aura-quantum-sim/0.1.0";
