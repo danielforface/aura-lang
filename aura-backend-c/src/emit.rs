@@ -751,10 +751,10 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
                     .map(map_ctype_decl).map(str::to_owned)
             ).collect::<Result<Vec<_>, _>>()?.join(", ")
         };
-        out.push_str(&format!("extern {} {}({});\\n",
+        out.push_str(&format!("extern {} {}({});\n",
             map_ctype_decl(ret), map_callee(source), params));
     }
-    if !called_externs.is_empty() { out.push('\\n'); }
+    if !called_externs.is_empty() { out.push('\n'); }
 
     // Declare all functions before emitting bodies: calls may target a later
     // source cell, including a function with a nominal struct return.
