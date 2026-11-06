@@ -99,3 +99,53 @@ is required.
 a root Aura compiler feature. An integration steward and independent science
 review must approve API/IR interfaces and a safe merge plan. No autonomous
 merge, global QUALIFIED status or QPU spending is authorized.
+
+
+## Offline JSON command-line execution (experimental schema)
+
+The built binary `aura-quantum-run` accepts a **single bounded JSON request on
+stdin** and emits one JSON result on stdout. Errors are JSON on **stderr** with
+a nonzero exit code (2) and no partial success result.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run 
+  < aura-quantum-sim/fixtures/bell_feedforward_v1.json
+```
+
+The versioned request schema `aura.quantum.circuit-request/1` is a local
+experimental integration adapter, **not** Aura source syntax, QIR, OpenQASM
+or a frozen semantic interface. The fixture demonstrates Bell measurement,
+classical feed-forward and reset from an external process without linking Rust.
+
+Top-level fields: `schema`, `qubits`, `classical_bits`, `seed`,
+`shots`, `max_memory_bytes`, and `instructions`.
+Operations are tagged `{"op":"gate","gate":{"kind":"h","target":0}}`,
+`{"op":"measure","qubit":0,"into_bit":0}`,
+`{"op":"reset","qubit":0}`, or
+`{"op":"if","bit":0,"equals":true,"gate":{"kind":"x","target":1}}`.
+Gate kinds: `h,x,y,z,s,t,cx,cz,swap`; two-wire gates use
+`control,target` or `a,b`. Unrecognized fields, unsupported gates,
+uninitialized classical control, duplicate two-wire indexes and impossible
+resource budgets fail closed.
+
+The response has `schema="aura.quantum.circuit-result/1"`,
+`status="simulated"`, `engine_version`, `profile`, `seed`, `shots`,
+`qubits`, `classical_bits`, `norm_tolerance`, and
+`evidence_class="simulation"`, `qpu_hardware_jobs=0`. Each item in
+`results` contains nullable classical `bits` and ordered measurement/reset
+`trace`, not a fabricated hardware receipt.
+
+**CLI admission caps:** input <= 256 KiB, qubits 1..12, classical bits <=64,
+shots 1..2048, operations <=256, total `shots * operations * 2^qubits`
+<= 8,388,608 (using at least one operation for the work estimate),
+requested logical memory budget 1..16 MiB and encoded response <=16 MiB.
+These limits constrain local work and output; OS RSS, JSON parse
+allocations and the caller's input are **not** covered by the underlying
+`Circuit` logical state/output accounting. The output consists of a full
+ordered shot trace and is not streamed. This is a local CPU-only process:
+no network, hardware, credentials, provider calls or billable submission.
+
+The JSON adapter adds exact direct dependencies `serde=1.0.229` and
+`serde_json=1.0.154` to the isolated crate only. Their transitive versions
+are **not** locked to a committed `Cargo.lock` in this increment; full
+hash-locked cross-environment reproducibility is pending integration review.

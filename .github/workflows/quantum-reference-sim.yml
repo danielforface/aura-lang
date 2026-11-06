@@ -41,6 +41,12 @@ jobs:
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
       - name: Execute callable dynamic feed-forward example
         run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example feed_forward
+      - name: Execute versioned offline JSON CLI through public source fixture
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run < aura-quantum-sim/fixtures/bell_feedforward_v1.json > /tmp/aura-quantum-json-result.json
+          python3 -c 'import json; d=json.load(open("/tmp/aura-quantum-json-result.json")); assert d["status"]=="simulated" and d["qpu_hardware_jobs"]==0 and len(d["results"])==128 and all(len(x["trace"])==2 for x in d["results"]); print("Q28_JSON_CLI REAL_CALLER_PASS schema="+d["schema"]+" shots="+str(d["shots"]))'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings

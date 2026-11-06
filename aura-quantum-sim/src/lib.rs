@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod circuit;
+pub mod json_protocol;
 
 use std::mem::size_of;
 
