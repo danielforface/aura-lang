@@ -408,11 +408,120 @@ fn qualified_record_abi_type(
     }
 }
 
+// The backend has several distinct C namespaces: exported Cells, formal
+// parameters, SSA temporaries, runtime symbols and nominal Record typedefs.
+// Map by source symbol identity, never by lossy punctuation substitution.
+// Existing C-safe public Cell names remain unchanged for ABI compatibility.
+struct CNameMap {
+    exports: BTreeMap<String, String>,
+    formals: BTreeMap<String, Vec<String>>,
+}
+
+fn c_safe_export_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else { return false };
+    // All leading underscores are reserved for external identifiers in C.
+    if !first.is_ascii_alphabetic()
+        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    !matches!(name,
+        "auto" | "break" | "case" | "char" | "const" | "continue" |
+        "default" | "do" | "double" | "else" | "enum" | "extern" |
+        "float" | "for" | "goto" | "if" | "inline" | "int" | "long" |
+        "register" | "restrict" | "return" | "short" | "signed" |
+        "sizeof" | "static" | "struct" | "switch" | "typedef" |
+        "union" | "unsigned" | "void" | "volatile" | "while" |
+        // gnu11 extensions and macro names introduced by included headers.
+        "asm" | "typeof" | "bool" | "true" | "false" | "NULL" |
+        "alignof" | "alignas" | "static_assert" | "thread_local")
+}
+
+impl CNameMap {
+    fn new(module: &ModuleIR) -> Self {
+        // Reserved by emitted scaffolding, runtime ABI or included C headers.
+        let mut used: BTreeSet<String> = [
+            "main", "aura_main", "aura_io_println", "aura_async_tensor2",
+            "aura_task_tensor2", "aura_task_tensor2_entry",
+            "aura_u128_t", "aura_i128_t", "Tensor",
+            "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+            "int8_t", "int16_t", "int32_t", "int64_t",
+            "size_t", "ptrdiff_t", "intptr_t", "uintptr_t",
+            "io_load_tensor", "io_display", "compute_gradient",
+            "printf", "fprintf", "puts", "malloc", "calloc", "realloc",
+            "free", "abort", "exit", "fwrite",
+            "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
+        ].into_iter().map(str::to_owned).collect();
+        for record in module.record_layouts.keys() {
+            used.insert(record_type_symbol(record));
+        }
+
+        let mut exports = BTreeMap::new();
+        if module.functions.contains_key("main") {
+            exports.insert("main".into(), "aura_main".into());
+        }
+        // Keep pre-existing, valid external ABI symbols first. Every other
+        // Cell (including C keywords and colliding dotted names) is assigned
+        // an injective hex-encoded C symbol from the remaining namespace.
+        for source in module.functions.keys().filter(|s| s.as_str() != "main") {
+            if c_safe_export_ident(source) && used.insert(source.clone()) {
+                exports.insert(source.clone(), source.clone());
+            }
+        }
+        for source in module.functions.keys() {
+            if exports.contains_key(source) { continue; }
+            let stem = format!("aura_cell_{}", encoded_record_name(source));
+            let mut candidate = stem.clone();
+            let mut suffix = 0usize;
+            while !used.insert(candidate.clone()) {
+                suffix += 1;
+                candidate = format!("{stem}_{suffix}");
+            }
+            exports.insert(source.clone(), candidate);
+        }
+
+        let mut formals = BTreeMap::new();
+        for (source, function) in &module.functions {
+            let mut occupied = used.clone();
+            let mut args = Vec::with_capacity(function.params.len());
+            for index in 0..function.params.len() {
+                let stem = format!("aura_param_{index}");
+                let mut candidate = stem.clone();
+                let mut suffix = 0usize;
+                while !occupied.insert(candidate.clone()) {
+                    suffix += 1;
+                    candidate = format!("{stem}_{suffix}");
+                }
+                args.push(candidate);
+            }
+            formals.insert(source.clone(), args);
+        }
+        Self { exports, formals }
+    }
+
+    fn symbol(&self, source: &str) -> &str {
+        self.exports.get(source).map(String::as_str)
+            .expect("emitted user Cell must have C mapping")
+    }
+
+    fn formal(&self, source: &str, index: usize) -> &str {
+        self.formals.get(source).and_then(|v| v.get(index))
+            .map(String::as_str)
+            .expect("emitted formal must have C mapping")
+    }
+
+    fn callee(&self, source: &str) -> String {
+        self.exports.get(source).cloned().unwrap_or_else(|| map_callee(source))
+    }
+}
+
 fn emit_function_signature(
     out: &mut String,
     f: &FunctionIR,
     layouts: &BTreeMap<String, Vec<(String, Type)>>,
     name: &str,
+    param_names: &[String],
 ) -> Result<(), CBackendError> {
     let returns_value = f.blocks.iter().any(|b| matches!(b.term, Terminator::Return(Some(_))));
     if returns_value {
@@ -425,7 +534,7 @@ fn emit_function_signature(
         out.push_str("void");
     }
     out.push(' ');
-    out.push_str(&c_ident(name));
+    out.push_str(name);
     out.push('(');
     if f.params.is_empty() {
         out.push_str("void");
@@ -438,7 +547,7 @@ fn emit_function_signature(
                 out.push_str(map_type(&p.ty));
             }
             out.push(' ');
-            out.push_str(&c_ident(&p.name));
+            out.push_str(&param_names[i]);
         }
     }
     out.push(')');
@@ -447,6 +556,7 @@ fn emit_function_signature(
 
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
+    let c_names = CNameMap::new(module);
     out.push_str("// Proof-carrying: IR validated by aura_ir::validate_module\n");
     out.push_str("#include \"aura_runtime.h\"\n\n");
 
@@ -463,8 +573,8 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     // Declare all functions before emitting bodies: calls may target a later
     // source cell, including a function with a nominal struct return.
     for (name, f) in &module.functions {
-        let symbol = if name == "main" { "aura_main" } else { name.as_str() };
-        emit_function_signature(&mut out, f, &module.record_layouts, symbol)?;
+        emit_function_signature(&mut out, f, &module.record_layouts,
+            c_names.symbol(name), &c_names.formals[name])?;
         out.push_str(";\n");
     }
     out.push('\n');
@@ -481,7 +591,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
             continue;
         }
         emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions,
-            &module.refined_param_bounds, &module.refined_return_bounds)?;
+            &module.refined_param_bounds, &module.refined_return_bounds, &c_names, name)?;
         out.push('\n');
     }
 
@@ -490,7 +600,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
         emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions,
-            &module.refined_param_bounds, &module.refined_return_bounds)?;
+            &module.refined_param_bounds, &module.refined_return_bounds, &c_names, "main")?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
 
@@ -571,8 +681,11 @@ fn emit_function(
     functions: &BTreeMap<String, FunctionIR>,
     source_refined_param_bounds: &BTreeMap<String, Vec<Option<(u64, u64)>>>,
     source_refined_return_bounds: &BTreeMap<String, (u64, u64)>,
+    c_names: &CNameMap,
+    source_name: &str,
 ) -> Result<(), CBackendError> {
-    emit_function_signature(out, f, record_layouts, &f.name)?;
+    emit_function_signature(out, f, record_layouts,
+        c_names.symbol(source_name), &c_names.formals[source_name])?;
     out.push_str(" {\n");
 
     // The *callee* is also a public C ABI trust boundary. Aura call sites
@@ -580,7 +693,7 @@ fn emit_function(
     // none. Validate the Checker-resolved source contract upon every entry,
     // before executing even the first basic block. Do not infer any contract
     // from the integer ABI width alone.
-    if let Some(bounds) = source_refined_param_bounds.get(&f.name) {
+    if let Some(bounds) = source_refined_param_bounds.get(source_name) {
         if bounds.len() != f.params.len() {
             return Err(CBackendError { message: format!(
                 "refined ABI entry '{}' metadata arity mismatch: {} vs {}",
@@ -610,7 +723,7 @@ fn emit_function(
                     f.name, idx, lo, hi, cty
                 ) });
             }
-            let arg = c_ident(&param.name);
+            let arg = c_names.formal(source_name, idx);
             let display = escape_c_string(&format!("{}.{}", f.name, param.name));
             if wide {
                 out.push_str(&format!(
@@ -637,11 +750,11 @@ fn emit_function(
     // can lower interpolation instead of forwarding literal braces.
     let mut string_literals: HashMap<ValueId, String> = HashMap::new();
 
-    for p in &f.params {
+    for (index, p) in f.params.iter().enumerate() {
         if let Some(record) = qualified_record_abi_type(&p.ty, record_layouts)? {
-            records.insert(p.value, (record, c_ident(&p.name)));
+            records.insert(p.value, (record, c_names.formal(source_name, index).to_string()));
         } else {
-            let binding = (map_type_to_ctype(&p.ty), c_ident(&p.name));
+            let binding = (map_type_to_ctype(&p.ty), c_names.formal(source_name, index).to_string());
             named_values.insert(p.name.clone(), binding.clone());
             values.insert(p.value, binding);
         }
@@ -1425,10 +1538,10 @@ fn emit_function(
                                 }
                                 let local = format!("v{}", dest.0);
                                 out.push_str(&format!("  {} {} = {}({});\n",
-                                    record_type_symbol(&record), local, c_ident(callee), arg_names.join(", ")));
+                                    record_type_symbol(&record), local, c_names.symbol(callee), arg_names.join(", ")));
                                 records.insert(dest, (record, local));
                             } else {
-                                out.push_str(&format!("  {}({});\n", c_ident(callee), arg_names.join(", ")));
+                                out.push_str(&format!("  {}({});\n", c_names.symbol(callee), arg_names.join(", ")));
                             }
                             continue;
                         }
@@ -1439,7 +1552,7 @@ fn emit_function(
                     }
                     emit_call(
                         out, inst.dest, callee, args, &mut call_values, &records, ret_map,
-                        &string_literals, &named_values,
+                        &string_literals, &named_values, c_names,
                     );
                     if let Some(dest) = inst.dest {
                         if let Some(binding) = call_values.get(&dest).cloned() {
@@ -1453,7 +1566,7 @@ fn emit_function(
                             "unqualified C Record argument in kernel '{}'", callee
                         ) });
                     }
-                    emit_kernel(out, inst.dest, callee, args, &mut values);
+                    emit_kernel(out, inst.dest, callee, args, &mut values, c_names);
                 }
             }
         }
@@ -1496,7 +1609,7 @@ fn emit_function(
                     // Source-authenticated refined Returns keep their earlier
                     // independent guard-before-cast pathway below.
                     let required = map_type_to_ctype(&f.ret);
-                    let return_key = if f.name == "aura_main" { "main" } else { &f.name };
+                    let return_key = source_name;
                     let integer_abi = |ty: CType| matches!(ty,
                         CType::U8 | CType::U16 | CType::U32 | CType::U64 |
                         CType::I8 | CType::I16 | CType::I32 | CType::I64);
@@ -1535,7 +1648,7 @@ fn emit_function(
                 // the unconverted SSA value. Checking after the C return
                 // cast would permit U32(277) -> U8(21) truncation.
                 if let Some((lo, hi)) = source_refined_return_bounds.get(
-                    if f.name == "aura_main" { "main" } else { &f.name }
+                    source_name
                 ) {
                     let (actual, value_name) = values.get(v).ok_or_else(|| CBackendError {
                         message: format!("refined return '{}' has no scalar SSA v{}", f.name, v.0),
@@ -1782,8 +1895,9 @@ fn emit_call(
     ret_map: &HashMap<String, CType>,
     string_literals: &HashMap<ValueId, String>,
     named_values: &HashMap<String, (CType, String)>,
+    c_names: &CNameMap,
 ) {
-    let c_fn = map_callee(callee);
+    let c_fn = c_names.callee(callee);
 
     if c_fn == "aura_io_println" && args.len() == 1 {
         if let Some(template) = string_literals.get(&args[0]) {
@@ -1856,10 +1970,11 @@ fn emit_kernel(
     callee: &str,
     args: &[ValueId],
     values: &mut HashMap<ValueId, (CType, String)>,
+    c_names: &CNameMap,
 ) {
     // Prototype supports the common case: Tensor f(Tensor, u32)
     // args[0] is Tensor, args[1] is u32.
-    let c_fn = map_callee(callee);
+    let c_fn = c_names.callee(callee);
 
     if let Some(d) = dest {
         out.push_str("  Tensor ");
@@ -2065,10 +2180,6 @@ fn map_callee(name: &str) -> String {
             name.replace('.', "_")
         }
     }
-}
-
-fn c_ident(name: &str) -> String {
-    name.replace('.', "_")
 }
 
 fn escape_c_string(s: &str) -> String {
