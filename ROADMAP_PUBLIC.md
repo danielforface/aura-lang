@@ -1,5 +1,9 @@
 # Aura Public Roadmap
 
+
+> **2026-11-06 production-first execution correction:** [Delivery policy](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md) now measures functional source-to-runtime delivery rather than diagnostic pulse counts, prohibits fake missing-symbol CI RED, restricts new stacked Drafts and moves shared-document updates to integration milestones. Existing historical plans/soundness claims are unchanged; [audit](docs/qualification/WORKFLOW_AUDIT_2026-11-06.md) and [agent orders](docs/qualification/INTEGRATION_AND_CI_PLAYBOOK.md) detail evidence and next actions. Agent C has actual unmerged Q28 reference-simulator code in [Draft #99](https://github.com/danielforface/aura-lang/pull/99), advanced by [Draft #108](https://github.com/danielforface/aura-lang/pull/108); do not misstate that as zero development or a certified release.
+
+
 > **2026-11-05 Quantum decision:** Aura Quantum is now a committed **future direction**. [Master V3 Draft](docs/qualification/MASTER_ROADMAP_V3.md) adds 284 Q19–Q38 quantum requirements to all 190 preserved prior acceptance tasks. [Quantum design docs](docs/quantum/README.md) explain standards and scientific trust. No quantum implementation or release is claimed; the technical plan still awaits review and V2 remains a Draft.
 
 > **2026-10-28 full-platform roadmap extension (proposed, under review):** [Master V2](docs/qualification/MASTER_ROADMAP_V2.md) preserves Q00–Q11 and adds Q12–Q18 for modern Aura-authored Desktop, Web, Android and iOS applications, plus future R9–R15 trains. Current development remains Q03-001 / [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57); Master V1 is unchanged. This is a target, not an implemented/qualified UI release.

@@ -150,3 +150,8 @@ When content conflicts:
 The README should be the most accurate document in the repository, not the most optimistic one.
 
 A strong technical project gains credibility by saying “experimental,” “target,” or “not yet implemented” precisely where appropriate.
+
+
+## 2026-11-06 clarification — claims discipline never prohibits production development
+
+This policy constrains what the repository **claims**, not whether a developer may fix a real bug, implement new production behavior or merge a reviewed feature. Experimental work is explicitly allowed with correctly scoped wording, a supported/unsupported matrix and validation. An intentionally broken remote build that only demonstrates a missing test-only API does not qualify as semantic RED evidence. A complete feature is measured by runnable source-to-artifact/production behavior, not its count of CI runs or evidence entries. See [Production-first delivery policy](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md). Formal soundness and safety remain non-negotiable.

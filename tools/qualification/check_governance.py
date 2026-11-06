@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR gate: freeze canonical plan and require live handoff/progress on changes.
+"""PR gate: freeze canonical plans and require paired central-ledger edits only if used.
 
 Run: python3 tools/qualification/check_governance.py [BASE_SHA]
 When BASE_SHA omitted, performs local integrity checks without Git diff rules.
@@ -100,8 +100,19 @@ def main() -> None:
             if frozen != v1:
                 fail("frozen historical V1 roadmap changed")
             names = set(git("diff", "--name-only", f"{base}...HEAD").stdout.splitlines())
-            if names and (STATUS not in names or HANDOFF not in names):
-                fail("every substantive PR must change both PROGRESS.md and CONTEXT_HANDOFF.md")
+            # Normal feature PRs use scoped Issue/PR evidence. Central program ledgers
+            # are integration-owned; if either is touched, both must be changed.
+            if (STATUS in names) != (HANDOFF in names):
+                fail("central PROGRESS and CONTEXT_HANDOFF must change together, or neither")
+            # Preserve an existing evidence ledger's append-only contract when edited.
+            evidence = "docs/qualification/EVIDENCE_LOG.md"
+            if evidence in names:
+                existed_evidence = git("cat-file", "-e", f"{base}:{evidence}", check=False).returncode == 0
+                if existed_evidence:
+                    prior = git("show", f"{base}:{evidence}").stdout
+                    current = (ROOT / evidence).read_text(encoding="utf-8")
+                    if not current.startswith(prior):
+                        fail("central evidence ledger must be append-only; reconcile via integration owner")
         else:
             print("First-time bootstrap: canonical plan absent from base; freeze starts after merge.")
     print(f"Qualification governance OK: {len(task_rows)} canonical tasks, {len(gate_rows)} tracked gates, V2={has_v2}, V3={has_v3}.")

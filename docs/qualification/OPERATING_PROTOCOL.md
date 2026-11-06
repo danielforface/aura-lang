@@ -50,7 +50,7 @@ No gate is CLOSED just because tasks were coded. Each listed acceptance requirem
 - V1 remains byte-identical and V2 preserves every V1 original acceptance row verbatim; after adoption V2 also freezes in place;
 - while V2 exists, the stage tracker must list Q00–Q18, with newly proposed gates NOT_STARTED and no invented CI;
 - frozen master file equals base branch's content, once the base branch contains it;
-- both `PROGRESS.md` and `CONTEXT_HANDOFF.md` changed on any substantive PR once bootstrap merged;
+- central `PROGRESS.md` and `CONTEXT_HANDOFF.md` are optional for individual feature PRs. If either is changed, both are changed together at serialized integration checkpoints. A specific exception requires reviewer approval.
 - all task IDs referenced in status/handoff exist in the master plan (format sanity);
 - minimum metadata and valid gate states.
 
@@ -78,3 +78,18 @@ Future development chats MUST see the new eventual Desktop/Web/iOS/Android appli
 - Quantum test gates require exact-SHA positive+negative reproducibility, soundness-specific trust manifests, no fabricated proofs, versioned OpenQASM/QIR/target profiles and independent scientific review before broad claims.
 - QPU/provider submissions are NEVER inferred from authorization for source development; physical job spending, private keys and calibration/pulse control require separate explicit permission and cost caps.
 - A no-code planning CI result establishes plan integrity only, not quantum source semantics or device qualification.
+
+
+## 10. Production-first delivery and integration amendment (2026-11-06; supersedes conflicting process steps)
+
+**Authority:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md). This later, maintainer-directed amendment supersedes the old procedural requirement in §§3,4,7,8 to update both mother ledgers for every increment. Those earlier sentences remain as historical context, not current obligations. Quantum and Core program trust clauses are unchanged.
+
+A **Delivery Phase** must deliver accepted source-to-runtime behavior, a real production fix, measurable accepted reliability/performance change or a release-unblocking integration. Diagnostic-only studies and docs-only updates are **not counted as completed production phases** unless explicitly scoped as a standalone scientific/QA/policy deliverable with consequential acceptance. Stop repeating the same investigation after a bounded decision point. Product safety checks remain mandatory; never speculate about IBus causal attribution or quantum proof.
+
+**No remote fake RED:** local test-first is preferred. A deliberately missing method (`rustc E0599`) must not be pushed to ordinary GitHub Actions as semantic RED. Use isolated diagnostic CI only where environment-specific observation is essential and truthful.
+
+**No more Draft pileup:** one active feature PR per agent/vertical slice; no new nested micro-Drafts while ancestors remain unreviewed. Existing Draft history is preserved and reviewed through the integration queue. No automatic merge/rebase/close. Explicit reviewer/maintainer approval is required for integration.
+
+**Central docs:** Code PRs track scoped status in PR/Issue. Integration steward serially updates both PROGRESS and HANDOFF at real milestones, with one synthesized append-only EVIDENCE entry if appropriate. Governance checks allow *neither or both*, not necessarily both on each feature PR. No evidence may be falsified or erased. This reduces write collisions without abandoning handoff discipline.
+
+**Next work:** [Agent A Core](agents/AGENT_A_CORE_ORDER.md), [Agent B Lumina](agents/AGENT_B_LUMINA_ORDER.md), [Agent C Quantum](agents/AGENT_C_QUANTUM_ORDER.md), [Integration and CI](INTEGRATION_AND_CI_PLAYBOOK.md). Roadmap IDs, scientific proof/physical evidence distinctions and release GO/NO-GO remain unchanged.

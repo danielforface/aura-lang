@@ -1020,3 +1020,16 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 **Governance:** versioned V3 additive plan; check 474 unique IDs and original 190 verbatim rows, Q00–Q38 status rows, no modification of V1/V2, and no unqualified proof/hardware claim. Continue normal CI for each exact docs-inclusive HEAD. No merge/force/rebase/direct-main or QPU spend authorized.
 
 **Next safe action:** verify actual Draft PR head and CI status of proposed V3, obtain technical plan review, open small independent Q19 and Q27/Q28/Q37 acceptance Issues (test-first / formal specification), coordinate ownership, and continue existing Q03 and Lumina work on their respective exact active branches.
+
+
+## 2026-11-06 — Mandatory new production-first operating policy (supersedes old per-pulse instructions)
+
+**Read first:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md), [WORKFLOW_AUDIT_2026-11-06.md](WORKFLOW_AUDIT_2026-11-06.md), [INTEGRATION_AND_CI_PLAYBOOK.md](INTEGRATION_AND_CI_PLAYBOOK.md). Existing old requirements to append to mother docs every micro-commit, push default remote deliberately broken tests, or open a new stacked Draft for every small diagnostic are superseded. The safety/correctness/release claims policy is **not** weakened.
+
+**Live GitHub discovery (2026-11-06):** 78 PRs inspected (70 open, 8 merged), 73 branch names on first page. Agent A Core Draft #57 (Issue #51 is an Issue, not PR) real C/IR production; Agent B Lumina #103/106 only diagnostic helper scheduling and counters in latest phases, with genuine real upstream Hangul callbacks but no demonstrated standard production lost-commit defect; Agent C Quantum #99 to #108 has real Rust reference simulator and Qiskit parity, still unmerged. Q28 now marked IN_PROGRESS as project branch activity, not full science/release qualification. Last PR106 and PR108 final heads had successful job matrices at observed time. Final #57 HEAD still subject to independent CI check.
+
+**Decision and corrections:** [Agent A](agents/AGENT_A_CORE_ORDER.md): close meaningful production Q03 source→C slice/integration; [Agent B](agents/AGENT_B_LUMINA_ORDER.md): one normal-production test/decision then actual safe fix or new user-visible UI feature; [Agent C](agents/AGENT_C_QUANTUM_ORDER.md): real callable simulator feature beyond repeated oracle-only checkpoints; integration steward manages the existing Draft ancestry and CI waste. Issue #59 remains coordination, not IBus defect. PR or Issue comments carry new instructions across branch boundaries; no automatic synchronization, overwrite, merge or force push.
+
+**Governance change:** `check_governance.py` now allows neither/both shared ledgers in a feature PR. If central ledger changes, update both. V1/V2/V3 freeze and task IDs retained; separate Q28 status from scientific qualification. No Quantum QPU spend/release. See [policy](DELIVERY_OPERATING_POLICY_V1.md) for exact phase, test and merge definitions.
+
+**Next safe action:** ensure process policy CI is green at final #95 docs SHA; send agent owner scoped orders through existing GitHub threads; invite review of integration plan; agents continue independently without a new nested Draft, rechecking their live heads and CI before implementing real product work.

@@ -2,6 +2,10 @@
 
 **Purpose:** ongoing, evidence-based multi-release qualification of Aura without pretending to implement all missing features in one patch.
 
+## New execution policy (2026-11-06): build the product
+
+[Production-first policy](DELIVERY_OPERATING_POLICY_V1.md) supersedes earlier per-commit documentation and remote RED ceremonies, without weakening scientific/semantic or safety guarantees. [Workflow audit](WORKFLOW_AUDIT_2026-11-06.md) and [integration plan](INTEGRATION_AND_CI_PLAYBOOK.md) show the evidence and implementation priorities; [Agent A](agents/AGENT_A_CORE_ORDER.md), [B](agents/AGENT_B_LUMINA_ORDER.md) and [C](agents/AGENT_C_QUANTUM_ORDER.md) have distinct read-only continuation orders. Existing ownership branches do not auto-synchronize.
+
 ## One source of truth per purpose
 
 | Document | Mutability | Purpose |
@@ -9,7 +13,7 @@
 | [MASTER_ROADMAP_V1.md](MASTER_ROADMAP_V1.md) | **FROZEN, UNCHANGED** | Original 88 Q00–Q11 core acceptance tasks and R0–R8 trains |
 | [MASTER_ROADMAP_V2.md](MASTER_ROADMAP_V2.md) | **PROPOSED reviewed supersession; freezes once approved** | Complete original scope plus 102 new Q12–Q18 modern Aura/Lumina Desktop/Web/Android/iOS UI tasks and R9–R15 |
 | [MASTER_ROADMAP_V3.md](MASTER_ROADMAP_V3.md) | **PROPOSED technical plan; freeze after reviewed adoption** | Original 190 Q00–Q18 acceptance tasks preserved verbatim plus 284 Quantum Q19–Q38 tasks and R16–R35. Strategic quantum direction approved 2026-11-05; zero quantum qualification yet. |
-| [PROGRESS.md](PROGRESS.md) | Mutable for *every work increment* | Current gate/train, task states, blockers, milestone evidence and work queue |
+| [PROGRESS.md](PROGRESS.md) | Integration-owned, updated on meaningful milestones | Current gate/train, task states, blockers, milestone evidence and work queue |
 | [CONTEXT_HANDOFF.md](CONTEXT_HANDOFF.md) | Mutable for *every work increment* | Fresh-chat resumption: intent, decisions, GitHub connection, work performed, next action |
 | [EVIDENCE_LOG.md](EVIDENCE_LOG.md) | Append-only (corrections add entries) | Static findings, reproductions, tests, CI and assurance evidence |
 | [OPERATING_PROTOCOL.md](OPERATING_PROTOCOL.md) | Governance; versioned changes by review | Branch, PR, version, CI, release and documentation-update process |

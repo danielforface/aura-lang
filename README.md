@@ -1,6 +1,9 @@
 # Aura
 
 
+> **2026-11-06 production-first execution correction:** [Delivery policy](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md) now measures functional source-to-runtime delivery rather than diagnostic pulse counts, prohibits fake missing-symbol CI RED, restricts new stacked Drafts and moves shared-document updates to integration milestones. Existing historical plans/soundness claims are unchanged; [audit](docs/qualification/WORKFLOW_AUDIT_2026-11-06.md) and [agent orders](docs/qualification/INTEGRATION_AND_CI_PLAYBOOK.md) detail evidence and next actions. Agent C has actual unmerged Q28 reference-simulator code in [Draft #99](https://github.com/danielforface/aura-lang/pull/99), advanced by [Draft #108](https://github.com/danielforface/aura-lang/pull/108); do not misstate that as zero development or a certified release.
+
+
 ## Aura Quantum — strategic full-stack extension (2026-11-05)
 
 The maintainer has **decided to enter quantum computing**. This is a future product mandate, not an existing implementation or qualification result. The [proposed Master Roadmap V3](docs/qualification/MASTER_ROADMAP_V3.md) **preserves the 190 inherited Q00–Q18 tasks** from the V2 proposal and adds **284 measurable quantum acceptance tasks across Q19–Q38 and R16–R35**. The [Quantum documentation program](docs/quantum/README.md) includes scientific semantics, linear qubit ownership, Quantum IR, checker-integrated optimization, OpenQASM/QIR, local simulation, hardware targets, QPU jobs, noise/QEC/pulse research, Sentinel Quantum Studio, security and independent external qualification.

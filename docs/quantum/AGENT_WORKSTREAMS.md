@@ -1,6 +1,6 @@
 # Quantum agent workstreams — parallel execution without shared-file collisions
 
-**No current Quantum agent is assigned.** Existing Agent A owns Core Q03 Draft PR #57; Agent B owns Lumina IBus Draft PR #92. Neither is redirected, merged or rebased by this Quantum roadmap. Q19–Q38 remain NOT_STARTED.
+**2026-11-06 LIVE correction:** Agent C is now actively developing Q28 in [Draft PR #99](https://github.com/danielforface/aura-lang/pull/99) through [#108](https://github.com/danielforface/aura-lang/pull/108); Q28 has real Rust simulator code and is branch-level IN_PROGRESS (NOT yet integrated/released/fully qualified). Agent A remains Core Draft #57; Agent B Lumina chain has moved through Draft #106. See [Delivery policy](../qualification/DELIVERY_OPERATING_POLICY_V1.md) and [Agent C immediate order](../qualification/agents/AGENT_C_QUANTUM_ORDER.md). Historical planning status is superseded; other Quantum Q gates remain future proposed/not qualified.
 
 ## Ownership proposals
 
@@ -42,3 +42,8 @@
 ## Merge / deployment limits
 
 No actual PR opened except this proposal; no claim of Agent assignment without issue ownership confirmation. No cloud credentials, QPU reservation or billable execution authorized. This document is an execution contract only upon technical plan acceptance.
+
+
+## Live agent C delivery correction — 2026-11-06
+
+A Q28 reference simulator already exists on unmerged branch and has scientific parity/regression support; do not create a new scaffold, do not call the program wholly NOT_STARTED, and do not open one new stacked Draft per numerical test. Agent C next must build an actual callable supported simulator capability, then submit as one meaningful reviewable slice. Prior 4-deep Draft stack is retained pending explicit steward merge plan and independent scientific review. Central docs are **not** edited on each exploratory commit. [Agent C instructions](../qualification/agents/AGENT_C_QUANTUM_ORDER.md).

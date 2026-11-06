@@ -26,3 +26,8 @@
 ## Verification vocabulary
 
 PROVEN_EXACT / PROVEN_UP_TO_GLOBAL_PHASE require a matching supported proof engine and full checker provenance. APPROXIMATE_BOUND requires explicit certified bounds and assumptions. FALSIFIED_BY_WITNESS is a real counterexample for the declared task. SIMULATED and OBSERVED_ON_HARDWARE are evidence categories, NOT proofs. UNKNOWN, TIMEOUT, UNSUPPORTED, NOT_RUN, CANCELLED, ERROR all fail closed. See [SEMANTIC_AND_TRUST_CONTRACT](SEMANTIC_AND_TRUST_CONTRACT.md).
+
+
+## 2026-11-06 current code note (supersedes planning-only snapshot)
+
+Agent C has started actual Q28 implementation in [Draft #99](https://github.com/danielforface/aura-lang/pull/99) and subsequent work through [Draft #108](https://github.com/danielforface/aura-lang/pull/108). Standalone Rust reference simulator, test oracles, external Qiskit parity and scaling checks exist on UNMERGED branches. This means **Q28 development is IN_PROGRESS, not that all Q28 tasks or Quantum are production-qualified**. Other Q19–Q38 gates remain separately planned. Current [production-first policy](../qualification/DELIVERY_OPERATING_POLICY_V1.md) requires meaningful functional improvement on each delivery phase and a reviewed integration queue instead of growing nested diagnostic Drafts.

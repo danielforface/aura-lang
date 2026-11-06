@@ -356,3 +356,12 @@ Use a new ID (EV-022 onward), with `task-id | source commit | OS/arch/compiler/f
 - **Sources reviewed for planning:** official OpenQASM 3.1 repository, QIR Alliance Base Profile, Guppy linear type specification, MQT QCEC equivalence, Qiskit Target model. External documentation is not evidence that Aura supports these technologies.
 - **What is not verified:** no quantum unit test, no simulated Bell/GHZ result, no quantum equivalence proof, no native hardware, no paid job, no Quantum LSP/Sentinel feature, no production release. Governance checker CI and GitHub PR checks must be observed after final docs-inclusive SHA before calling the plan review-ready.
 - **Protected:** Agent A Q03, Agent B Lumina, frozen V1/V2, `main`, release ledger and other implementation code untouched.
+
+
+## 2026-11-06 — Evidence checkpoint: navigational process, not code qualification
+
+- **Method:** GitHub API PR metadata, changed file lists and select diffs for PR #57, #99, #103, #106, #108; Issue #51/#59 bodies; CI job conclusions; public claims policy and qualification/governance source.
+- **Observed:** 78 PRs (70 open/8 merged) and 73 listed branches. PR #57 47 paths/278 commits includes production AST/IR/C and tests; #103 has only diagnostic C helper macro and native callback tests; #106 has diagnostic-only Rust ACK counters under feature flag and tests. #99 has real Rust simulator; #108 external Qiskit parity and benchmark scaffolding. No QPU evidence and no proof of normal-production post-R lost key.
+- **CI distinction:** native RED #42213904423 followed by newer PR #42214100867 4/4 success (different SHA); #42195826388 and #42214329430 successful exact observed B/C heads. User-facing product completeness not inferred from green CI. Remote E0599 is a known test-only missing method, not an IBus semantic regression.
+- **Process correction:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md) requires feature slice/bug closure or consequential research exception and bans deliberately compile-broken default remote CI. Large mother ledgers now integration-owned; updated only together on meaningful checkpoint. Review/merge requires explicit maintainer authorization; all existing branches and frozen Master plans unchanged.
+- **Status:** POLICY/DOC REVIEW, NOT production feature proof. Additional product implementation remains for owner agents. Detailed source links in [audit](WORKFLOW_AUDIT_2026-11-06.md).

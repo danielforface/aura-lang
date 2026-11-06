@@ -46,7 +46,7 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Q25 | Quantum optimizer and synthesis | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 | Q26 | Target routing and scheduling | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 | Q27 | OpenQASM/QIR interoperability | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
-| Q28 | Quantum simulation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q28 | Quantum simulation | IN_PROGRESS | Branch work #99/#108: standalone Rust simulator implemented and Qiskit parity tested; **DRAFT/NOT_MERGED/NOT_RELEASED**; qualification not yet established |
 | Q29 | Hybrid job orchestration | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 | Q30 | Provider/QPU adapters | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 | Q31 | Noise and mitigation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
@@ -809,3 +809,12 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 - New docs `docs/quantum/`: charter, semantics/trust, architecture, qualification, ownership, references, reference programs and RFC. Governance checker extended for Q00–Q38 and frozen V1/V2/V3 protection.
 - **What did NOT happen:** no compiler/Quantum IR/SDK change, no actual quantum simulation, proof, hardware invocation, QPU spend, merge/rebase or interruption of Agent A / Agent B. A documentation-only CI pass cannot establish runtime properties.
 - **Next safe action:** review technical V3 scope and agent ownership, run plan-integrity CI, open bounded Q19 research/contract Issues after reviewed approval; independently continue existing Q03 and Lumina work.
+
+
+## 2026-11-06 — Delivery-governance correction / actual branch progress
+
+**Process incident:** [Audit](WORKFLOW_AUDIT_2026-11-06.md) confirms excessive nested Draft PR debt, mistaken missing-symbol remote RED and repeated mother-ledger edits. [Production-first policy](DELIVERY_OPERATING_POLICY_V1.md) corrects the *process*, without revoking CI, safety or proof obligations. This is a policy-only modification in V3 planning branch, not a production code fix.
+
+**Branch reality:** Core [Draft #57](https://github.com/danielforface/aura-lang/pull/57) has real Record/Native Compiler source changes and is still open, [Issue #51](https://github.com/danielforface/aura-lang/issues/51) open; latest CI must be rechecked at current SHA. B [#106](https://github.com/danielforface/aura-lang/pull/106) is diagnostics on real Hangul events under a **test-only deferral**, no normal helper production-path fix proved; [Issue #59](https://github.com/danielforface/aura-lang/issues/59) is coordination. C [#99](https://github.com/danielforface/aura-lang/pull/99) builds genuine standalone Rust Q28 simulator and C-004 [#108](https://github.com/danielforface/aura-lang/pull/108) provides Qiskit parity/scaling evidence. **Q28 is IN_PROGRESS in a separate Draft branch**, not integrated/qualified; this summary supersedes the older V3 static planning label NOT_STARTED for project activity, but not release/acceptance status.
+
+**Review queue:** [Agent A](agents/AGENT_A_CORE_ORDER.md) prioritizes tested Core behavioral slice + integration; [Agent B](agents/AGENT_B_LUMINA_ORDER.md) chooses production input-loss fix OR closes research honestly and ships UI; [Agent C](agents/AGENT_C_QUANTUM_ORDER.md) ships next usable scientific API feature; [integration plan](INTEGRATION_AND_CI_PLAYBOOK.md) reduces Draft debt and CI waste with reviewer-approved merges. No automatic modifications to active agent branches, main or releases. Normal agent PRs no longer required to edit central ledger docs; integration steward owns milestone updates.
