@@ -215,6 +215,24 @@ int main(int argc,char**argv) {
         }
         pump_ms(1);
         CHECK_DAEMON_GENERATION();
+#ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
+        /* Phase35 separate TEST-ONLY helper: bounded post-R idle GLib drain.
+         * No physical key dispatch (NO B/R), no fabricated engine signals,
+         * no text/keys/cursor in diagnostic stderr. The normal installed
+         * helper does not recognize this command at all. */
+        if(!strncmp(line,"I\t",2)){
+            char *duration=line+2;
+            unsigned long ms=0;
+            if(!dec_field(&duration,&ms,1)||ms>200UL){
+                puts("FATAL invalid_idle_probe");
+                exit_code=6;break;
+            }
+            fprintf(stderr,"LUMINA_IBUS_P35_IDLE_DRAIN ms=%lu (no content)\n",ms);
+            pump_ms((unsigned)ms);
+            CHECK_DAEMON_GENERATION();
+            puts("A");continue;
+        }
+#endif
         if(!strcmp(line,"T\n")){
             /* Privacy-neutral read-only health probe forces dispatch of
              * the real daemon-disconnected signal while input is idle. */
