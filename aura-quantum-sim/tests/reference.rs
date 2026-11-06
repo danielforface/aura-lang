@@ -163,6 +163,7 @@ fn seeded_rng_replay_and_seed_zero_are_defined() {
     for _ in 0..100 {
         assert_eq!(a.next_u64(), b.next_u64());
         let draw = a.next_f64();
+        assert_eq!(draw, b.next_f64());
         assert!((0.0..1.0).contains(&draw));
     }
 }
