@@ -39,6 +39,8 @@ jobs:
           components: clippy
       - name: Run independent statevector reference suite
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
+      - name: Execute callable dynamic feed-forward example
+        run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example feed_forward
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
