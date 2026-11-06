@@ -6,6 +6,7 @@ on:
       - quantum/agent-c-q28-reference-simulator-001
       - quantum/agent-c-q28-numerical-oracles-002
       - quantum/agent-c-q28-differential-assurance-003
+      - quantum/agent-c-q28-calibration-parity-004
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
@@ -15,6 +16,7 @@ on:
       - plan/aura-quantum-full-stack-v3
       - quantum/agent-c-q28-reference-simulator-001
       - quantum/agent-c-q28-numerical-oracles-002
+      - quantum/agent-c-q28-differential-assurance-003
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
@@ -39,3 +41,68 @@ jobs:
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
       - name: Fail on Rust Clippy warnings
         run: cargo clippy --manifest-path aura-quantum-sim/Cargo.toml --all-targets -- -D warnings
+
+  q28-external-qiskit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout precise source
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install externally pinned numerical oracle
+        run: python -m pip install --disable-pip-version-check --no-cache-dir 'qiskit==2.6.1' 'numpy==2.3.4'
+      - name: Generate real Rust vectors and compare Qiskit results
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts/q28
+          cargo run --release --quiet --manifest-path aura-quantum-sim/Cargo.toml --example export_qiskit_vectors > ci-artifacts/q28/c004-rust-vectors.csv
+          python aura-quantum-sim/tools/check_qiskit_parity.py ci-artifacts/q28/c004-rust-vectors.csv ci-artifacts/q28/c004-qiskit-report.json
+      - name: Upload reproducible parity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q28-qiskit-parity-${{ github.sha }}
+          path: ci-artifacts/q28/
+          if-no-files-found: warn
+          retention-days: 30
+
+  q28-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout precise source
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Benchmark reproducible CPU-only scaling
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts/q28
+          rustc --version --verbose > ci-artifacts/q28/c004-environment.txt
+          uname -a >> ci-artifacts/q28/c004-environment.txt
+          lscpu >> ci-artifacts/q28/c004-environment.txt
+          date -u --iso-8601=seconds >> ci-artifacts/q28/c004-environment.txt
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --example scaling_bench
+          BINARY=aura-quantum-sim/target/release/examples/scaling_bench
+          for n in 4 8 12 16; do
+            "$BINARY" --qubits "$n" --gates 64 --reps 9 > "ci-artifacts/q28/c004-n${n}.csv"
+            if [ "$n" = 4 ]; then
+              cp "ci-artifacts/q28/c004-n${n}.csv" ci-artifacts/q28/c004-scaling.csv
+            else
+              tail -n 1 "ci-artifacts/q28/c004-n${n}.csv" >> ci-artifacts/q28/c004-scaling.csv
+            fi
+          done
+          cat ci-artifacts/q28/c004-scaling.csv
+      - name: Upload observed scaling evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q28-scaling-${{ github.sha }}
+          path: ci-artifacts/q28/
+          if-no-files-found: warn
+          retention-days: 30
