@@ -151,9 +151,9 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           IBUS_USE_PORTAL: "0"
         run: |
-          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -std=c11 -O2 -Wall -Wextra -Werror \\
-            -o "$RUNNER_TEMP/lumina-ibus-helper-phase" \\
-            aura-plugin-lumina/native/ibus_input_helper.c \\
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-phase" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
             $(pkg-config --cflags --libs ibus-1.0)
           xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
             gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
