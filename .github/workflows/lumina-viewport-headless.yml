@@ -146,6 +146,31 @@ jobs:
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity -- --ignored --exact --nocapture --test-threads=1
           '
 
+      - name: Actual upstream Hangul D/C phase observations (isolated diagnostic-only helper)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -std=c11 -O2 -Wall -Wextra -Werror \\
+            -o "$RUNNER_TEMP/lumina-ibus-helper-phase" \\
+            aura-plugin-lumina/native/ibus_input_helper.c \\
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 34
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-phase"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P34_DIAGNOSTIC_PHASE="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_callback_phase_e2e real_registered_hangul_callbacks_have_measured_local_dispatch_phase -- --exact --nocapture --test-threads=1
+          '
+
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
