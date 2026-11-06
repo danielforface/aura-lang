@@ -20,6 +20,9 @@
  * phase of REAL libibus callbacks. This is NOT engine transaction provenance.
  * Ordinary production builds omit both the instrumentation and phase logs.
  * Never report committed text, surrounding text or caret data here. */
+#if defined(LUMINA_IBUS_TEST_DEFER_POST_KEY_PUMP) && !defined(LUMINA_IBUS_TEST_CALLBACK_PHASE)
+#error "deferred key dispatch requires separate callback-phase diagnostic helper"
+#endif
 #ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
 enum p34_callback_phase { P34_IDLE, P34_CALL, P34_PUMP };
 static enum p34_callback_phase p34_phase=P34_IDLE;
@@ -366,7 +369,16 @@ int main(int argc,char**argv) {
 #endif
             fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY keysym=%lu modifiers=%lu release=%lu code=%lu handled=%d\n",
                 sym,mod,release,code,handled);
+#ifdef LUMINA_IBUS_TEST_DEFER_POST_KEY_PUMP
+            /* DIAGNOSTIC ONLY. Intentionally allow genuine upstream daemon
+             * callbacks to reach us on the later I<TAB>ms idle GLib drain,
+             * i.e. AFTER our normal R. No D/C/P frame is fabricated. This
+             * is NOT installed in production and proves timing, not origin. */
+            fputs("LUMINA_IBUS_P36_TEST_DEFER_POST_KEY_PUMP (diagnostic_only)\n",stderr);
+            fflush(stderr);
+#else
             pump_ms(25);
+#endif
 #ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
             p34_phase=P34_IDLE;
 #endif
