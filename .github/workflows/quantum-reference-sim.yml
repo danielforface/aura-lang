@@ -39,6 +39,8 @@ jobs:
           components: clippy
       - name: Run independent statevector reference suite
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
+      - name: Record empirical long-depth precision residuals
+        run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
         run: cargo clippy --manifest-path aura-quantum-sim/Cargo.toml --all-targets -- -D warnings
 
