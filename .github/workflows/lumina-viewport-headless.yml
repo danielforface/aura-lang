@@ -246,6 +246,39 @@ jobs:
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib ibus_native::tests::p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative -- --exact --nocapture --test-threads=1
           '
 
+      - name: Real X11 TextInput autofocus and host revision (production fallback)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          env -u LUMINA_IBUS_HELPER_BIN -u LUMINA_IBUS_ENGINE \
+            xvfb-run -a -s "-screen 0 1280x960x24" \
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics \
+              --test lumina_autofocus_e2e autofocus_direct_real_x11_first_valid_target_and_no_refocus \
+              -- --exact --nocapture --test-threads=1
+
+      - name: Real registered Hangul autofocus with normal production helper
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-autofocus-normal"
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul"
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-autofocus-normal"
+            export LUMINA_IBUS_ENGINE="hangul"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics \
+              --test lumina_autofocus_e2e autofocus_live_normal_ibus_hangul_and_native_undo \
+              -- --exact --nocapture --test-threads=1
+          '
+
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"

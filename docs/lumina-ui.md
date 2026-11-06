@@ -203,6 +203,7 @@ Props:
 - `size` (int, default 18)
 - `on_change` (callback id string, internal)
 - `on_submit` (callback id string, internal; Enter)
+- `autofocus` (string `"true"`, opt-in; Raylib native): on the first eligible render, focus the **first visible, enabled, unique-callback-ID** opted TextInput in source order. Invalid `value_revision` and clipped inputs cannot receive initial autofocus. This is a one-time window decision, not a per-frame focus override: pointer click, Tab, Escape, or existing user focus wins. When an opted field appears after an initially empty tree, it can still receive initial focus until the user has taken control. It does not promise screen reader accessibility or universal platform parity.
 
 Children:
 - Ignored

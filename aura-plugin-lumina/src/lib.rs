@@ -329,6 +329,9 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    /// First eligible, explicitly opted TextInput can get initial focus only
+    /// once per window; later user blur/Tab/click must never be overridden.
+    autofocus_decided: bool,
     input_sessions: HashMap<u64, FocusedTextInput>,
     last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
@@ -393,6 +396,22 @@ fn sync_native_ibus_context(
         bus.sync_surrounding_text(cb,&fi.session.buffer,caret,anchor)
     };
     sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
+}
+
+/// Picks from the already-qualified focus order: clipping, visibility,
+/// disabled controls, unique callback identity and value_revision validation
+/// are enforced BEFORE this opt-in focus decision.
+#[cfg(feature = "raylib")]
+fn initial_autofocus_target(
+    tree:&UiNode,planned:&layout::LayoutNode,
+    order:&[layout::HitTarget]
+)->Option<layout::HitTarget>{
+    order.iter().find(|candidate|match candidate{
+        layout::HitTarget::TextInput{on_change,..} =>
+            find_input_by_callback(tree,planned,*on_change)
+                .is_some_and(|(node,_)|prop_string(node,"autofocus")==Some("true")),
+        _=>false,
+    }).cloned()
 }
 
 #[cfg(feature = "raylib")]
@@ -1301,6 +1320,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    autofocus_decided: false,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
@@ -1494,6 +1514,21 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         switch_input(win,Some((on_change,on_submit,value,
                             revisions.get(&on_change).copied().flatten()))),
                     _=>switch_input(win,None),
+                }
+            }
+            // User-visible opt-in autofocus is ONE-SHOT per native window,
+            // never a repeated layout-driven focus request. A real pointer,
+            // Tab, Escape or earlier focused field has priority; the selected
+            // target was already checked for unique ID, clipping, disabled
+            // state and valid host value_revision by focus_order above.
+            if !win.autofocus_decided {
+                if clicked || tab || escape || win.focused_input.is_some() {
+                    win.autofocus_decided=true;
+                } else if let Some(layout::HitTarget::TextInput{on_change,on_submit,value})=
+                    initial_autofocus_target(tree,&planned_layout,&focus_order){
+                    switch_input(win,Some((on_change,on_submit,value,
+                        revisions.get(&on_change).copied().flatten())));
+                    win.autofocus_decided=true;
                 }
             }
             // Linux opt-in: forward sampled native Raylib keyboard semantics
