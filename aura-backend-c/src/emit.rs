@@ -650,6 +650,17 @@ fn validate_extern_c_symbol_namespace(
     let mut extern_by_c_symbol: BTreeMap<String, String> = BTreeMap::new();
     for source_extern in module.externs.keys() {
         let c_symbol = map_callee(source_extern);
+        // An Aura-valid source name need not be a valid C identifier.
+        // Local Cells can be hex-mangled, but an extern MUST preserve the
+        // exact native-linker contract: never silently rename it, and never
+        // allow C keywords, non-ASCII or implementation-reserved spellings
+        // through into an invalid generated prototype/call expression.
+        if !c_safe_export_ident(&c_symbol) {
+            return Err(CBackendError { message: format!(
+                "extern C identifier invalid: external '{}' maps to '{}', which cannot be emitted as a portable C function identifier",
+                source_extern, c_symbol
+            ) });
+        }
         // Unlike locally defined Cells, foreign symbols cannot be renamed
         // to avoid libc, macro and Aura-runtime declarations. Reject even
         // unused colliding declarations: a later Call or optimizer pass must
