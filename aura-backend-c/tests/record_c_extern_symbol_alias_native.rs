@@ -129,3 +129,67 @@ fn unaffected_safe_user_cell_keeps_legacy_native_c_abi() {
         assert!(Command::new(exe).status().unwrap().success());
     }
 }
+
+
+#[test]
+fn extern_c_symbol_cannot_capture_mangled_c_keyword_cell_export() {
+    // The public Aura Cell `signed` has no valid spelling as a raw C export.
+    // EV-199 maps it to a deterministic hex name; that generated name must
+    // not be mistaken for an unrelated external linker declaration.
+    let source = r#"
+trusted extern cell aura_cell_7369676e6564(n: u32) -> Unit
+cell signed(n: u32) ->:
+    yield n
+cell exercise(n: u32) ->:
+    aura_cell_7369676e6564(n)
+    yield signed(n)
+"#;
+    let (ast, ir) = checked_source(source);
+    assert!(ir.externs.contains_key("aura_cell_7369676e6564"));
+    assert!(ir.functions.contains_key("signed"));
+    for (api, err) in [
+        ("raw", emit_module(&ir, None).err()),
+        ("source-anchored", emit_module_with_source_contract(&ast, &ir, None).err()),
+    ] {
+        let err = err.expect("generated local fallback must not capture an external ABI");
+        assert!(err.message.contains("extern C symbol collision")
+            && err.message.contains("signed")
+            && err.message.contains("aura_cell_7369676e6564"),
+            "{api}: wrong C namespace failure: {err}");
+    }
+}
+
+#[test]
+fn uniquely_named_unused_external_declaration_does_not_break_safe_cell_export() {
+    // Reject colliding aliases, not every external declaration wholesale.
+    // Native runtime linkage/prototypes for *called* noncolliding externs
+    // require a separate typed-extern ABI qualification.
+    let source = r#"
+trusted extern cell bridge.unique(n: u32) -> Unit
+cell keep_abi(n: u32) ->:
+    yield n
+"#;
+    let (ast, ir) = checked_source(source);
+    assert_eq!(ir.externs.len(), 1);
+    let artifact = emit_module_with_source_contract(&ast, &ir, None)
+        .expect("noncolliding extern declaration and local exported Cell are safe");
+    assert!(artifact.module_c.contains("uint32_t keep_abi("));
+    let scratch = Scratch::new();
+    fs::write(scratch.0.join("aura_runtime.h"), artifact.runtime_h).unwrap();
+    fs::write(scratch.0.join("module.c"), artifact.module_c).unwrap();
+    fs::write(scratch.0.join("driver.c"), concat!(
+        "#include <stdint.h>\nuint32_t keep_abi(uint32_t);\n",
+        "int main(void){return keep_abi(17u)==17u?0:1;}\n"
+    )).unwrap();
+    for opt in ["-O0", "-O2"] {
+        let exe = scratch.0.join(format!("unique_{}", &opt[1..]));
+        let built = Command::new("clang")
+            .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+            .arg(&scratch.0).arg(scratch.0.join("module.c"))
+            .arg(scratch.0.join("driver.c"))
+            .arg("-o").arg(&exe).output().unwrap();
+        assert!(built.status.success(), "noncolliding source {opt}: {}",
+            String::from_utf8_lossy(&built.stderr));
+        assert!(Command::new(exe).status().unwrap().success());
+    }
+}
