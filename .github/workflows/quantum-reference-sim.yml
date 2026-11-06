@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - quantum/agent-c-q28-reference-simulator-001
+      - quantum/agent-c-q28-numerical-oracles-002
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
@@ -11,6 +12,7 @@ on:
   pull_request:
     branches:
       - plan/aura-quantum-full-stack-v3
+      - quantum/agent-c-q28-reference-simulator-001
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
