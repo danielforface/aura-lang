@@ -105,3 +105,120 @@ fn real_registered_hangul_callbacks_have_measured_local_dispatch_phase(){
     eprintln!("LUMINA_IBUS_P34_GENUINE_SIGNAL_PHASE_PROOF first_C={} second_C={} real_D=true phase_records={}",
         first_commits.len(),commit_values(&second).len(),phase_lines.len());
 }
+
+/// Phase35: genuine registered engine callbacks across the *post-R* idle
+/// windows (0/25/200ms). The new 'I<TAB>ms' command exists ONLY in a
+/// separately compiled diagnostic C helper, never in a production helper.
+/// Idle C/D callbacks, if observed, are reported rather than assigned a
+/// fabricated engine transaction ID or claimed impossible.
+#[test]
+fn p35_real_registered_hangul_post_r_idle_window_observations(){
+    assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+    assert_eq!(std::env::var("LUMINA_IBUS_P35_IDLE_DIAGNOSTIC").unwrap(),"1");
+    let bin=std::env::var_os("LUMINA_IBUS_HELPER_BIN").expect("test-only helper");
+    let mut child=Command::new(bin).arg("hangul")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("REAL registered IBus child");
+    let mut stdin=child.stdin.take().expect("helper input");
+    let stdout=child.stdout.take().expect("helper stdout");
+    let mut stderr=child.stderr.take().expect("helper stderr");
+    let (tx,rx)=mpsc::sync_channel(64);
+    let reader=std::thread::spawn(move||{
+        for item in BufReader::new(stdout).lines(){
+            let Ok(line)=item else{break;};
+            if tx.send(line).is_err(){break;}
+        }
+    });
+    let err_reader=std::thread::spawn(move||{
+        let mut out=String::new();
+        stderr.read_to_string(&mut out).expect("bounded diagnostic text");
+        out
+    });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(8)).unwrap(),"READY");
+    assert_eq!(request(&mut stdin,&rx,"V1","A").last().map(String::as_str),Some("A"));
+    assert_eq!(request(&mut stdin,&rx,"F1","A").last().map(String::as_str),Some("A"));
+    let mut totals=Vec::new();
+    for (round,ms) in [0u32,25,200].into_iter().enumerate(){
+        // FocusOut must reset the real engine for an independent genuine
+        // Hangul r/k pair. Do not fake D/C or inject CompositionEvent.
+        if round>0 {
+            assert_eq!(request(&mut stdin,&rx,"F0","A").last().map(String::as_str),Some("A"));
+            assert_eq!(request(&mut stdin,&rx,"F1","A").last().map(String::as_str),Some("A"));
+        }
+        assert_eq!(request(&mut stdin,&rx,
+            &format!("S\t{}\t4\t4",content_hex("BASE")),"A")
+            .last().map(String::as_str),Some("A"));
+        let first=request(&mut stdin,&rx,"K\t114\t0\t0\t0","R");
+        let first_b=first.iter().position(|s|s=="B").expect("helper BEGIN marker");
+        assert_eq!(first.iter().filter(|s|s.as_str()=="B").count(),1);
+        assert_eq!(first.last().map(String::as_str),Some("R\t1"));
+        let before_first=&first[..first_b];
+        let current_first=&first[first_b+1..first.len()-1];
+        assert_eq!(commit_values(current_first),vec!["ㄱ"],
+            "real first registered Hangul CommitText within bounded B..R");
+        assert_eq!(request(&mut stdin,&rx,
+            &format!("S\t{}\t5\t5",content_hex("BASEㄱ")),"A")
+            .last().map(String::as_str),Some("A"));
+        let second=request(&mut stdin,&rx,"K\t107\t0\t0\t0","R");
+        let second_b=second.iter().position(|s|s=="B").expect("next helper BEGIN");
+        assert_eq!(second.iter().filter(|s|s.as_str()=="B").count(),1);
+        assert_eq!(second.last().map(String::as_str),Some("R\t1"));
+        let before_second=&second[..second_b];
+        let current_second=&second[second_b+1..second.len()-1];
+        assert!(current_second.iter().any(|s|s=="D\t-1\t1"),
+            "real upstream D(-1,1) must be delivered with next key");
+        assert_eq!(commit_values(current_second),vec!["가"],
+            "real upstream D/C must remain a single corrected syllable");
+        // The helper-owned idle probe only drains REAL GLib events. It does
+        // NOT emit a B or R, and never fabricates an upstream D or C.
+        let idle=request(&mut stdin,&rx,&format!("I\t{ms}"),"A");
+        assert_eq!(idle.last().map(String::as_str),Some("A"));
+        assert!(!idle.iter().any(|s|s=="B"||s.starts_with("R\t")),
+            "read-only idle probe must never impersonate a key transaction");
+        let late=idle.iter().filter(|s|s.starts_with("D\t")||s.starts_with("C\t"))
+            .count();
+        let pre_b=before_first.iter().chain(before_second.iter())
+            .filter(|s|s.starts_with("D\t")||s.starts_with("C\t")).count();
+        eprintln!("LUMINA_IBUS_P35_GENUINE_IDLE_ROUND round={round} duration_ms={ms} pre_B_DC={pre_b} post_R_idle_DC={late} idle_frames={} first_key_frames={} second_key_frames={}",
+            idle.len(),first.len(),second.len());
+        totals.push((ms,pre_b,late));
+    }
+    drop(stdin);
+    assert!(child.wait().expect("genuine helper termination").success());
+    reader.join().expect("real helper stdout");
+    let diagnostics=err_reader.join().expect("real helper stderr");
+    let measured=diagnostics.lines().filter(|s|
+        s.starts_with("LUMINA_IBUS_P34_CALLBACK ")).collect::<Vec<_>>();
+    assert!(measured.len()>=12,
+        "three genuine r/k pairs must produce at least 12 real D/C callback observations");
+    assert!(measured.iter().all(|s|
+        (s.contains("kind=C ")||s.contains("kind=D ")) &&
+        (s.contains("phase=CALL")||s.contains("phase=PUMP")||s.contains("phase=IDLE"))),
+        "every diagnostic callback must have a bounded local phase only");
+    assert!(!diagnostics.contains("BASE") && !diagnostics.contains("42415345"),
+        "diagnostic phase logs must redact test-host authoritative text");
+    eprintln!("LUMINA_IBUS_P35_POST_R_WINDOW_SAMPLES {totals:?} actual_callback_records={}",
+        measured.len());
+    // Deliberately NO 'late == 0' universal assertion: a real late C/D
+    // would be reported, not discarded from the research result.
+}
+
+/// Diagnostic helper safety gate: an unbounded idle pump MUST be refused.
+/// The command is test-only and not recognized in the production binary.
+#[test]
+fn p35_diagnostic_idle_probe_refuses_over_budget(){
+    assert_eq!(std::env::var("LUMINA_IBUS_P35_IDLE_DIAGNOSTIC").unwrap(),"1");
+    let binary=std::env::var_os("LUMINA_IBUS_HELPER_BIN").expect("test-only helper");
+    let mut child=Command::new(binary).arg("hangul")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("real IBus test helper");
+    let mut input=child.stdin.take().expect("stdin");
+    writeln!(input,"I\t201").expect("bad >200ms diagnostic request");
+    drop(input);
+    let out=child.wait_with_output().expect("bounded refusal output");
+    let data=String::from_utf8(out.stdout).expect("utf8 wire");
+    assert!(!out.status.success(),"over-budget diagnostic must fail closed");
+    assert!(data.contains("READY")&&data.contains("FATAL invalid_idle_probe"),
+        "invalid diagnostic duration must be rejected without dispatch");
+}
+
