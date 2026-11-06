@@ -221,6 +221,31 @@ jobs:
             cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_callback_phase_e2e p36_genuine_registered_hangul_post_r_callbacks_under_deferred_test_pump -- --exact --nocapture --test-threads=1
           '
 
+      - name: Real delayed Hangul D/C through Rust NativeIbus ACK and EditSession (diagnostic only)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -DLUMINA_IBUS_TEST_DEFER_POST_KEY_PUMP -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-rust-late" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 37
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-rust-late"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P37_RUST_ACK_FENCE="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative -- --exact --nocapture --test-threads=1
+          '
+
       - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"

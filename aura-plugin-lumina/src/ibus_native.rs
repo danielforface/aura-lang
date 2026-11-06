@@ -718,6 +718,88 @@ impl Drop for NativeIbus{
 #[cfg(test)]
 mod tests{
     use super::*;
+    /// Phase37 real registered ibus-hangul: an artificial *helper-local*
+    /// scheduling deferral lets actual upstream D/C arrive AFTER R.
+    /// This travels through the ACTUAL NativeIbus Rust child transport and
+    /// its real await_ack(), not synthetic C/D frames or fake event queues.
+    /// A host-owned EditSession may only mutate for emitted trusted edits.
+    /// This is NOT a test of the standard production 25ms helper schedule.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    #[test]
+    fn p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative(){
+        use crate::text_input::{EditCommand,EditSession,SessionAction};
+        assert_eq!(std::env::var("LUMINA_IBUS_ENGINE").unwrap(),"hangul");
+        assert_eq!(std::env::var("LUMINA_IBUS_P37_RUST_ACK_FENCE").unwrap(),"1");
+        let mut session=EditSession::new("BASE".to_owned());
+        let cb=3701;
+        let mut native=NativeIbus::connect().expect("real registered libibus child");
+        assert!(native.set_surrounding_enabled(true),"native V1 acknowledged");
+        assert!(native.sync_focus(Some(cb)),"real libibus F1 acknowledged");
+        assert!(native.sync_surrounding_text(cb,&session.buffer,4,4),
+            "authoritative host-owned S snapshot acknowledged");
+        assert!(native.mark_context_epoch(cb,session.authority_epoch()));
+        assert_eq!(native.diagnostic_ack_drop_counts(),(0,0));
+        let snapshot=session.clone();
+        let (handled,emitted)=native.process_ibus_key_event(
+            NativeKeyEvent::from_char('r',0).expect("valid X11 keysym"),
+            Some(cb)).expect("REAL Rust native key adapter");
+        assert!(handled,"upstream actual Hangul key handled");
+        assert!(emitted.is_empty(),"NO C before R under test-only deferred helper");
+        assert!(native.take_native_replacements().is_empty(),
+            "no invented D/C same-key replacement");
+        assert_eq!(native.last_serial(),0);
+        // Real helper I200 flushes genuine upstream callbacks after R.
+        // Production Rust *await_ack* is exercised unchanged and must drop
+        // unauthoritative C rather than turning it into a new editor commit.
+        assert!(native.send("I\t200"));
+        assert!(native.await_ack(),"actual I200 ACK and late D/C from libibus");
+        assert_eq!(native.diagnostic_ack_drop_counts(),(1,1),
+            "the real engine's delayed D(0,0) and C(ㄱ) must reach Rust await_ack");
+        assert_eq!(native.engine_events,0,"late C cannot become a trusted event");
+        assert_eq!(native.native_replacement_pairs,0,"late D/C not same-key proof");
+        assert_eq!(native.last_serial(),0,"untrusted callback cannot consume sequence");
+        assert_eq!(session,snapshot,"no EditSession mutation or Undo snapshot");
+        assert!(!session.apply(SessionAction::Undo),
+            "no phantom Undo from a real late engine C");
+        assert_eq!(session.buffer,"BASE");
+        eprintln!("LUMINA_IBUS_P37_REAL_LATE_FIRST rust_ack_D=1 rust_ack_C=1 emitted=0 native_pairs=0 editsession_unchanged=true undo_empty=true");
+
+        // POSITIVE CONTROL: a HOST-OWNED local edit advances authoritative
+        // revision; it does not pretend the dropped engine C was accepted.
+        assert!(session.apply(SessionAction::Edit(
+            EditCommand::Insert("ㄱ".to_owned()))));
+        assert_eq!(session.buffer,"BASEㄱ");
+        assert!(native.sync_surrounding_text(cb,&session.buffer,5,5),
+            "new local host value, not replayed engine text, must be ACKed");
+        assert!(native.mark_context_epoch(cb,session.authority_epoch()));
+        let snapshot2=session.clone();
+        let (handled2,events2)=native.process_ibus_key_event(
+            NativeKeyEvent::from_char('k',0).expect("valid X11 keysym"),
+            Some(cb)).expect("REAL registered second key");
+        assert!(handled2);
+        assert!(events2.is_empty(),"test-only helper again responds R before engine C");
+        assert!(native.take_native_replacements().is_empty());
+        assert!(native.send("I\t200"));
+        assert!(native.await_ack());
+        assert_eq!(native.diagnostic_ack_drop_counts(),(2,2),
+            "second genuine delayed upstream D(-1,1)+C(가) must be ignored in Rust ACK");
+        assert_eq!(native.surrounding_last_delete,Some((-1,1)),
+            "genuine late D remains non-authoritative advisory evidence");
+        assert_eq!(native.engine_events,0);
+        assert_eq!(native.native_replacement_pairs,0);
+        assert_eq!(native.last_serial(),0);
+        assert_eq!(session,snapshot2,
+            "genuine post-R replacement may not delete the host-owned suffix");
+        assert!(session.apply(SessionAction::Undo),
+            "only the explicit HOST-OWNED local edit has one Undo snapshot");
+        assert_eq!(session.buffer,"BASE");
+        assert!(!session.apply(SessionAction::Undo),
+            "real late D/C cannot manufacture another Undo snapshot");
+        assert!(session.apply(SessionAction::Redo));
+        assert_eq!(session.buffer,"BASEㄱ");
+        assert!(!session.apply(SessionAction::Redo));
+        eprintln!("LUMINA_IBUS_P37_REAL_LATE_SECOND rust_ack_D=2 rust_ack_C=2 emitted=0 native_pairs=0 host_suffix_preserved=true single_host_undo_redo=true diagnostic_only=true");
+    }
     #[test]fn manually_rearm_exhausted_budget_only_on_monotonic_host_revision(){
         let mut b=IbusReconnectBudget::default();
         assert!(!b.observe_host_retry_revision(0,true),
