@@ -232,8 +232,7 @@ cell render_param(p: Point) ->:
     yield p.x
 cell render_local() ->:
     val p: Point = Point { x: 7, y: 13 }
-    io.println("local={p}")
-    io.println("missing={unbound}")
+    io.println("local={p}, missing={unbound}")
     yield render_param(p)
 "#;
     let ast = aura_parse::parse_source(source).expect("Record print source parses");
@@ -271,7 +270,7 @@ cell render_local() ->:
             String::from_utf8_lossy(&run.stderr));
         assert_eq!(
             String::from_utf8_lossy(&run.stdout),
-            "local=<Point>\nmissing={unbound}\nparam=<Point>\n",
+            "local=<Point>, missing={unbound}\nparam=<Point>\n",
             "{opt}: Native must match AVM nominal string interpolation");
     }
 }
