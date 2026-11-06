@@ -117,6 +117,12 @@ pub(crate) struct NativeIbus{
     native_replacements:Vec<NativeReplace>,
     pub(crate) native_replacement_pairs:usize,
     pub(crate) candidate_page:Option<IbusCandidatePage>,
+    /// Bounded, content-free counts of actual frames ignored while awaiting
+    /// a non-key ACK. Only compiled into diagnostic builds, never production.
+    #[cfg(feature="lumina-diagnostics")]
+    diagnostic_ack_advisory_deletes:usize,
+    #[cfg(feature="lumina-diagnostics")]
+    diagnostic_ack_discarded_commits:usize,
 }
 fn decode_hex(input:&str)->Option<String>{
     if input.len()%2!=0 || input.len()>MAX_TEXT_BYTES*2{return None;}
@@ -301,7 +307,11 @@ impl NativeIbus{
             surrounding_last_delete:None,
             surrounding_requires:0,surrounding_text:None,
             context_epoch:None,authority_generation:None,
-            native_replacements:Vec::new(),native_replacement_pairs:0})
+            native_replacements:Vec::new(),native_replacement_pairs:0,
+            #[cfg(feature="lumina-diagnostics")]
+            diagnostic_ack_advisory_deletes:0,
+            #[cfg(feature="lumina-diagnostics")]
+            diagnostic_ack_discarded_commits:0})
     }
     fn send(&mut self,command:&str)->bool {
         if self.disconnected {return false;}
@@ -398,12 +408,30 @@ impl NativeIbus{
         self.surrounding_text_acks=self.surrounding_text_acks.saturating_add(1);
         true
     }
+    #[cfg(feature="lumina-diagnostics")]
+    pub(crate) fn diagnostic_ack_drop_counts(&self)->(usize,usize){
+        (self.diagnostic_ack_advisory_deletes,
+         self.diagnostic_ack_discarded_commits)
+    }
     fn await_ack(&mut self)->bool{
         for _ in 0..MAX_LINES_PER_KEY {
             let Some(line)=self.next() else{
                 self.disconnected=true;return false;
             };
             if line=="A"{return true;}
+            // Observational counters ONLY; a late D stays advisory and a
+            // late C remains untrusted. No user text, key or callback ID
+            // enters these counters; ordinary production has no fields.
+            #[cfg(feature="lumina-diagnostics")]
+            {
+                if line.starts_with("D\t"){
+                    self.diagnostic_ack_advisory_deletes=
+                        self.diagnostic_ack_advisory_deletes.saturating_add(1);
+                }else if line.starts_with("C\t"){
+                    self.diagnostic_ack_discarded_commits=
+                        self.diagnostic_ack_discarded_commits.saturating_add(1);
+                }
+            }
             if self.observe_surrounding_signal(&line){continue;}
             // Some IBus engines emit hide-preedit during FocusOut/FocusIn.
             // Such events belong to the OLD focus generation and must not
@@ -895,6 +923,10 @@ mod tests{
             surrounding_text:None,context_epoch:None,
             authority_generation:None,native_replacements:Vec::new(),
             native_replacement_pairs:0,candidate_page:None,
+            #[cfg(feature="lumina-diagnostics")]
+            diagnostic_ack_advisory_deletes:0,
+            #[cfg(feature="lumina-diagnostics")]
+            diagnostic_ack_discarded_commits:0,
         };
         let (_,events)=bus.process_ibus_key_event(
             NativeKeyEvent::from_char('k',0).expect("valid key"),
