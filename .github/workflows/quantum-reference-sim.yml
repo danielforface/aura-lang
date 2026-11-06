@@ -41,6 +41,8 @@ jobs:
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
       - name: Execute callable dynamic feed-forward example
         run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example feed_forward
+      - name: Execute Q28-007 density-matrix noise example
+        run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example density_noise
       - name: Execute versioned offline JSON CLI through public source fixture
         run: |
           set -euo pipefail
