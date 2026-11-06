@@ -64,3 +64,39 @@ fn real_x11_mouse_topmost_click_and_hidden_overflow_guard() {
     assert!(clipped.is_empty(),"clipped off-Box Button unexpectedly received click: {clipped:?}");
     drop(plugin);
 }
+
+#[test]
+fn real_x11_disabled_button_blocks_click_through_and_tracks_host_state() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut nexus=NexusContext::default();
+    let mut tree=node("App",&[("bg","#102030")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","120"),
+            ("height","70"),("on_click","cb:41"),("label","back")],vec![]),
+        node("Button",&[("x","35"),("y","25"),("width","90"),
+            ("height","45"),("on_click","cb:42"),("label","top"),
+            ("disabled","true")],vec![]),
+        node("Button",&[("x","200"),("y","20"),("width","90"),
+            ("height","45"),("on_click","cb:43"),("label","enabled")],vec![]),
+    ]);
+    for _ in 0..3 {render(&plugin,&tree,&mut nexus);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..4 {render(&plugin,&tree,&mut nexus);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("actual native X11 window");
+    let disabled=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(disabled.is_empty(),
+        "disabled topmost Button must neither dispatch nor activate the lower Button: {disabled:?}");
+    let under=click(&plugin,&tree,&mut nexus,id,25,30);
+    assert!(under.contains(&41),"uncovered enabled Button must remain clickable: {under:?}");
+    let other=click(&plugin,&tree,&mut nexus,id,230,40);
+    assert!(other.contains(&43),"independent enabled Button must stay actionable: {other:?}");
+    tree.children[1].set_prop("disabled","false");
+    let enabled=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(enabled.contains(&42),"host enabling must restore topmost click: {enabled:?}");
+    assert!(!enabled.contains(&41),"topmost enabled Button must not pass click through");
+    tree.children[1].set_prop("disabled","true");
+    let disabled_again=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(disabled_again.is_empty(),
+        "host re-disabling must remove native callback immediately: {disabled_again:?}");
+    eprintln!("LUMINA_DISABLED_BUTTON_X11 disabled_blocks=true uncovered_enabled=true dynamic_reenable=true disabled_again_blocks=true");
+}

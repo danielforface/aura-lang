@@ -183,6 +183,7 @@ Props:
 - `fg` / `color` (string color)
 - `radius` (int)
 - `on_click` (callback id string, internal)
+- `disabled` (string `"true"`, opt-in): a disabled Button remains visible with muted styling but cannot emit `on_click`. Its visible hit area also blocks pointer events from passing through to an overlapping Button underneath. Changing `disabled` at runtime takes effect on the next frame. Unset or `"false"` retains existing click behavior. This is a native pointer interaction contract, not yet keyboard or screen-reader accessibility.
 
 Children:
 - Ignored

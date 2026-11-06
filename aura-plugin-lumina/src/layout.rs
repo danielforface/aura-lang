@@ -306,24 +306,48 @@ pub(crate) enum HitTarget {
 fn callback(node: &UiNode, key: &str) -> Option<u64> {
     prop(node, key)?.strip_prefix("cb:")?.parse::<u64>().ok()
 }
-/// Pure clip-aware, reversed-paint-order hit resolution.
-pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
-    if !layout.clip.contains(x, y) { return None; }
+/// A disabled visible control occupies its pointer surface but never fires
+/// its callback. Distinguish "blocked" from "miss" so a lower z-order button
+/// cannot receive a click through the disabled foreground control.
+enum PointerHit {
+    Miss,
+    Blocked,
+    Action(HitTarget),
+}
+fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> PointerHit {
+    if !layout.clip.contains(x, y) { return PointerHit::Miss; }
     for (child, planned) in node.children.iter().zip(layout.children.iter()).rev() {
         if let Some(planned) = planned {
-            if let Some(hit) = hit_test(child, planned, x, y) { return Some(hit); }
+            match hit_test_inner(child, planned, x, y) {
+                PointerHit::Miss => {},
+                resolved => return resolved,
+            }
         }
     }
-    if !layout.bounds.contains(x, y) { return None; }
+    if !layout.bounds.contains(x, y) { return PointerHit::Miss; }
     match node.kind.as_str() {
-        "Button" => callback(node, "on_click").map(HitTarget::Button),
-        "TextInput" if prop(node, "disabled") != Some("true") =>
-            callback(node, "on_change").map(|on_change| HitTarget::TextInput {
-            on_change,
-            on_submit: callback(node, "on_submit"),
-            value: prop(node, "value").or_else(|| prop(node, "text")).unwrap_or("").to_string(),
-        }),
-        _ => None,
+        "Button" if prop(node, "disabled") == Some("true") => PointerHit::Blocked,
+        "Button" => callback(node, "on_click")
+            .map(|id| PointerHit::Action(HitTarget::Button(id)))
+            .unwrap_or(PointerHit::Miss),
+        "TextInput" if prop(node, "disabled") == Some("true") => PointerHit::Blocked,
+        "TextInput" => callback(node, "on_change")
+            .map(|on_change| PointerHit::Action(HitTarget::TextInput {
+                on_change,
+                on_submit: callback(node, "on_submit"),
+                value: prop(node, "value").or_else(|| prop(node, "text"))
+                    .unwrap_or("").to_string(),
+            }))
+            .unwrap_or(PointerHit::Miss),
+        _ => PointerHit::Miss,
+    }
+}
+/// Pure clip-aware, reversed-paint-order pointer resolution. The public
+/// result reports only trusted enabled targets; blocked clicks stay unhandled.
+pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
+    match hit_test_inner(node, layout, x, y) {
+        PointerHit::Action(target) => Some(target),
+        PointerHit::Blocked | PointerHit::Miss => None,
     }
 }
 
@@ -403,6 +427,29 @@ mod tests {
         assert!(matches!(&order[0],HitTarget::TextInput{on_change:72,..}));
         assert!(matches!(next_focus(&order,None,false),
             Some(HitTarget::TextInput{on_change:72,..})));
+    }
+
+    #[test]
+    fn disabled_button_blocks_topmost_pointer_and_reenables_without_bypassing_clip() {
+        let mut tree=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","120"),
+                ("height","70"),("on_click","cb:41")],vec![]),
+            n("Button",&[("x","35"),("y","25"),("width","90"),
+                ("height","45"),("on_click","cb:42"),("disabled","true")],vec![]),
+        ]);
+        let plan=arrange(&tree,Bounds::new(0.0,0.0,300.0,200.0));
+        assert_eq!(hit_test(&tree,&plan,50.0,40.0),None,
+            "disabled topmost button must block its own callback AND the button below");
+        assert_eq!(hit_test(&tree,&plan,25.0,30.0),Some(HitTarget::Button(41)),
+            "lower button remains actionable outside the disabled button");
+        tree.children[1].set_prop("disabled","false");
+        assert_eq!(hit_test(&tree,&plan,50.0,40.0),Some(HitTarget::Button(42)),
+            "a host-enabled button must become clickable on the very next frame");
+        tree.children[1].set_prop("disabled","true");
+        assert_eq!(hit_test(&tree,&plan,50.0,40.0),None,
+            "host disabling again must prevent stale callback dispatch");
+        assert_eq!(hit_test(&tree,&plan,500.0,40.0),None,
+            "a disabled widget cannot bypass viewport clipping");
     }
 
     #[test]

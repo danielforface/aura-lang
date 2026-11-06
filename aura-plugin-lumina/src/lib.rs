@@ -2385,12 +2385,19 @@ fn paint_node<D: RaylibDraw>(
         "Button" => {
             let rect = bounds;
 
+            let disabled = prop_string(node, "disabled") == Some("true");
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+            // Disabled is an actual interaction state, not just a visual hint.
+            // Give users a visible state change without changing their theme props.
+            let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };
+            let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
+            let stroke = if disabled { Color::GRAY } else { Color::RAYWHITE };
 
-            // 200ms click tween: brighten the background briefly when clicked.
+            // 200ms click tween: never animate a disabled control.
             let mut bg = base_bg;
+            if !disabled {
             if let Some((id, start)) = click_anim {
                 if let Some(cb) = parse_callback_id(prop_string(node, "on_click")) {
                     if cb == id {
@@ -2400,6 +2407,7 @@ fn paint_node<D: RaylibDraw>(
                         bg = lerp_color(base_bg, Color::RAYWHITE, tt * 0.25);
                     }
                 }
+            }
             }
 
             // Rounded rect rendering: prefer rounded corners when radius > 0.
@@ -2415,7 +2423,7 @@ fn paint_node<D: RaylibDraw>(
                 sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader
-                    .set_shader_value(sdf.loc_border, color_to_vec4(Color::RAYWHITE));
+                    .set_shader_value(sdf.loc_border, color_to_vec4(stroke));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w_u);
 
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
@@ -2423,7 +2431,7 @@ fn paint_node<D: RaylibDraw>(
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
                 d.draw_rectangle_rec(rect, bg);
-                d.draw_rectangle_lines_ex(rect, 2.0, Color::RAYWHITE);
+                d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
             let label = prop_string(node, "label").unwrap_or("Button");
