@@ -16,6 +16,24 @@
 #ifdef LUMINA_IBUS_TEST_STOP_AFTER_DELETE
 #include <signal.h>
 #endif
+/* Phase34 diagnostic only: observational CALL / POST_CALL_PUMP / IDLE
+ * phase of REAL libibus callbacks. This is NOT engine transaction provenance.
+ * Ordinary production builds omit both the instrumentation and phase logs.
+ * Never report committed text, surrounding text or caret data here. */
+#ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
+enum p34_callback_phase { P34_IDLE, P34_CALL, P34_PUMP };
+static enum p34_callback_phase p34_phase=P34_IDLE;
+static unsigned p34_signal_counter=0;
+static void p34_signal_observed(char kind){
+    const char *phase=p34_phase==P34_CALL ? "CALL" :
+        p34_phase==P34_PUMP ? "PUMP" : "IDLE";
+    fprintf(stderr,"LUMINA_IBUS_P34_CALLBACK kind=%c phase=%s serial=%u\n",
+        kind,phase,++p34_signal_counter);
+    fflush(stderr);
+}
+#else
+#define p34_signal_observed(kind) ((void)0)
+#endif
 /* Bounded, decimal-only field decoder; rejects signs, overflows and junk. */
 static int dec_field(char **at, unsigned long *value, int last) {
     char *p=*at, *end=NULL;
@@ -39,6 +57,7 @@ static void hex_print(const char *s) {
 }
 static void commit_text(IBusInputContext *ctx, IBusText *t, gpointer ud) {
     (void)ctx;(void)ud;
+    p34_signal_observed('C');
     printf("C\t"); hex_print(t ? t->text : ""); printf("\n"); fflush(stdout);
 }
 static void update_preedit(IBusInputContext *ctx,IBusText *t,
@@ -101,6 +120,7 @@ static void request_surrounding(IBusInputContext *ctx,gpointer data) {
 }
 static void delete_surrounding(IBusInputContext *ctx,gint offset,guint count,gpointer data) {
     (void)ctx;(void)data;
+    p34_signal_observed('D');
     fprintf(stderr,"LUMINA_IBUS_DELETE_REQUEST offset=%d count=%u (not applied)\n",
         offset,count);
     printf("D\t%d\t%u\n",offset,count);fflush(stdout);
@@ -318,11 +338,20 @@ int main(int argc,char**argv) {
              * B does NOT assert external engine provenance; Rust must drop
              * all P/C/D/L/H/N seen before B for this new key. */
             puts("B");
+#ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
+            p34_phase=P34_CALL;
+#endif
             gboolean handled=ibus_input_context_process_key_event(
                 ic,(guint32)sym,(guint32)code,state);
+#ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
+            p34_phase=P34_PUMP;
+#endif
             fprintf(stderr,"LUMINA_IBUS_PROCESS_KEY keysym=%lu modifiers=%lu release=%lu code=%lu handled=%d\n",
                 sym,mod,release,code,handled);
             pump_ms(25);
+#ifdef LUMINA_IBUS_TEST_CALLBACK_PHASE
+            p34_phase=P34_IDLE;
+#endif
             CHECK_DAEMON_GENERATION();
             printf("R\t%d\n",!!handled);continue;
         }
