@@ -304,17 +304,44 @@ impl Statevector {
     }
 
     /// Conditional state update. Impossible outcomes fail without modifying the state.
+    ///
+    /// Normalize from selected *amplitudes*, not f64 Born probabilities:
+    /// squaring a rare but finite amplitude can underflow to zero or lose
+    /// relative precision in the subnormal range. The scale-first norm also
+    /// avoids constructing a potentially overflowing reciprocal of the
+    /// unscaled amplitude. Measurement probabilities remain f64 estimates.
     pub fn postselect(&mut self, qubit: usize, outcome: bool) -> Result<(), SimError> {
-        let probability = self.wire_probability(qubit, outcome)?;
-        if !probability.is_finite() || probability <= 0.0 {
+        self.validate()?;
+        let mask = self.mask(qubit)?;
+        let selected = |basis: usize| (basis & mask != 0) == outcome;
+
+        // No mutation until the selected support and normalization are valid.
+        let mut scale = 0.0_f64;
+        for (basis, amp) in self.amps.iter().enumerate() {
+            if selected(basis) {
+                scale = scale.max(amp.re.abs()).max(amp.im.abs());
+            }
+        }
+        if scale == 0.0 {
             return Err(SimError::ImpossibleOutcome);
         }
-        let inv = 1.0 / probability.sqrt();
-        let mask = self.mask(qubit)?;
+        let mut scaled_norm_squared = 0.0_f64;
+        for (basis, amp) in self.amps.iter().enumerate() {
+            if selected(basis) {
+                let re = amp.re / scale;
+                let im = amp.im / scale;
+                scaled_norm_squared += re * re + im * im;
+            }
+        }
+        if !scaled_norm_squared.is_finite() || scaled_norm_squared <= 0.0 {
+            return Err(SimError::NotNormalized);
+        }
+        let denominator = scaled_norm_squared.sqrt();
+
         for (basis, amp) in self.amps.iter_mut().enumerate() {
-            if (basis & mask != 0) == outcome {
-                amp.re *= inv;
-                amp.im *= inv;
+            if selected(basis) {
+                amp.re = (amp.re / scale) / denominator;
+                amp.im = (amp.im / scale) / denominator;
             } else {
                 *amp = Complex::ZERO;
             }
