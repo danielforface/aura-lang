@@ -415,6 +415,10 @@ fn qualified_record_abi_type(
 struct CNameMap {
     exports: BTreeMap<String, String>,
     formals: BTreeMap<String, Vec<String>>,
+    // Immutable snapshot of names pre-occupied by the generated C runtime
+    // and included headers, before local Cell symbols join the namespace.
+    // A foreign ABI symbol must never be silently rewritten or re-bound.
+    reserved_extern_symbols: BTreeSet<String>,
 }
 
 fn c_safe_export_ident(name: &str) -> bool {
@@ -512,6 +516,7 @@ impl CNameMap {
             "INT8_MAX", "INT16_MAX", "INT32_MAX", "INT64_MAX",
             "UINT8_MAX", "UINT16_MAX", "UINT32_MAX", "UINT64_MAX",
         ].into_iter().map(str::to_owned).collect();
+        let reserved_extern_symbols = used.clone();
         for record in module.record_layouts.keys() {
             used.insert(record_type_symbol(record));
         }
@@ -573,7 +578,7 @@ impl CNameMap {
             formals.insert(source.clone(), args.into_iter().map(|n|
                 n.expect("each formal receives a unique C name")).collect());
         }
-        Self { exports, formals }
+        Self { exports, formals, reserved_extern_symbols }
     }
 
     fn symbol(&self, source: &str) -> &str {
@@ -645,6 +650,16 @@ fn validate_extern_c_symbol_namespace(
     let mut extern_by_c_symbol: BTreeMap<String, String> = BTreeMap::new();
     for source_extern in module.externs.keys() {
         let c_symbol = map_callee(source_extern);
+        // Unlike locally defined Cells, foreign symbols cannot be renamed
+        // to avoid libc, macro and Aura-runtime declarations. Reject even
+        // unused colliding declarations: a later Call or optimizer pass must
+        // not change the validity of a linker ABI.
+        if c_names.reserved_extern_symbols.contains(&c_symbol) {
+            return Err(CBackendError { message: format!(
+                "extern C symbol collision: external '{}' targets reserved runtime/header identifier '{}'; refusing ambiguous native ABI",
+                source_extern, c_symbol
+            ) });
+        }
         for (source_cell, exported_c_symbol) in &c_names.exports {
             if exported_c_symbol == &c_symbol {
                 return Err(CBackendError { message: format!(
