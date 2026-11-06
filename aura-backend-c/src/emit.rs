@@ -665,6 +665,34 @@ fn validate_extern_c_symbol_namespace(
     Ok(())
 }
 
+// Only C-compatible primitive signatures with an independently unambiguous
+// native representation are admitted for an actually invoked extern Cell.
+// Unused declarations remain inert; "Tensor" is never an acceptable silent
+// fallback for an unknown external C signature.
+fn qualified_extern_scalar_ctype(
+    ty: &Type,
+    allow_unit_return: bool,
+    callee: &str,
+) -> Result<CType, CBackendError> {
+    let ct = match ty {
+        Type::Unit if allow_unit_return => CType::Void,
+        Type::Bool => CType::Bool,
+        Type::U8 => CType::U8,
+        Type::U16 => CType::U16,
+        Type::U32 => CType::U32,
+        Type::U64 => CType::U64,
+        Type::I8 => CType::I8,
+        Type::I16 => CType::I16,
+        Type::I32 => CType::I32,
+        Type::I64 => CType::I64,
+        _ => return Err(CBackendError { message: format!(
+            "unqualified extern C scalar ABI for '{}' type {:?}; nominal, Tensor, pointers, strings, floats, wide/platform integers and unit parameters need separate qualification",
+            callee, ty
+        ) }),
+    };
+    Ok(ct)
+}
+
 fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<String, CBackendError> {
     let mut out = String::new();
     let c_names = CNameMap::new(module);
@@ -682,6 +710,52 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
         }
     }
 
+    // External C function declarations are source-signature-qualified.
+    // Emit a prototype only for an actual call, prior to all user Cell bodies,
+    // so Clang cannot infer implicit 'int' or fabricate a Tensor result.
+    // Never manufacture prototype/ABI support for unused unsupported externs.
+    let mut called_externs: BTreeSet<&str> = BTreeSet::new();
+    for function in module.functions.values() {
+        for block in &function.blocks {
+            for inst in &block.insts {
+                match &inst.kind {
+                    InstKind::Call { callee, .. } if module.externs.contains_key(callee) => {
+                        called_externs.insert(callee.as_str());
+                    }
+                    InstKind::ComputeKernel { callee, .. }
+                        if module.externs.contains_key(callee) =>
+                    {
+                        return Err(CBackendError { message: format!(
+                            "unqualified extern C async kernel ABI for '{}'", callee
+                        ) });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    for source in &called_externs {
+        let signature = &module.externs[*source];
+        if signature.call_conv != aura_ir::CallConv::C {
+            return Err(CBackendError { message: format!(
+                "unqualified extern C calling convention for '{}': {:?}",
+                source, signature.call_conv
+            ) });
+        }
+        let ret = qualified_extern_scalar_ctype(&signature.ret, true, source)?;
+        let params = if signature.params.is_empty() {
+            "void".to_string()
+        } else {
+            signature.params.iter().map(|ty|
+                qualified_extern_scalar_ctype(ty, false, source)
+                    .map(map_ctype_decl).map(str::to_owned)
+            ).collect::<Result<Vec<_>, _>>()?.join(", ")
+        };
+        out.push_str(&format!("extern {} {}({});\\n",
+            map_ctype_decl(ret), map_callee(source), params));
+    }
+    if !called_externs.is_empty() { out.push('\\n'); }
+
     // Declare all functions before emitting bodies: calls may target a later
     // source cell, including a function with a nominal struct return.
     for (name, f) in &module.functions {
@@ -696,13 +770,20 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     for (name, f) in &module.functions {
         ret_map.insert(name.clone(), function_return_ctype(f));
     }
+    // External call results have the *declared native scalar ABI*, never the
+    // old builtin Tensor default. This ret_map is keyed by Aura identity.
+    for source in &called_externs {
+        let sig = &module.externs[*source];
+        ret_map.insert((*source).to_string(),
+            qualified_extern_scalar_ctype(&sig.ret, true, source)?);
+    }
 
     // Emit non-entry functions first.
     for (name, f) in &module.functions {
         if name == "main" {
             continue;
         }
-        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions,
+        emit_function(&mut out, debug, f, &ret_map, &module.record_layouts, &module.functions, &module.externs,
             &module.refined_param_bounds, &module.refined_return_bounds, &c_names, name)?;
         out.push('\n');
     }
@@ -711,7 +792,7 @@ fn emit_module_c(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<Strin
     if let Some(main_f) = module.functions.get("main") {
         let mut f = main_f.clone();
         f.name = "aura_main".to_string();
-        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions,
+        emit_function(&mut out, debug, &f, &ret_map, &module.record_layouts, &module.functions, &module.externs,
             &module.refined_param_bounds, &module.refined_return_bounds, &c_names, "main")?;
         out.push_str("\nint main(void) {\n  aura_main();\n  return 0;\n}\n");
     }
@@ -791,6 +872,7 @@ fn emit_function(
     ret_map: &HashMap<String, CType>,
     record_layouts: &BTreeMap<String, Vec<(String, Type)>>,
     functions: &BTreeMap<String, FunctionIR>,
+    externs: &BTreeMap<String, aura_ir::ExternFnSig>,
     source_refined_param_bounds: &BTreeMap<String, Vec<Option<(u64, u64)>>>,
     source_refined_return_bounds: &BTreeMap<String, (u64, u64)>,
     c_names: &CNameMap,
@@ -954,6 +1036,9 @@ fn emit_function(
                                     Some(ty)
                                 }
                             }
+                        } else if let Some(external) = externs.get(callee) {
+                            let ty = qualified_extern_scalar_ctype(&external.ret, true, callee)?;
+                            if ty == CType::Void { None } else { Some(ty) }
                         } else {
                             None
                         }
@@ -1656,6 +1741,37 @@ fn emit_function(
                                 out.push_str(&format!("  {}({});\n", c_names.symbol(callee), arg_names.join(", ")));
                             }
                             continue;
+                        }
+                    } else if let Some(external) = externs.get(callee) {
+                        // Validate the live IR operands against the ABI
+                        // declaration; the source Checker alone cannot prove
+                        // that the mutable IR still has the same argument types.
+                        if external.params.len() != args.len() {
+                            return Err(CBackendError { message: format!(
+                                "extern C ABI call '{}' arity mismatch: {} vs {}",
+                                callee, args.len(), external.params.len()
+                            ) });
+                        }
+                        for (i, (arg, declared)) in args.iter().zip(&external.params).enumerate() {
+                            let expected = qualified_extern_scalar_ctype(declared, false, callee)?;
+                            let actual = call_values.get(arg).map(|(ct, _)| *ct)
+                                .ok_or_else(|| CBackendError { message: format!(
+                                    "extern C ABI call '{}' argument {} has no scalar SSA value",
+                                    callee, i
+                                ) })?;
+                            if actual != expected {
+                                return Err(CBackendError { message: format!(
+                                    "extern C ABI call '{}' argument {} type mismatch: {:?} != {:?}",
+                                    callee, i, actual, expected
+                                ) });
+                            }
+                        }
+                        let ret = qualified_extern_scalar_ctype(&external.ret, true, callee)?;
+                        if (ret == CType::Void) != inst.dest.is_none() {
+                            return Err(CBackendError { message: format!(
+                                "extern C ABI call '{}' return destination mismatch: {:?} vs {:?}",
+                                callee, inst.dest, ret
+                            ) });
                         }
                     } else if args.iter().any(|arg| records.contains_key(arg)) {
                         return Err(CBackendError { message: format!(
