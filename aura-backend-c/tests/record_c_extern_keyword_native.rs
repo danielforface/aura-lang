@@ -86,3 +86,32 @@ cell invoke_valid(n: u32) ->:
         assert!(Command::new(exe).status().unwrap().success(),"{opt}: wrong C result");
     }
 }
+
+
+#[test]
+fn nonportable_extern_keyword_and_implementation_reserved_spellings_fail_closed() {
+    // Every spelling is an Aura lexer identifier (not an Aura keyword).
+    // C keywords and leading underscores are prohibited at the external
+    // linker contract boundary, even if an implementation accepts them.
+    for name in ["unsigned","register","volatile","asm","typeof","_private_abi"] {
+        let source=format!(
+            "trusted extern cell {name}(n: u32) -> u32\ncell invoke_checked(n: u32) ->:\n    yield {name}(n)\n"
+        );
+        let ast=aura_parse::parse_source(&source)
+            .unwrap_or_else(|err|panic!("{name}: valid Aura identifier must parse: {err}"));
+        Checker::new().check_program(&ast)
+            .unwrap_or_else(|err|panic!("{name}: Aura extern must check: {err}"));
+        let ir=lower_program(&ast).expect("source ABI lowers");
+        validate_module(&ir).expect("real Aura IR validates");
+        for (label,attempt) in [
+            ("raw",emit_module(&ir,None)),
+            ("anchored",emit_module_with_source_contract(&ast,&ir,None)),
+        ] {
+            let err=attempt.err().unwrap_or_else(||
+                panic!("{name}/{label}: invalid foreign C identifier was not rejected"));
+            assert!(err.message.contains("extern C identifier")
+                && err.message.contains(name),
+                "{name}/{label}: wrong ABI diagnostics: {err}");
+        }
+    }
+}
