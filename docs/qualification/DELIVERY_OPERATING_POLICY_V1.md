@@ -69,3 +69,12 @@ Remaining unsupported cases / risk:
 Review decision READY / BLOCKED and next action:
 ```
 A feature PR without `BEFORE → AFTER` impact or an explicitly approved exceptional deliverable is NOT a completed Delivery Phase.
+
+
+## 9. Parallel work is safe only when dependencies, not just files, are resolved
+
+**Read for every "ממשיכים":** [root AGENTS.md](../../AGENTS.md), [Phase Lifecycle](PHASE_LIFECYCLE_V1.md), [Cross-Agent Protocol](CROSS_AGENT_COORDINATION_V1.md), [Universal Continuation Prompt](CONTINUE_AGENT_PROMPT.md). This is an iterative decision gate, not a one-off setup or requirement to request approval for isolated D0 work.
+
+A second agent may have read-only access to another lane's stable API while developing independently. Any breaking ABI/schema/effect change needs a producer-consumer contract with tests; a shared file needs **one writer**. A branch with unmerged inherited work has a **D4 ancestry dependency** even if there is no write collision; compare its own PR delta separately from main...head. A CI-green and "mergeable" child PR is NOT automatically safe for main. The integrator owns ancestry decisions and exact merged-tree tests. Status records and global lockfiles are serialized.
+
+Example: B Autofocus has real production functionality on [Draft #106](https://github.com/danielforface/aura-lang/pull/106), but its 542-ahead-main history must be resolved before release; C has already added bounded dynamic simulation and JSON CLI in [Draft #108](https://github.com/danielforface/aura-lang/pull/108). Never send either agent back to reimplement an already delivered branch feature because an old instruction referred to it as future work.

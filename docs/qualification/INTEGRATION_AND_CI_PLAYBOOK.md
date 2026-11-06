@@ -43,3 +43,16 @@
 | Quantum oracle disagreement rate | Real scientific capability integrity |
 
 No target is a verified KPI until measured from actual data. Historic PR closure requires reviewer sign-off, not quota gaming.
+
+
+## Current shared-surface DAG and required review — 2026-11-06
+
+See [Cross-Agent Protocol](CROSS_AGENT_COORDINATION_V1.md) for D0–D5, atomic integration tests, ancestry isolation and consumer approvals; [Phase Lifecycle](PHASE_LIFECYCLE_V1.md) rechecks these rules each "ממשיכים". Branches can diverge while source paths are disjoint.
+
+- **Lumina #106** at observed `7b45b025cfc68239901dcdb4bca22a363862f47d</BT>: native TextInput Autofocus has meaningful C/Rust functionality, 6/6 CI; original PR is 5 commits / 9 changed paths versus its own Phase36 base. But compare **main...head** is 542 ahead/0 behind/171 affected paths. Never merge as though its entire history is an isolated Autofocus delta. Investigate ancestry and separate already-reviewed upstream work via a maintainer-approved landing strategy.
+- **Core #57** at observed `c13f0e9781abc418ceb0f55f76c7ab48920599ae</BT> diverges from B; A...B 336/188, so branch switching and cherry-picking require conflict and contract tests, not a generic merge request.
+- **Quantum #108** at observed `f8a5fbeff04ebb11ff063d46cd60493679bf97d0</BT>: bounded dynamic Rust simulator/JSON CLI is a real completed branch feature; need integration and proof boundary review, not a request to reproduce basic CLI from scratch.
+- **Shared path collision:** #106, #57, #95 all modify PROGRESS, HANDOFF and EVIDENCE. Integrator only reconciles these docs after picking a tested code integration target; preserve old append-only evidence, do not blindly concatenate three independently evolving histories.
+- **Parallel branches** #76 and #89: review ancestor/parallel/superseded status before inclusion. A parallel unused Draft is not automatically needed for #106.
+
+Require `OWN_FEATURE_DELTA` (PR base...head), `INHERITED_DELTA` (main...head), dependency DAG, target-specific contract test, reviewed integration status, and explicit KEEP/DEFER/EXCLUDE disposition. No unauthorized merge or history rewrite. Values are observation snapshots and must be recomputed before integration.

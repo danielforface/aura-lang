@@ -10,3 +10,8 @@
 7. Escalate shared C/LLVM/FFI requirements separately with explicit interfaces, rather than opportunistically expanding a single PR. End with product BEFORE→AFTER, runnable source fixture, exact CI, merge readiness and any real P0 blockers.
 
 **Success:** a demonstrable, reviewable and integratable product improvement — not another EV tally. Follow the maintainer review gates for actual merge to shared code.
+
+
+## Required on EVERY subsequent Core phase — shared dependencies
+
+Open [root AGENTS.md](../../../AGENTS.md), [Phase Lifecycle](../PHASE_LIFECYCLE_V1.md), [Cross-Agent Protocol](../CROSS_AGENT_COORDINATION_V1.md) and [universal continuation prompt](../CONTINUE_AGENT_PROMPT.md) **at Stage 0, before pushes and at handoff**, even if your Core branch does not contain the files. Obtain latest policy from Draft #95. Do not assume B/C consume the latest parser/IR contract: B's #106 inherited old Core ancestry; compare A vs B branch history and require D2 API consumer tests before modifying shared AST/IR/LSP signatures. Existing Q03 branch #57 contains real native implementation; continue outstanding functional blocker or reviewable integration slice rather than redoing already accepted tests. A/B/C central docs overlap is owned by integration steward.

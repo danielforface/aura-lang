@@ -29,3 +29,8 @@
 
 ## Causality limit
 This audit is based on current public GitHub PR descriptions, changed paths, selected patches, workflow/job conclusions, relevant issue and governance documentation. It does **not** reproduce an IBus customer-visible error or run all 70 open PR suites independently. It does not authorize a speculative C/D callback acceptance or a bulk merge. See [Production-first policy](DELIVERY_OPERATING_POLICY_V1.md).
+
+
+## Addendum — cross-agent integration discovery after Agent B Autofocus (2026-11-06)
+
+See [Cross-Agent Protocol](CROSS_AGENT_COORDINATION_V1.md). B's Native TextInput Autofocus at Draft #106 is already implemented and 6/6 in observed Push/PR runs, yet the branch is 542 commits ahead of main while the own PR delta is 5 commits/9 paths. It is an ancestry-dependency (D4), not necessarily a source-path write collision. Core A and B are diverged; shared PROGRESS/HANDOFF/EVIDENCE are the exact overlap between A/B/#95. Agent C's #108 has implemented offline JSON CLI and dynamic Rust simulator. An integration decision must inspect **own feature delta vs inherited delta**, contract consumers, actual merge base, separate parallel PR #76/#89, and an isolated target integration test. This is not evidence to cancel productive parallel implementation.

@@ -47,3 +47,8 @@ No actual PR opened except this proposal; no claim of Agent assignment without i
 ## Live agent C delivery correction — 2026-11-06
 
 A Q28 reference simulator already exists on unmerged branch and has scientific parity/regression support; do not create a new scaffold, do not call the program wholly NOT_STARTED, and do not open one new stacked Draft per numerical test. Agent C next must build an actual callable supported simulator capability, then submit as one meaningful reviewable slice. Prior 4-deep Draft stack is retained pending explicit steward merge plan and independent scientific review. Central docs are **not** edited on each exploratory commit. [Agent C instructions](../qualification/agents/AGENT_C_QUANTUM_ORDER.md).
+
+
+## Mandatory shared-interface and per-phase re-entry (2026-11-06)
+
+All Quantum and non-Quantum agents must apply [root AGENTS.md](../../AGENTS.md), [Phase Lifecycle](../qualification/PHASE_LIFECYCLE_V1.md), [Cross-Agent Protocol](../qualification/CROSS_AGENT_COORDINATION_V1.md) and the [Universal “ממשיכים” Prompt](../qualification/CONTINUE_AGENT_PROMPT.md) at **every** phase, not only at onboarding. Quantum may develop independently against stable versioned source interfaces. Any change to Aura Core quantum ABI, LSP, IR effect contract, target schema or common workflow is D2/D3 and requires producer-consumer approval plus independent tests. C's existing #108 dynamic simulator/JSON CLI is real; don't ask it to restart C-001. All shared source ancestors require D4 integration review before a claim of clean main merge.

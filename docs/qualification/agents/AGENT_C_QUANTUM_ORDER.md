@@ -10,3 +10,10 @@
 7. Keep supporting evidence concise and make remaining Q22/Q23/Q24 integration dependencies explicit without rewriting other agent's responsibilities.
 
 **Success:** one new scientifically sound simulator capability *usable by code* and reviewed for integration, not only a longer verification matrix.
+
+
+## Verified next-step correction — dynamic simulator / JSON CLI now implemented (2026-11-06)
+
+Current observed [Draft #108](https://github.com/danielforface/aura-lang/pull/108) `f8a5fbeff04ebb11ff063d46cd60493679bf97d0</BT> **already contains bounded dynamic Rust circuit execution and an offline JSON CLI** with scientific parity. Do NOT start by reimplementing these; select a genuinely missing Q28 capability, core independent contract/interop or bounded scientific correctness fix from LIVE code. Keep existing tests and model assumptions and ensure an actual callable new result. Four-depth Draft chain #99/#102/#105/#108 is D4 integration debt, not an independent clean 1-PR feature. Q28 branch-level IN_PROGRESS does not certify all science or any real QPU.
+
+**Every phase:** read [AGENTS](../../../AGENTS.md), [lifecycle](../PHASE_LIFECYCLE_V1.md), [cross-agent rules](../CROSS_AGENT_COORDINATION_V1.md) and [continue prompt](../CONTINUE_AGENT_PROMPT.md) from current Draft #95. Refresh live #108, check Q22/Q23/Q27 consumer/producer contracts before IR/JSON protocol modifications, open one shared contract Issue if D2 but do not block unrelated Q28 work. Work in owned Quantum paths, no source edits to Core/Lumina or new ancestor Drafts without reviewed integration decision.

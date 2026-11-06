@@ -1,5 +1,7 @@
 # Aura Qualification Program — start here
 
+> **Live agent entrypoint:** [root AGENTS.md](../../AGENTS.md), [every-phase lifecycle](PHASE_LIFECYCLE_V1.md), [cross-agent ownership/contracts](CROSS_AGENT_COORDINATION_V1.md), [universal “ממשיכים” prompt](CONTINUE_AGENT_PROMPT.md), and [structured ownership map](AGENT_OWNERSHIP.json). A/B/C must READ these at every phase, even if their active branch predates the docs.
+
 **Purpose:** ongoing, evidence-based multi-release qualification of Aura without pretending to implement all missing features in one patch.
 
 ## New execution policy (2026-11-06): build the product

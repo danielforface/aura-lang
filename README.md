@@ -1,6 +1,9 @@
 # Aura
 
 
+> **2026-11-06 — Agent coordination & every-phase re-entry:** Read [AGENTS.md](AGENTS.md), [Cross-Agent Protocol](docs/qualification/CROSS_AGENT_COORDINATION_V1.md), [Phase Lifecycle](docs/qualification/PHASE_LIFECYCLE_V1.md) and [Universal “ממשיכים” Prompt](docs/qualification/CONTINUE_AGENT_PROMPT.md) at the start of **EVERY phase**, before shared writes and at handoff. Shared PR ancestry, contracts and docs can conflict even when production source paths do not. On Draft #106, 542 commits ahead of main reflect stacked history, NOT 542 Autofocus commits; its native Autofocus is already implemented in the unmerged branch. Feature-PR mergeability against a parent does not certify main integration.
+
+
 > **2026-11-06 production-first execution correction:** [Delivery policy](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md) now measures functional source-to-runtime delivery rather than diagnostic pulse counts, prohibits fake missing-symbol CI RED, restricts new stacked Drafts and moves shared-document updates to integration milestones. Existing historical plans/soundness claims are unchanged; [audit](docs/qualification/WORKFLOW_AUDIT_2026-11-06.md) and [agent orders](docs/qualification/INTEGRATION_AND_CI_PLAYBOOK.md) detail evidence and next actions. Agent C has actual unmerged Q28 reference-simulator code in [Draft #99](https://github.com/danielforface/aura-lang/pull/99), advanced by [Draft #108](https://github.com/danielforface/aura-lang/pull/108); do not misstate that as zero development or a certified release.
 
 

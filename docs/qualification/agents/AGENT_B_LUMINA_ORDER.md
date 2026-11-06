@@ -10,3 +10,12 @@
 7. Only send normal CI after locally checked candidate; no E0599 as advertised semantic RED. One final required exact-SHA suite, narrow evidence in PR body; no five central document appends per test checkpoint.
 
 **Success:** authenticated, safe input-loss fix in actual production OR a formally closed research hypothesis plus a real Lumina functionality slice. [Issue #59](https://github.com/danielforface/aura-lang/issues/59) remains multi-agent coordination until steward closes it separately.
+
+
+## Verified next-step correction — Autofocus already exists (2026-11-06)
+
+[Draft #106](https://github.com/danielforface/aura-lang/pull/106) was updated to a **real TextInput Autofocus** native feature at `7b45b025cfc68239901dcdb4bca22a363862f47d</BT>, with 6/6 Push/PR success in observed exact-head workflow. Your earlier instruction to deliver an actual Lumina functionality slice has ALREADY been met in this branch; do not repeat Autofocus or restart diagnostics. The **next priority is integration correctness and reviewability** of that feature and its inherited dependency chain, then the next independent actual UI backlog task.
+
+The same #106 has 542 commits ahead of main, 0 behind and only 5 commits as own PR delta. Identify OWN_FEATURE_DELTA vs INHERITED_DELTA, and D4 ancestry. Shared documentation overlaps with Core #57 and policy #95, not necessarily production paths. Before any new input/TextInput API change, check Core and Q12/Q13 interface consumers; D2 requires contract approval with tests. Do not merge 542 inherited commits as if all are your feature.
+
+**Every phase:** read [AGENTS](../../../AGENTS.md), [lifecycle](../PHASE_LIFECYCLE_V1.md), [cross-agent rules](../CROSS_AGENT_COORDINATION_V1.md), and [continue prompt](../CONTINUE_AGENT_PROMPT.md) from current Draft #95; re-fetch live #106 SHA, CI, ancestry and claims. Do not create more nested Drafts, force-push or treat "mergeable" relative to Phase36 base as approved main release. Request integrator/maintainer dependency decision and continue only nonblocked owned UI work.
