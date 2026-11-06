@@ -484,8 +484,24 @@ impl CNameMap {
         let mut formals = BTreeMap::new();
         for (source, function) in &module.functions {
             let mut occupied = used.clone();
-            let mut args = Vec::with_capacity(function.params.len());
-            for index in 0..function.params.len() {
+            // Retain every safe, existing formal spelling, not just the
+            // public function ABI. This preserves established generated-C
+            // consumers and diagnostics (e.g. `return input;`).
+            // Reserve all safe names *before* allocating replacements, so a
+            // mangled earlier argument cannot capture a later named formal.
+            let mut args = vec![None; function.params.len()];
+            for (index, param) in function.params.iter().enumerate() {
+                let ssa_collision = param.name.strip_prefix('v')
+                    .is_some_and(|digits| !digits.is_empty()
+                        && digits.bytes().all(|b| b.is_ascii_digit()));
+                if c_safe_export_ident(&param.name) && !ssa_collision
+                    && occupied.insert(param.name.clone())
+                {
+                    args[index] = Some(param.name.clone());
+                }
+            }
+            for (index, name) in args.iter_mut().enumerate() {
+                if name.is_some() { continue; }
                 let stem = format!("aura_param_{index}");
                 let mut candidate = stem.clone();
                 let mut suffix = 0usize;
@@ -493,9 +509,10 @@ impl CNameMap {
                     suffix += 1;
                     candidate = format!("{stem}_{suffix}");
                 }
-                args.push(candidate);
+                *name = Some(candidate);
             }
-            formals.insert(source.clone(), args);
+            formals.insert(source.clone(), args.into_iter().map(|n|
+                n.expect("each formal receives a unique C name")).collect());
         }
         Self { exports, formals }
     }
