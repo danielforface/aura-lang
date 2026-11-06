@@ -635,6 +635,38 @@ fn emit_function_signature(
     Ok(())
 }
 
+// The emitted runtime always includes <stdint.h> and <inttypes.h>.
+// Reject their documented object-like limit constants and PRI*/SCN*
+// format macro families as *extern C function* names. These macros occupy
+// the preprocessor namespace, so a type-correct source extern can still
+// expand to a literal at the C declaration/call site. Keep this explicit,
+// deterministic and independent of whichever host compiler runs the emitter.
+fn is_reserved_runtime_header_macro(name: &str) -> bool {
+    if matches!(name,
+        "SIZE_MAX" | "PTRDIFF_MIN" | "PTRDIFF_MAX"
+        | "SIG_ATOMIC_MIN" | "SIG_ATOMIC_MAX"
+        | "WCHAR_MIN" | "WCHAR_MAX" | "WINT_MIN" | "WINT_MAX"
+        | "INTPTR_MIN" | "INTPTR_MAX" | "UINTPTR_MAX"
+        | "INTMAX_MIN" | "INTMAX_MAX" | "UINTMAX_MAX"
+    ) {
+        return true;
+    }
+    const FAMILIES: &[&str] = &[
+        "PRId", "PRIi", "PRIo", "PRIu", "PRIx", "PRIX",
+        "SCNd", "SCNi", "SCNo", "SCNu", "SCNx",
+    ];
+    const SUFFIXES: &[&str] = &[
+        "8", "16", "32", "64",
+        "LEAST8", "LEAST16", "LEAST32", "LEAST64",
+        "FAST8", "FAST16", "FAST32", "FAST64",
+        "MAX", "PTR",
+    ];
+    FAMILIES.iter().any(|family| {
+        name.strip_prefix(family)
+            .is_some_and(|suffix| SUFFIXES.contains(&suffix))
+    })
+}
+
 // An Aura extern keeps the target's existing native-linker name. Unlike
 // locally defined Cells it cannot be hex-renamed without silently changing
 // the external library ABI. The legacy map_callee() flattens qualified names,
@@ -665,6 +697,12 @@ fn validate_extern_c_symbol_namespace(
         // to avoid libc, macro and Aura-runtime declarations. Reject even
         // unused colliding declarations: a later Call or optimizer pass must
         // not change the validity of a linker ABI.
+        if is_reserved_runtime_header_macro(&c_symbol) {
+            return Err(CBackendError { message: format!(
+                "extern C symbol collision: external '{}' targets reserved runtime/header macro '{}'; refusing ambiguous native ABI",
+                source_extern, c_symbol
+            ) });
+        }
         if c_names.reserved_extern_symbols.contains(&c_symbol) {
             return Err(CBackendError { message: format!(
                 "extern C symbol collision: external '{}' targets reserved runtime/header identifier '{}'; refusing ambiguous native ABI",
