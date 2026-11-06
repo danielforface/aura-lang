@@ -108,7 +108,7 @@ stdin** and emits one JSON result on stdout. Errors are JSON on **stderr** with
 a nonzero exit code (2) and no partial success result.
 
 ```sh
-cargo run --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run 
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run \
   < aura-quantum-sim/fixtures/bell_feedforward_v1.json
 ```
 
