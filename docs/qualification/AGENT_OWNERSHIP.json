@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "policy_date": "2026-11-06",
+  "policy_documents": [
+    "AGENTS.md",
+    "docs/qualification/PHASE_LIFECYCLE_V1.md",
+    "docs/qualification/CROSS_AGENT_COORDINATION_V1.md",
+    "docs/qualification/DELIVERY_OPERATING_POLICY_V1.md",
+    "docs/qualification/CONTINUE_AGENT_PROMPT.md"
+  ],
+  "agents": {
+    "A": {
+      "label": "Core",
+      "primary_pr": 57,
+      "exclusive_prefixes": [
+        "aura-ast/",
+        "aura-parse/",
+        "aura-core/",
+        "aura-ir/",
+        "aura-backend-c/",
+        "aura-backend-llvm/",
+        "aura-verify/",
+        "aura-interpret/",
+        "aura-lsp/",
+        "aura/"
+      ],
+      "lane_order": "docs/qualification/agents/AGENT_A_CORE_ORDER.md"
+    },
+    "B": {
+      "label": "Lumina",
+      "primary_pr": 106,
+      "exclusive_prefixes": [
+        "aura-plugin-lumina/"
+      ],
+      "lane_order": "docs/qualification/agents/AGENT_B_LUMINA_ORDER.md"
+    },
+    "C": {
+      "label": "Quantum",
+      "primary_pr": 108,
+      "exclusive_prefixes": [
+        "aura-quantum-sim/",
+        "docs/quantum/agent-c/"
+      ],
+      "lane_order": "docs/qualification/agents/AGENT_C_QUANTUM_ORDER.md"
+    }
+  },
+  "integration_only_exact": [
+    "AGENTS.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "docs/qualification/PROGRESS.md",
+    "docs/qualification/CONTEXT_HANDOFF.md",
+    "docs/qualification/EVIDENCE_LOG.md",
+    "docs/qualification/OPERATING_PROTOCOL.md",
+    "docs/qualification/DELIVERY_OPERATING_POLICY_V1.md",
+    "docs/qualification/CROSS_AGENT_COORDINATION_V1.md",
+    "docs/qualification/PHASE_LIFECYCLE_V1.md",
+    "docs/qualification/CONTINUE_AGENT_PROMPT.md",
+    "docs/qualification/AGENT_OWNERSHIP.json",
+    "README.md",
+    "ROADMAP.md",
+    "ROADMAP_PUBLIC.md",
+    "PROJECT_STATUS.md"
+  ],
+  "integration_only_prefixes": [
+    "tools/qualification/",
+    "docs/qualification/agents/"
+  ],
+  "shared_review_prefixes": [
+    ".github/workflows/",
+    "docs/quantum/"
+  ],
+  "historical_frozen": [
+    "docs/qualification/MASTER_ROADMAP_V1.md",
+    "docs/qualification/MASTER_ROADMAP_V2.md",
+    "docs/qualification/MASTER_ROADMAP_V3.md"
+  ],
+  "dependency_classes": [
+    "D0",
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5"
+  ],
+  "release_authority": "maintainer_review_required",
+  "note": "This is a scope map for NEW actions, not an accusation that older stacked PR diffs broke ownership. Other code paths remain unassigned until reviewed claim; no automatic write entitlement for the integration steward."
+}
