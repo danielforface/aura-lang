@@ -149,3 +149,58 @@ The JSON adapter adds exact direct dependencies `serde=1.0.229` and
 `serde_json=1.0.154` to the isolated crate only. Their transitive versions
 are **not** locked to a committed `Cargo.lock` in this increment; full
 hash-locked cross-environment reproducibility is pending integration review.
+
+
+## Bounded noise simulation — AURA-Q28-007 (independent Rust API)
+
+The optional `aura_quantum_sim::density` module provides a physically
+specified **idealized density-matrix** reference for single-qubit Kraus noise,
+rather than pretending that a pure statevector directly models mixed noise.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example density_noise
+```
+
+```rust
+use aura_quantum_sim::density::{DensityMatrix, NoiseChannel};
+use aura_quantum_sim::{Gate, DEFAULT_MEMORY_BUDGET};
+
+let mut rho = DensityMatrix::zero(1, DEFAULT_MEMORY_BUDGET)?;
+rho.apply_gate(Gate::H(0))?;
+rho.apply_noise(NoiseChannel::AmplitudeDamping { qubit: 0, gamma: 0.36 })?;
+rho.apply_noise(NoiseChannel::PhaseFlip { qubit: 0, probability: 0.25 })?;
+assert!((rho.basis_probability(0)? - 0.68).abs() < 1e-10);
+assert!((rho.element(0, 1)?.re - 0.20).abs() < 1e-10);
+assert!((rho.purity()? - 0.6448).abs() < 1e-10);
+```
+
+Scientific meaning: `PhaseFlip(p)` is the CPTP map
+`(1-p)rho + p Z rho Z`. `AmplitudeDamping(gamma)` has Kraus
+`K0=|0><0|+sqrt(1-gamma)|1><1|` and
+`K1=sqrt(gamma)|0><1|`. Both parameters must be finite in [0,1].
+The method preserves trace and complete positivity **in exact arithmetic**.
+`DensityMatrix::from_statevector` constructs a pure outer product for
+external numerical comparison. The new API supports the existing H/X/Y/Z/S/T,
+CX/CZ/SWAP families through `rho → U rho U†`. It exposes diagonal Born
+probabilities, row/column coherence, single-qubit partial traces and
+`Tr(rho²)` purity. This is a **mixed-state numerical model**, not
+a seeded stochastic trajectory or a hardware-calibrated noise measurement.
+
+The profile is `local-density-matrix-f64-cptp/1`. Width is explicitly
+1..8 qubits and logical matrix allocation is `16·4^n` bytes under a
+caller-supplied budget. The implementation performs in-place local channel
+maps and gate conjugation, but physical process RSS, proof of complete
+positivity under finite rounding and a universal error bound are **not**
+certified. A necessary numerical trace/Hermiticity check is implemented;
+a full positive-eigenvalue certificate is **not** claimed. Invalid
+probabilities, aliases, indices, insufficient memory and unsupported widths
+fail closed before mutation.
+
+**Contract boundary:** This is an additive, library-only Agent C research
+feature. It intentionally does NOT extend `aura.quantum.circuit-request/1`,
+the pure-state `Circuit` runner, QIR/Aura compiler semantics, OpenQASM,
+provider targets, QPU jobs or calibration snapshots. Connecting this noise
+model to the shared dynamic JSON protocol is **D2** and requires producer/
+consumer coordination and versioned schema acceptance before it occurs.
+Independent Q23/Q37 scientific review and real integration to main remain
+pending. Tests: `tests/density_noise.rs` and `examples/density_noise.rs`.

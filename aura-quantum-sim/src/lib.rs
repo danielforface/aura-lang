@@ -7,6 +7,7 @@
 
 pub mod circuit;
 pub mod json_protocol;
+pub mod density;
 
 use std::mem::size_of;
 
