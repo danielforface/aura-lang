@@ -12,6 +12,7 @@ pub mod noisy_circuit;
 pub mod noisy_json;
 pub mod stabilizer;
 pub mod stabilizer_json;
+pub mod symbolic;
 
 use std::mem::size_of;
 
