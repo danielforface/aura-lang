@@ -16,3 +16,20 @@ cell xray_io_read_quanta_64m(io_read_kib: u32):
 # Returns a 1,024-KiB resolution; helps exercise non-constant Aura logic.
 cell xray_working_set_mib(working_set_kib: u32):
     yield working_set_kib / 1024
+
+# XR-02 temporal analysis: callers must supply elapsed_ms > 0, counter deltas
+# known monotonic and deltas <= 4294967 KiB to avoid uint32 overflow.
+# Units are KiB/second (whole integer, conservative truncation).
+cell xray_read_kib_per_sec(delta_kib: u32, elapsed_ms: u32):
+    yield (delta_kib * 1000) / elapsed_ms
+
+# 1000 millicores = 100% of ONE logical CPU. Values may exceed 1000.
+cell xray_cpu_millicores(delta_cpu_ms: u32, elapsed_ms: u32):
+    yield (delta_cpu_ms * 1000) / elapsed_ms
+
+# Transparent ACTIVITY index (NOT ML/anomaly proof).
+# CPU 100 millicores = 1 point; read/write 2048 KiB/s = 1 point each;
+# 1 MiB positive working-set growth = 2 points. No negative growth bonus.
+# Only called on complete, identity-validated comparable vectors.
+cell xray_activity_score(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_mib: u32):
+    yield (cpu_milli / 100) + (read_kib_s / 2048) + (write_kib_s / 2048) + (growth_mib * 2)

@@ -235,3 +235,18 @@ Reject a release if any:
 - Repo internal: README.md, TOOLCHAIN.md, ARCHITECTURE.md, sdk/docs/reference.md, docs/lumina-ui.md, docs/qualification/MASTER_ROADMAP_V3.md (planning branch), docs/qualification/DELIVERY_OPERATING_POLICY_V1.md, docs/qualification/CROSS_AGENT_COORDINATION_V1.md.
 
 **Blueprint authority rule:** A functional product result requires code+real Windows runner+downloadable binary; this document alone does not satisfy XR-01.
+
+
+## 21. XR-02 delivery contract / process-history extension — 2026-11-07
+
+**BEFORE:** XR-01/01.1 produced real Windows process snapshots and simple Aura memory/IO buckets, but not inter-sample rates, process activity ranking or a useful local viewer. Real user Windows acceptance of XR-01.1 returned 10 samples, 2,140 process observation records, 2,130 memory reads, 0 access-denied, 0 reported errors, elapsed_ms=10,016 and open_failed=10. Windows build and limited-language ABI were proven; other language features are NOT silently assumed.
+
+**AFTER target:** XR-02 should emit /2 capture records with identity-guarded process history and CPU millicores, read/write KiB/s, memory deltas, nullable activity score; and an interactive offline HTML explorer created in the EXE's own capture process. Scores are heuristic and explicitly do not prove root cause.
+
+**Ownership:** D0 product files apps/xray; D1 read-only consumption of compiled Aura uint32 ABI (six functions compiled from analysis.aura, fail closed at Windows link); D5 dedicated scoped workflow. Platform OS calls, 64-bit counter validation and bounded history remain in portable C/Win32 adapter. No changes to Core A #57, Lumina B #106, Quantum C #108, frozen roadmap or Cargo root. No merge until maintainer review.
+
+**Truth and error semantics:** V2 schema distinct from V1; process identity must include Windows creation time; first sample = baseline; only successive valid monotonic windows may produce deltas; counter resets, missing field, PID reuse, invalid clock or overflow produce null rather than falsely positive metrics. CPU 1000 millicores = one fully used logical CPU. IO API counters can include non-disk I/O. Activity score is transparent and unit-checked but not a malware/leak classifier. Local report contains no network links or external assets. Process names are opt-in.
+
+**Performance and privacy bounds:** no more than 4096 process histories and 128 report leaderboard entries, maximum 30-second collection; report rendered as HTML/CSS without a browser/network server and with HTML escaping. Tests must cover all unknown/negative cases and avoid embedding private user captures in the repository.
+
+**XR-02 qualification:** exact-HEAD Windows CI compiles real Aura product source through current C backend, generates six uint32 C functions, links with Windows collector and portable engine; requires semantic vectors and deterministic PID-reuse/reset/unknown fixtures, actual live 3-second capture with derived vectors and independent rate/score oracle, generated HTML with redacted names and no external dependencies, negative no-overwrite and invalid-duration tests, x64 PE hash/manifest, and uploaded artifact. No success claim absent CI plus artifact. External tester runs on their hardware afterwards. Next practical slice after that: cross-session comparison and replay/import with independent parser proofing, not a fake causal diagnosis.

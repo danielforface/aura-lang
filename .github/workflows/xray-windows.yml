@@ -59,7 +59,7 @@ jobs:
           if (!(Test-Path "build/analysis/module.c")) { throw "No generated module.c" }
           if (!(Test-Path "build/analysis/aura_runtime.h")) { throw "No generated aura_runtime.h" }
           $generated = Get-Content "build/analysis/module.c" -Raw
-          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m")) {
+          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score")) {
             $signature = '(?m)\buint32_t\s+' + [regex]::Escape($fn) + '\s*\('
             if (![regex]::IsMatch($generated, $signature)) {
               throw "Aura codegen ABI regression: $fn must return real uint32_t, not void or prototype"
@@ -80,6 +80,7 @@ jobs:
             "build/analysis/module.c",
             "aura-stdlib/src/stdlib.c",
             "apps/xray/src/win32_host.c",
+            "apps/xray/src/xr02_engine.c",
             "-lpsapi", "-o", "dist/AuraXRay.exe"
           )
           & $clang @flags
@@ -94,17 +95,17 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or !$version.Contains($env:GITHUB_SHA)) { throw "EXE provenance mismatch" }
           & "dist/AuraXRay.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "Help failed" }
-          & "dist/AuraXRay.exe" --capture --seconds 2 --out "dist/ci-capture.jsonl"
+          & "dist/AuraXRay.exe" --capture --seconds 3 --out "dist/ci-capture.jsonl" --report "dist/ci-report.html"
           if ($LASTEXITCODE -ne 0) { throw "Live Windows process capture failed" }
           $r = @(Get-Content "dist/ci-capture.jsonl" -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
           $start = @($r | Where-Object type -eq "capture_start")
           $end = @($r | Where-Object type -eq "capture_end")
           $p = @($r | Where-Object type -eq "process")
           $samples = @($r | Where-Object type -eq "sample_end")
-          if ($start.Count -ne 1 -or $end.Count -ne 1 -or $samples.Count -ne 2) { throw "Missing capture records" }
-          if ($start[0].schema -ne "aura.xray.capture/1" -or $start[0].build -ne $env:GITHUB_SHA) { throw "Capture source metadata invalid" }
-          if ($end[0].status -ne "complete" -or $end[0].samples -ne 2 -or $p.Count -lt 2) { throw "No complete live capture" }
-          if ($end[0].elapsed_ms -lt 2000) { throw "Capture duration is less than the requested two seconds" }
+          if ($start.Count -ne 1 -or $end.Count -ne 1 -or $samples.Count -ne 3) { throw "Missing XR-02 capture records" }
+          if ($start[0].schema -ne "aura.xray.capture/2" -or $start[0].build -ne $env:GITHUB_SHA) { throw "Capture source metadata invalid" }
+          if ($end[0].status -ne "complete" -or $end[0].samples -ne 3 -or $p.Count -lt 3) { throw "No complete live capture" }
+          if ($end[0].elapsed_ms -lt 3000) { throw "Capture duration is less than requested three seconds" }
           if ($end[0].monotonic_ms -le $start[0].monotonic_ms) { throw "Capture monotonic time did not progress" }
           if (($end[0].monotonic_ms - $start[0].monotonic_ms) -ne $end[0].elapsed_ms) { throw "Inconsistent capture duration counters" }
           if (!$end[0].utc) { throw "Missing capture-end UTC time" }
@@ -112,6 +113,23 @@ jobs:
           if (@($p | Where-Object { $_.PSObject.Properties.Name -contains "process_name" }).Count -gt 0) { throw "Sensitive process names exposed by default" }
           $invalid = @($p | Where-Object { $null -ne $_.memory_quanta_256m -and $null -ne $_.working_set_mib -and $_.memory_quanta_256m -ne [math]::Floor($_.working_set_mib / 256) })
           if ($invalid.Count -gt 0) { throw "Aura classification differs from observed memory band" }
+          if (@($p | Where-Object { $_.sample -eq 1 -and $null -ne $_.activity_score }).Count -gt 0) { throw "Baseline must not imply a rate or score" }
+          $vectors = @($p | Where-Object { $null -ne $_.activity_score })
+          if ($vectors.Count -lt 5) { throw "XR-02 temporal analysis produced no meaningful live vectors" }
+          if ($end[0].derived_records -ne $vectors.Count) { throw "Aura score count does not match summary" }
+          if (@($p | Where-Object { $null -ne $_.activity_score -and ($null -eq $_.cpu_millicores -or $null -eq $_.io_read_kib_s -or $null -eq $_.io_write_kib_s -or $null -eq $_.memory_delta_kib) }).Count -gt 0) { throw "Scored incomplete observation" }
+          $checkScore = @($vectors | Where-Object {
+            $_.activity_score -ne ([math]::Floor($_.cpu_millicores / 100) +
+               [math]::Floor($_.io_read_kib_s / 2048) +
+               [math]::Floor($_.io_write_kib_s / 2048) +
+               (2 * [math]::Min(16384, [math]::Floor([math]::Max(0, $_.memory_delta_kib) / 1024))))
+          })
+          if ($checkScore.Count -gt 0) { throw "Aura activity scoring diverges from independent oracle" }
+          if (!(Test-Path "dist/ci-report.html")) { throw "No offline field report" }
+          $html = Get-Content "dist/ci-report.html" -Raw
+          if ($html.Length -lt 4500 -or !$html.Contains('id="filter"') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "HTML report missing real interactive features" }
+          if ($html -match '(?i)(https?://|src="[^"]+\.js|process_name)') { throw "Offline report has unexpected external dependency or privacy leak" }
+          Write-Host "XRAY_TEMPORAL_ORACLE_PASS vectors=$($vectors.Count) elapsed_ms=$($end[0].elapsed_ms) report_bytes=$($html.Length)"
           # Negative controls: reject invalid duration; never create the requested file.
           $badOutput = Join-Path $env:RUNNER_TEMP "xray-invalid-duration.jsonl"
           & "dist/AuraXRay.exe" --capture --seconds 0 --out $badOutput 2>$null
@@ -122,7 +140,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "Existing capture must not be overwritten" }
           if ((Get-FileHash "dist/ci-capture.jsonl" -Algorithm SHA256).Hash -ne $original) { throw "Evidence capture bytes changed despite overwrite refusal" }
           Write-Host "XRAY_NEGATIVE_GATES_PASS no-overwrite and invalid duration"
-          Write-Host "XRAY_WINDOWS_SMOKE_PASS process_records=$($p.Count) samples=2 elapsed_ms=$($end[0].elapsed_ms)"
+          Write-Host "XRAY_WINDOWS_SMOKE_PASS process_records=$($p.Count) samples=3 elapsed_ms=$($end[0].elapsed_ms)"
           # Expected failing CLI calls above have passed their negative acceptance checks.
           # pwsh preserves the last native failure exit code unless explicitly cleared.
           exit 0
@@ -139,7 +157,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.1.1-xr01"
+            version = "0.2.0-xr02"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
@@ -148,10 +166,11 @@ jobs:
             binary_sha256 = $sha
             runtime_windows_smoke = "PASS"
             signing = "UNSIGNED_EXPERIMENTAL"
-            limitations = @("no GUI","no ETW","no CPU rate","no automatic fixes","no formal backend proof")
+            limitations = @("no native GUI","no ETW","no automatic fixes","no root-cause proof","activity score is heuristic","unsigned experimental")
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
+          Copy-Item "dist/ci-report.html" "dist/CI-REPORT.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -162,6 +181,7 @@ jobs:
             dist/AuraXRay.exe
             dist/BUILD-MANIFEST.json
             dist/README.txt
+            dist/CI-REPORT.html
           retention-days: 30
           if-no-files-found: error
 

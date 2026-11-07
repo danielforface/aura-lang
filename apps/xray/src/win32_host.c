@@ -14,12 +14,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include "xr02_engine.h"
 
 #ifndef XR_BUILD_SHA
 #define XR_BUILD_SHA "unknown"
 #endif
-#define XR_SCHEMA "aura.xray.capture/1"
-#define XR_VERSION "0.1.1-xr01"
+#define XR_SCHEMA "aura.xray.capture/2"
+#define XR_VERSION "0.2.0-xr02"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -84,7 +85,7 @@ typedef struct {
     unsigned long errors;
 } SampleStats;
 
-static int collect_sample(FILE *out, unsigned sample, int include_names, SampleStats *stats) {
+static int collect_sample(FILE *out, unsigned sample, int include_names, XRAnalyzer *analyzer, SampleStats *stats) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return 0;
 
@@ -99,6 +100,7 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
     char at[40];
     utc_now(at, sizeof at);
     uint64_t monotonic_ms = GetTickCount64();
+    xr_begin_sample(analyzer, sample, monotonic_ms);
     fprintf(out, "{\"type\":\"sample_start\",\"sample\":%u,\"utc\":", sample);
     json_string(out, at);
     fprintf(out, ",\"monotonic_ms\":%llu}\n", (unsigned long long)monotonic_ms);
@@ -109,9 +111,10 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
         uint64_t create_ticks = 0;
         uint64_t read_kib = 0;
         uint64_t working_set_kib = 0;
+        uint64_t read_bytes = 0, write_bytes = 0, cpu_ticks = 0;
         int have_memory = 0;
         int have_io = 0;
-        int have_creation = 0;
+        int have_creation = 0, have_cpu = 0;
 
         /* Windows 10/11 GetProcessMemoryInfo, GetProcessIoCounters and GetProcessTimes
          * only need PROCESS_QUERY_LIMITED_INFORMATION. Never ask for VM_READ. */
@@ -132,7 +135,9 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
             IO_COUNTERS io;
             ZeroMemory(&io, sizeof io);
             if (GetProcessIoCounters(p, &io)) {
-                read_kib = io.ReadTransferCount / 1024u;
+                read_bytes = io.ReadTransferCount;
+                write_bytes = io.WriteTransferCount;
+                read_kib = read_bytes / 1024u;
                 have_io = read_kib <= UINT32_MAX;
             } else if (!err) {
                 err = GetLastError();
@@ -142,6 +147,12 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
             if (GetProcessTimes(p, &creation, &exit_time, &kernel, &user)) {
                 create_ticks = filetime_ticks(creation);
                 have_creation = 1;
+                uint64_t kt = filetime_ticks(kernel);
+                uint64_t ut = filetime_ticks(user);
+                if (kt <= UINT64_MAX - ut) {
+                    cpu_ticks = kt + ut;
+                    have_cpu = 1;
+                }
             } else if (!err) {
                 err = GetLastError();
             }
@@ -152,12 +163,26 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
             if (err == ERROR_ACCESS_DENIED) ++stats->denied;
         }
 
+        char utf8[MAX_PATH * 4];
+        utf8[0] = '\0';
+        if (include_names) process_name_utf8(entry.szExeFile, utf8, sizeof utf8);
+        XRObservation observation = {0};
+        observation.pid = (uint32_t)pid;
+        observation.create_ticks = create_ticks;
+        observation.working_set_kib = working_set_kib;
+        observation.read_bytes = read_bytes;
+        observation.write_bytes = write_bytes;
+        observation.cpu_ticks_100ns = cpu_ticks;
+        observation.has_identity = (unsigned char)have_creation;
+        observation.has_memory = (unsigned char)have_memory;
+        observation.has_io = (unsigned char)have_io;
+        observation.has_cpu = (unsigned char)have_cpu;
+        observation.name = include_names ? utf8 : NULL;
+        XRMetrics metrics = xr_observe(analyzer, &observation);
+
         fprintf(out, "{\"type\":\"process\",\"sample\":%u,\"pid\":%lu",
             sample, (unsigned long)pid);
-
         if (include_names) {
-            char utf8[MAX_PATH * 4];
-            process_name_utf8(entry.szExeFile, utf8, sizeof utf8);
             fputs(",\"process_name\":", out);
             json_string(out, utf8);
         }
@@ -190,7 +215,35 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
         if (have_io) fprintf(out, "%u", xray_io_read_quanta_64m((uint32_t)read_kib));
         else fputs("null", out);
 
-        if (!have_memory || !have_io || !have_creation) {
+        fputs(",\"cumulative_io_write_kib\":", out);
+        if (have_io) fprintf(out, "%llu", (unsigned long long)(write_bytes/1024u));
+        else fputs("null", out);
+        fputs(",\"cpu_total_ms\":", out);
+        if (have_cpu) fprintf(out, "%llu", (unsigned long long)(cpu_ticks/10000u));
+        else fputs("null", out);
+        fputs(",\"delta_quality\":", out);
+        json_string(out, metrics.quality);
+        fputs(",\"interval_ms\":", out);
+        if (metrics.interval_ms) fprintf(out, "%u", metrics.interval_ms);
+        else fputs("null", out);
+        fputs(",\"cpu_millicores\":", out);
+        if (metrics.has_cpu) fprintf(out, "%u", metrics.cpu_millicores);
+        else fputs("null", out);
+        fputs(",\"io_read_kib_s\":", out);
+        if (metrics.has_read) fprintf(out, "%u", metrics.read_kib_s);
+        else fputs("null", out);
+        fputs(",\"io_write_kib_s\":", out);
+        if (metrics.has_write) fprintf(out, "%u", metrics.write_kib_s);
+        else fputs("null", out);
+        fputs(",\"memory_delta_kib\":", out);
+        if (metrics.has_memory_delta) fprintf(out, "%lld", (long long)metrics.memory_delta_kib);
+        else fputs("null", out);
+        fputs(",\"activity_score\":", out);
+        if (metrics.has_score) fprintf(out, "%u", metrics.activity_score);
+        else fputs("null", out);
+        fputs(",\"evidence_class\":\"COMPUTED_FROM_OS_OBSERVATIONS\"", out);
+
+        if (!have_memory || !have_io || !have_creation || !have_cpu) {
             fputs(",\"quality\":\"partial\"", out);
             if (err) fprintf(out, ",\"win32_error\":%lu", (unsigned long)err);
         } else {
@@ -205,9 +258,13 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
         ++stats->errors;
         return 0;
     }
+    xr_end_sample(analyzer);
     fprintf(out, "{\"type\":\"sample_end\",\"sample\":%u,\"processes\":%lu,"
-                 "\"readable_memory\":%lu,\"open_denied\":%lu,\"open_failed\":%lu,\"errors\":%lu}\n",
-                 sample, stats->seen, stats->readable_memory, stats->denied, stats->open_failed, stats->errors);
+                 "\"readable_memory\":%lu,\"open_denied\":%lu,\"open_failed\":%lu,\"errors\":%lu,"
+                 "\"complete_rate_vectors\":%u,\"peak_activity_score\":%u}\n",
+                 sample, stats->seen, stats->readable_memory, stats->denied, stats->open_failed, stats->errors,
+                 sample <= 30 ? analyzer->sample_derived[sample] : 0u,
+                 sample <= 30 ? analyzer->sample_peak_score[sample] : 0u);
     return 1;
 }
 
@@ -232,28 +289,44 @@ static int self_test(void) {
         fputs("AURA CORE CONTRACT FAIL: conversion or IO quanta\n", stderr);
         return 0;
     }
-    puts("AURA_CORE_CONTRACT_PASS 12 vectors; source=analysis.aura; backend=c");
+    if (xray_read_kib_per_sec(1024,1000) != 1024 ||
+        xray_read_kib_per_sec(8192,2000) != 4096 ||
+        xray_cpu_millicores(500,1000) != 500 ||
+        xray_cpu_millicores(2000,1000) != 2000 ||
+        xray_activity_score(500,8192,4096,4) != 19 ||
+        xray_activity_score(0,0,0,0) != 0) {
+        fputs("AURA CORE CONTRACT FAIL: temporal normalization or score\n",stderr);
+        return 0;
+    }
+    if (!xr_self_test_engine()) {
+        fputs("XRAY TEMPORAL CONTRACT FAIL: identity/counter/reset fixture\n",stderr);
+        return 0;
+    }
+    puts("AURA_CORE_CONTRACT_PASS 18 vectors; source=analysis.aura; backend=c");
+    puts("XRAY_TEMPORAL_CONTRACT_PASS baseline, rates, reset, PID reuse, unknown identity");
     return 1;
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-01 -- Native Windows Process Observation\n"
+    fputs("AURA X-RAY XR-02 -- Native Windows Process Analysis\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
           "  AuraXRay.exe --self-test\n"
-          "  AuraXRay.exe --capture --seconds N --out FILE [--include-names]\n"
+          "  AuraXRay.exe --capture --seconds N --out FILE [--report REPORT.html] [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "Current limitations: no CPU rate, no ETW, no GUI, no root-cause proof.\n", out);
+          "XR-02: identity-guarded CPU millicores, read/write KiB/s, memory deltas, Aura activity.\n"
+          "Optional offline HTML report; process names are opt-in only.\n"
+          "Limitations: no ETW, no automatic fixes, no causal/root-cause proof.\n", out);
 }
 
 int main(int argc, char **argv) {
     if (argc == 1) { usage(stdout); return 0; }
     int capture = 0, include_names = 0;
     unsigned seconds = 0;
-    const char *out_path = NULL;
+    const char *out_path = NULL, *report_path = NULL;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--help") == 0 && argc == 2) {
@@ -285,6 +358,10 @@ int main(int argc, char **argv) {
             out_path = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--report") == 0 && i+1 < argc) {
+            report_path = argv[++i];
+            continue;
+        }
         fprintf(stderr, "ERROR unknown or incomplete option: %s\n", argv[i]);
         return 2;
     }
@@ -294,9 +371,22 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    XRAnalyzer *analyzer = xr_new();
+    if (!analyzer) { fputs("ERROR cannot allocate bounded telemetry history\n",stderr); return 3; }
+    FILE *report = NULL;
+    if (report_path) {
+        if (!report_path[0] || strcmp(report_path,out_path)==0 ||
+            fopen_s(&report,report_path,"wx")!=0 || !report) {
+            xr_free(analyzer);
+            fputs("ERROR report output must be new and distinct from capture path\n",stderr);
+            return 3;
+        }
+    }
     FILE *out = NULL;
     errno_t result = fopen_s(&out, out_path, "wx");
     if (result || !out) {
+        if (report) { fclose(report); remove(report_path); }
+        xr_free(analyzer);
         fprintf(stderr, "ERROR cannot create output (file must not exist): %s\n", out_path);
         return 3;
     }
@@ -315,10 +405,12 @@ int main(int argc, char **argv) {
     for (unsigned s = 1; s <= seconds; ++s) {
         if (s > 1) wait_until_monotonic_ms(started_ms + 1000u * (uint64_t)(s - 1));
         SampleStats stats = {0};
-        if (!collect_sample(out, s, include_names, &stats)) {
+        if (!collect_sample(out, s, include_names, analyzer, &stats)) {
             fprintf(out, "{\"type\":\"error\",\"sample\":%u,\"status\":\"snapshot_failed\"}\n", s);
             fprintf(out, "{\"type\":\"capture_end\",\"status\":\"partial\",\"samples\":%u}\n", s-1);
             fclose(out);
+            if (report) { fclose(report); remove(report_path); }
+            xr_free(analyzer);
             fprintf(stderr, "ERROR Win32 process snapshot failed (sample %u)\n", s);
             return 4;
         }
@@ -336,16 +428,43 @@ int main(int argc, char **argv) {
     fprintf(out, "{\"type\":\"capture_end\",\"status\":\"complete\","
                  "\"samples\":%u,\"process_records\":%llu,\"readable_memory\":%llu,"
                  "\"open_denied\":%llu,\"open_failed\":%llu,\"errors\":%llu,"
-                 "\"monotonic_ms\":%llu,\"elapsed_ms\":%llu,\"utc\":\"%s\"}\n",
+                 "\"monotonic_ms\":%llu,\"elapsed_ms\":%llu,\"utc\":\"%s\","
+                 "\"derived_records\":%llu,\"baseline_records\":%llu,"
+                 "\"unknown_identity\":%llu,\"pid_reused\":%llu,\"counter_resets\":%llu,"
+                 "\"history_capacity_misses\":%llu}\n",
                  seconds, (unsigned long long)count, (unsigned long long)readable,
                  (unsigned long long)denied, (unsigned long long)open_failed, (unsigned long long)errors,
-                 (unsigned long long)ended_ms, (unsigned long long)elapsed_ms, finished);
+                 (unsigned long long)ended_ms, (unsigned long long)elapsed_ms, finished,
+                 (unsigned long long)analyzer->derived_records,
+                 (unsigned long long)analyzer->baseline_records,
+                 (unsigned long long)analyzer->missing_identity,
+                 (unsigned long long)analyzer->reused_pids,
+                 (unsigned long long)analyzer->counter_resets,
+                 (unsigned long long)analyzer->track_overflows);
     if (fclose(out) != 0) {
+        if (report) { fclose(report); remove(report_path); }
+        xr_free(analyzer);
         fputs("ERROR unable to flush capture\n", stderr);
         return 5;
     }
-    printf("AURA_XRAY_CAPTURE_OK samples=%u processes=%llu readable=%llu denied=%llu errors=%llu output=%s\n",
+    if (report) {
+        int ok = xr_write_html(report,analyzer,XR_BUILD_SHA,seconds,elapsed_ms,
+                               denied,open_failed,include_names);
+        if (fclose(report)!=0) ok=0;
+        if (!ok) {
+            remove(report_path);
+            xr_free(analyzer);
+            fputs("ERROR unable to finalize HTML report (capture remains valid)\n",stderr);
+            return 6;
+        }
+    }
+    printf("AURA_XRAY_CAPTURE_OK samples=%u processes=%llu readable=%llu denied=%llu open_failed=%llu errors=%llu derived=%llu elapsed_ms=%llu output=%s",
            seconds, (unsigned long long)count, (unsigned long long)readable,
-           (unsigned long long)denied, (unsigned long long)errors, out_path);
+           (unsigned long long)denied, (unsigned long long)open_failed,
+           (unsigned long long)errors, (unsigned long long)analyzer->derived_records,
+           (unsigned long long)elapsed_ms, out_path);
+    if (report_path) printf(" report=%s",report_path);
+    putchar('\n');
+    xr_free(analyzer);
     return 0;
 }
