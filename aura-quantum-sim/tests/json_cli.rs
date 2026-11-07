@@ -34,7 +34,14 @@ fn invoke(input: &[u8], args: &[&str]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    // On invalid CLI flags the child can exit before reading stdin.
+    // BrokenPipe is then expected for this negative test; actual status,
+    // stdout and stderr are still asserted by the calling test.
+    let sent=child.stdin.take().unwrap().write_all(input);
+    if args.is_empty() { sent.unwrap(); }
+    else if let Err(err)=sent {
+        assert_eq!(err.kind(),std::io::ErrorKind::BrokenPipe);
+    }
     child.wait_with_output().unwrap()
 }
 
