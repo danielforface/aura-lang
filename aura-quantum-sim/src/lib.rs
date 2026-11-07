@@ -14,6 +14,7 @@ pub mod stabilizer;
 pub mod stabilizer_json;
 pub mod symbolic;
 pub mod symbolic_json;
+pub mod dispatch_json;
 
 use std::mem::size_of;
 
