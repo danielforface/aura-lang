@@ -11,6 +11,7 @@ pub mod density;
 pub mod noisy_circuit;
 pub mod noisy_json;
 pub mod stabilizer;
+pub mod stabilizer_json;
 
 use std::mem::size_of;
 
