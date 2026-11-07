@@ -378,12 +378,21 @@ cell render_record_only(p: Point) ->:
             "int main(void) { aura_record_506f696e74 p={7u,13u};\n",
             "return (render_saved(p,31u)==7u && render_record_only(p)==0u) ? 0 : 1; }\n"
         )).unwrap();
+        // The public C runtime normally supplies aura_io_println.
+        // A separate standalone native-ABI test must link that symbol
+        // explicitly when a String has no resolved interpolation slots.
+        // Keep the unresolved/forward-binding behavior under test rather
+        // than deleting it just to make the generated C link.
+        fs::write(tmp.0.join("stdlib.c"),
+            "#include <stdio.h>\nvoid aura_io_println(const char* s) { puts(s); }\n"
+        ).unwrap();
         for opt in ["-O0", "-O2"] {
             let exe = tmp.0.join(format!("frozen_string_{label}_{}", &opt[1..]));
             let cc = Command::new("clang")
                 .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
                 .arg(&tmp.0).arg(tmp.0.join("module.c"))
-                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .arg(tmp.0.join("stdlib.c")).arg(tmp.0.join("driver.c"))
+                .arg("-o").arg(&exe)
                 .output().expect("Clang available in Native CI");
             assert!(cc.status.success(), "{label}/{opt}: {}\n{}",
                 String::from_utf8_lossy(&cc.stderr), output.module_c);
