@@ -1,0 +1,1550 @@
+{
+  "schema": "aura.quantum.dispatch-request/1",
+  "qubits": 128,
+  "classical_bits": 0,
+  "seed": 20261107,
+  "shots": 1,
+  "max_memory_bytes": 16777216,
+  "inspect_factors": true,
+  "inspect_basis": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 1
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 2
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 2,
+        "target": 3
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 3
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 4
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 4,
+        "target": 5
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 5
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 6
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 6,
+        "target": 7
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 7
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 8
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 8,
+        "target": 9
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 9
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 10
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 10,
+        "target": 11
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 11
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 12
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 12,
+        "target": 13
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 13
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 14
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 14,
+        "target": 15
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 15
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 16
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 16,
+        "target": 17
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 17
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 18
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 18,
+        "target": 19
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 19
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 20
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 20,
+        "target": 21
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 21
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 22
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 22,
+        "target": 23
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 23
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 24
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 24,
+        "target": 25
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 25
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 26
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 26,
+        "target": 27
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 27
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 28
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 28,
+        "target": 29
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 29
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 30
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 30,
+        "target": 31
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 31
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 32
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 32,
+        "target": 33
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 33
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 34
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 34,
+        "target": 35
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 35
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 36
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 36,
+        "target": 37
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 37
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 38
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 38,
+        "target": 39
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 39
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 40
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 40,
+        "target": 41
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 41
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 42
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 42,
+        "target": 43
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 43
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 44
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 44,
+        "target": 45
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 45
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 46
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 46,
+        "target": 47
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 47
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 48
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 48,
+        "target": 49
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 49
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 50
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 50,
+        "target": 51
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 51
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 52
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 52,
+        "target": 53
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 53
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 54
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 54,
+        "target": 55
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 55
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 56
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 56,
+        "target": 57
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 57
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 58
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 58,
+        "target": 59
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 59
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 60
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 60,
+        "target": 61
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 61
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 62
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 62,
+        "target": 63
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 63
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 64
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 64,
+        "target": 65
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 65
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 66
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 66,
+        "target": 67
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 67
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 68
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 68,
+        "target": 69
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 69
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 70
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 70,
+        "target": 71
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 71
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 72
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 72,
+        "target": 73
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 73
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 74
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 74,
+        "target": 75
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 75
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 76
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 76,
+        "target": 77
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 77
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 78
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 78,
+        "target": 79
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 79
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 80
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 80,
+        "target": 81
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 81
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 82
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 82,
+        "target": 83
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 83
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 84
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 84,
+        "target": 85
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 85
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 86
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 86,
+        "target": 87
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 87
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 88
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 88,
+        "target": 89
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 89
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 90
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 90,
+        "target": 91
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 91
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 92
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 92,
+        "target": 93
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 93
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 94
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 94,
+        "target": 95
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 95
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 96
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 96,
+        "target": 97
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 97
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 98
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 98,
+        "target": 99
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 99
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 100
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 100,
+        "target": 101
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 101
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 102
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 102,
+        "target": 103
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 103
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 104
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 104,
+        "target": 105
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 105
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 106
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 106,
+        "target": 107
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 107
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 108
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 108,
+        "target": 109
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 109
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 110
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 110,
+        "target": 111
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 111
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 112
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 112,
+        "target": 113
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 113
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 114
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 114,
+        "target": 115
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 115
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 116
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 116,
+        "target": 117
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 117
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 118
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 118,
+        "target": 119
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 119
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 120
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 120,
+        "target": 121
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 121
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 122
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 122,
+        "target": 123
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 123
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 124
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 124,
+        "target": 125
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 125
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 126
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 126,
+        "target": 127
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 127
+      }
+    }
+  ],
+  "mode": "auto"
+}

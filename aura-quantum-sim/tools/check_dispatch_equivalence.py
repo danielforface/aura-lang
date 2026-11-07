@@ -21,6 +21,8 @@ SCHEMAS = {
                       "aura.quantum.noisy-result/1"),
     "exact_symbolic": ("aura-quantum-symbolic-run", "aura.quantum.symbolic-request/1",
                        "aura.quantum.symbolic-result/1"),
+    "factor_product": ("aura-quantum-factorized-run", "aura.quantum.factorized-request/1",
+                       "aura.quantum.factorized-result/1"),
 }
 DISPATCH_SCHEMA = "aura.quantum.dispatch-request/1"
 
@@ -82,6 +84,7 @@ def main(bins,fixtures):
         ("nonclifford","pure_statevector"),
         ("noise","noisy_density"),
         ("exact","exact_symbolic"),
+        ("factorized_128","factor_product"),
     ]:
         req=json.loads((fixtures/f"dispatch_{basename}_v1.json").read_text())
         positive(bins,req,want)
@@ -112,6 +115,11 @@ def main(bins,fixtures):
                     {"op":"noise","channel":{"kind":"amplitude_damping",
                         "qubit":0,"gamma":[0.0,0.2,0.5][idx%3]}},
                     {"op":"measure","qubit":0,"into_bit":0}])),
+                ("factor_product",program(16,"auto",[
+                    {"op":"gate","gate":{"kind":"h","target":0}},
+                    {"op":"gate","gate":{"kind":"t","target":0}},
+                    {"op":"gate","gate":{"kind":"cx","control":0,"target":1}},
+                    {"op":"measure","qubit":0,"into_bit":0}],True)),
                 ("exact_symbolic",program(n,"exact_branch",[
                     {"op":"gate","gate":{"kind":"h","target":0}},
                     {"op":"gate","gate":{"kind":"t","target":0}},
@@ -159,10 +167,10 @@ def main(bins,fixtures):
     bad.append(forced)
     for case in bad:
         negative(bins,case)
-    if sum(counts.values())!=100 or len(bad)!=17:
+    if sum(counts.values())!=125 or len(bad)!=17:
         raise AssertionError("incomplete deterministic dispatch matrix")
     print("Q28_DISPATCH_EXTERNAL_PROCESS_PASS "+
-          json.dumps({"positives":100,"negatives":17,"routes":counts,
+          json.dumps({"positives":125,"negatives":17,"routes":counts,
             "qpu_hardware_jobs":0},sort_keys=True),flush=True)
 
 if __name__=="__main__":
