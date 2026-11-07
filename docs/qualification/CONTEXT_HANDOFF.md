@@ -1044,3 +1044,12 @@ User required coordination rules for agents encountering common code, API, ances
 **Authority:** [Operating Protocol](OPERATING_PROTOCOL.md) and [Production First](DELIVERY_OPERATING_POLICY_V1.md) remain binding; Master V1/V2/V3 frozen and untouched. New per-phase D0–D5 requirements prevent silent consumer ABI changes and cross-agent writes, but independent D0 production continues without more bureaucracy. If a contract changes, one Issue handshake; if a file overlaps, one writer; if history overlaps, target integration DAG and exact merged-tree tests. Updated policy on the V3 Draft branch only; existing A/B/C branches have not been modified, merged or rebased.
 
 **Next safe action:** verify CI on the final new docs+test SHA, notify active owner PRs and #59/#109 with direct policy links. Then integrator reviews #106 dependency graph and main-safe landing plan without merging by default; A/B/C continue real product features under their own current PRs.
+
+
+## 2026-11-07 — Continuous Agent X leadership charter (recurring, not one-shot)
+
+**Maintainer decision:** Create a fourth X agent to lead Architecture, Core, Lumina and Quantum integration through its OWN stream of repeated "ממשיכים" pulses, assess each agent's work and direct the common end-to-end product goal. This role is **supportive by default**: verified productive agents get specific encouragement and protection from unnecessary disruption; unjustified material deviation triggers evidence-based RED correction only after considering plausible rationale. Justified technical variance is permitted.
+
+**Artifacts:** [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md), [X first/recurring prompt](AGENT_X_CONTINUE_PROMPT.md), [Issue #110](https://github.com/danielforface/aura-lang/issues/110), root [AGENTS](../../AGENTS.md), [Phase Lifecycle](PHASE_LIFECYCLE_V1.md) and [Integration Playbook](INTEGRATION_AND_CI_PLAYBOOK.md); machine-readable ownership registry and test ensure X is coordination-only, without write entitlement over A/B/C source and without autonomous merge authority. No forced changes to active A/B/C branches. **X has not yet started a separate user-triggered operating pulse.**
+
+**Next safe action:** start Agent X with full X startup prompt, refresh all current PR/Issues/CI (not old snapshot SHAs), produce first dependency DAG and justifiable GREEN/AMBER/RED/CROSS-LANE decisions; post material instructions in actual PR threads and the standing #110 issue. Do not invent deviations or merge without user approval.

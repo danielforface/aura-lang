@@ -46,3 +46,8 @@ Do not write "6/6" absent six confirmed jobs on the same exact head. A Draft PR 
 - If the user writes **"ממשיכים"** alone, assume same lane/Issue/feature, but re-fetch GitHub live truth and every policy anchor; continue code toward the stated product acceptance. No repeated user question and no automatic switch to generic research.
 - If the user provides a changed priority or a new upstream contract, update only that dimension and re-classify D0–D5.
 - New agent or new chat: read [Universal Continuation Prompt](CONTINUE_AGENT_PROMPT.md) and own lane instructions BEFORE choosing files. Links to central documents in other branches are read-only references; no claim they were merged.
+
+
+## Agent X extension — repeat leadership, not one-time audit (2026-11-07)
+
+For the dedicated integrator, every "ממשיכים" repeats the full [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md) X0–X5 and [X startup/continuation prompt](AGENT_X_CONTINUE_PROMPT.md) with refreshed A/B/C PR truth and ownership contracts. X MUST make an evidence-based decision for each agent (GREEN support, AMBER investigate, RED corrective only when warranted, CROSS-LANE mediate). X **must not** manufacture corrective criticism for a productive agent, and **must not** skip a material, demonstrated divergence. Use `JUSTIFIED_VARIANCE` when engineering rationale supports deviation, and `NO_ACTION_NEEDED` when intervention has no value. The one or two most consequential integration actions beat status bureaucracy. No automatic merge, force push, release or QPU costs.

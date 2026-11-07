@@ -1,12 +1,14 @@
 {
   "schema_version": 1,
-  "policy_date": "2026-11-06",
+  "policy_date": "2026-11-07",
   "policy_documents": [
     "AGENTS.md",
     "docs/qualification/PHASE_LIFECYCLE_V1.md",
     "docs/qualification/CROSS_AGENT_COORDINATION_V1.md",
     "docs/qualification/DELIVERY_OPERATING_POLICY_V1.md",
-    "docs/qualification/CONTINUE_AGENT_PROMPT.md"
+    "docs/qualification/CONTINUE_AGENT_PROMPT.md",
+    "docs/qualification/agents/AGENT_X_INTEGRATION_DIRECTOR.md",
+    "docs/qualification/AGENT_X_CONTINUE_PROMPT.md"
   ],
   "agents": {
     "A": {
@@ -84,5 +86,24 @@
     "D5"
   ],
   "release_authority": "maintainer_review_required",
-  "note": "This is a scope map for NEW actions, not an accusation that older stacked PR diffs broke ownership. Other code paths remain unassigned until reviewed claim; no automatic write entitlement for the integration steward."
+  "note": "This is a scope map for NEW actions, not an accusation that older stacked PR diffs broke ownership. Other code paths remain unassigned until reviewed claim; no automatic write entitlement for the integration steward.",
+  "integration_agent": {
+    "id": "X",
+    "label": "Architecture and continuous integration director",
+    "standing_issue": 110,
+    "owns_code_of_other_agents": false,
+    "may_merge_without_maintainer_approval": false,
+    "authority": [
+      "cross-lane architecture review",
+      "producer-consumer contract mediation",
+      "PR ancestry and dependency DAG",
+      "non-destructive integration readiness testing",
+      "serialized integration-owned policy/docs",
+      "CI efficiency and truthful release-readiness"
+    ],
+    "charter": "docs/qualification/agents/AGENT_X_INTEGRATION_DIRECTOR.md",
+    "startup_prompt": "docs/qualification/AGENT_X_CONTINUE_PROMPT.md",
+    "requires_evidence_for_correction": true,
+    "default_if_on_track": "GREEN_SUPPORT_AND_DO_NOT_DISTURB"
+  }
 }

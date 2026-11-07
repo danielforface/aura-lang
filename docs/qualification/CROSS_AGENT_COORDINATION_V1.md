@@ -4,12 +4,12 @@
 ## 0. A critical distinction: four kinds of "shared"
 - **File write overlap:** two branches actually edit the same path or dynamically generated artifact. Only one writable owner until reviewed transfer; other lane may READ and implement independent adapter/test.
 - **Semantic/interface overlap:** separate files depend on shared ABI, API, IR schema, protocol, error semantics, cache key, feature flags, or platform behavior. Paths may be disjoint yet changes can break another agent. A *versioned producer-consumer contract* and consumer tests are required BEFORE a breaking change.
-- **History/merge overlap:** branch B contains hundreds of ancestor commits from A or other still-unmerged work. GitHub's `mergeable</BT> against a parent PR base does NOT prove an independent releaseable patch or clean main integration. Create an explicit ancestry and inclusion/exclusion decision.
+- **History/merge overlap:** branch B contains hundreds of ancestor commits from A or other still-unmerged work. GitHub's `mergeable` against a parent PR base does NOT prove an independent releaseable patch or clean main integration. Create an explicit ancestry and inclusion/exclusion decision.
 - **Shared operational resources:** CI workflows, Cargo workspace/lockfiles, integration docs, status and release claims. One coordinator serializes, or use path-scoped builds and separate agent notes.
 
 ## 1. Verified motivating example (snapshot; re-fetch current refs before work)
-- [Lumina Draft #106](https://github.com/danielforface/aura-lang/pull/106) at `7b45b025cfc68239901dcdb4bca22a363862f47d</BT> implemented real native `TextInput(autofocus: "true")</BT>, 6/6 CI success. GitHub compare main...#106: **542 ahead, 0 behind**, merge base `e8f1c35a4a56adbde983dce38bba59a8c4eee105</BT>, ~171 changed paths vs main. This does NOT make Autofocus a 542-commit feature.
-- #106 is a 5-commit PR against its immediate Phase36 Draft base; the independent Autofocus delta is much smaller than the accumulated ancestry. PR #95 governance and #106 Lumina have 3 exact overlapping shared ledgers: `docs/qualification/PROGRESS.md</BT>, `CONTEXT_HANDOFF.md</BT> and `EVIDENCE_LOG.md</BT>. #57 Core overlaps #106 in those 3 central files even though production paths are separate.
+- [Lumina Draft #106](https://github.com/danielforface/aura-lang/pull/106) at `7b45b025cfc68239901dcdb4bca22a363862f47d` implemented real native `TextInput(autofocus: "true")`, 6/6 CI success. GitHub compare main...#106: **542 ahead, 0 behind**, merge base `e8f1c35a4a56adbde983dce38bba59a8c4eee105`, ~171 changed paths vs main. This does NOT make Autofocus a 542-commit feature.
+- #106 is a 5-commit PR against its immediate Phase36 Draft base; the independent Autofocus delta is much smaller than the accumulated ancestry. PR #95 governance and #106 Lumina have 3 exact overlapping shared ledgers: `docs/qualification/PROGRESS.md`, `CONTEXT_HANDOFF.md` and `EVIDENCE_LOG.md`. #57 Core overlaps #106 in those 3 central files even though production paths are separate.
 - [Core Draft #57](https://github.com/danielforface/aura-lang/pull/57) and B are **diverged**: compare A...B 336 ahead / 188 behind at observation. Neither unilateral merge nor naïve replay is safe. [Quantum Draft #108](https://github.com/danielforface/aura-lang/pull/108) is a real simulator implementation on an older V3 parent; its dependency history does not automatically include the latest execution policy.
 - [IBus Draft #76](https://github.com/danielforface/aura-lang/pull/76), alternative crash test Draft #89 and plan PR #95 must be classified as ANCESTOR, PARALLEL, SUPERSEDED or NEEDED; mergeable is not enough. These are audit snapshots, not instructions to merge.
 
@@ -45,12 +45,12 @@ Issue link and last reviewed SHA:
 The producer owns the contract implementation; consumer owns integration tests. A change to shared API requires explicit ACK or approved compatibility adapter. No silent claim that an unmerged PR is available to other branches. No hidden messages between independent chats: GitHub PR/Issue is the shared bus.
 
 ## 4. Atomic integration rules for diverged branches
-1. Compute current `base SHA</BT>, `head SHA</BT>, `merge-base</BT>, `ahead/behind</BT>, changed paths of **the PR's own base...head** AND **main...head**. These answer different questions.
+1. Compute current `base SHA`, `head SHA`, `merge-base`, `ahead/behind`, changed paths of **the PR's own base...head** AND **main...head**. These answer different questions.
 2. Trace unmerged dependencies as a directed acyclic graph (DAG), including multiple branches created from another agent's outdated head. Mark each ancestor KEEP / REVIEW / SUPERSEDED / EXCLUDE; do not assume all 542 commits should land as one PR.
 3. Have the integrator choose a reviewed target integration branch with accurate base. Select one of: (a) normal merge in correct ancestor order, (b) reviewed cherry-pick of the unique functional delta to a clean integration branch after dependencies are satisfied, (c) a tested adapter with the other change deferred. Preserve attribution and original PR links. No blanket rewriting of existing Draft branches.
 4. Validate on **synthetic integration tree** or approved actual target snapshot: code build, contract tests, affected native/GUI/quantum tests and regressions. The branch's 6/6 CI against its *own parent* is necessary but not sufficient for another target.
 5. Before modifying any ref, re-fetch expected SHA (optimistic concurrency / lease); reject if target moved, reconcile and retest. No force push or silent overwrite.
-6. Only maintainer/reviewer-approved decision promotes to integration/main. `mergeable</BT> is conflict detection for a given target, not product acceptance or authorization.
+6. Only maintainer/reviewer-approved decision promotes to integration/main. `mergeable` is conflict detection for a given target, not product acceptance or authorization.
 7. Single integrator serializes shared docs, Cargo root lockfiles, release ledger and cross-lane workflows; lane agents publish scoped notes in their own Issue/PR. Competing logs are synthesized after approved integration, not manually concatenated across branches.
 
 ## 5. Overlap resolution decision tree
@@ -68,3 +68,8 @@ The producer owns the contract implementation; consumer owns integration tests. 
 - The **read/decide/write/recheck** sequence is restated in [Phase Lifecycle Contract](PHASE_LIFECYCLE_V1.md) and [CONTINUE prompt](CONTINUE_AGENT_PROMPT.md). These links must be followed at EVERY phase, even when the user only says "ממשיכים".
 
 **No false guarantees:** mere documentation cannot autonomously enforce correct agent behavior. The agent must actually read current links and GitHub facts. This protocol does not change V1/V2/V3 task IDs or claim any release.
+
+
+## Standing cross-agent arbitrator — X (2026-11-07)
+
+Agent X is the continuous mediation/architecture leader ([charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md), [Issue #110](https://github.com/danielforface/aura-lang/issues/110)). X applies D0–D5 in every pulse and requests only *necessary* handshakes; normal D0 work proceeds. X gives agents with sound evidence GREEN encouragement, not gratuitous corrections. AMBER investigates justification and contracts; RED requires material verified harm; CROSS-LANE resolves dependencies by reviewed producer/consumer decisions. No autonomy to rewrite another's paths or approve main merge.

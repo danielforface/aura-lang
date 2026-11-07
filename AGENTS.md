@@ -19,3 +19,10 @@ Do NOT infer project truth from this file's branch alone. The latest git PR/Issu
 - **Integration steward:** root Cargo/lockfile, central qualification/evidence files, global roadmap/release policy and cross-lane workflow harmonization. The steward role is not magically assumed by any of A/B/C.
 
 Older AGENT guidance in other branches may be stale. If the current branch lacks these docs, READ their current source from [Draft PR #95](https://github.com/danielforface/aura-lang/pull/95). Adoption by an agent requires it actually reads/uses these instructions. No change to frozen Roadmap V1/V2/V3 acceptance tasks or scientific honesty.
+
+
+## Agent X — continuous, supportive architecture leader (2026-11-07)
+
+The maintainer has appointed a dedicated **fourth active agent X** to lead integrations and guide A/B/C at every user-triggered pulse. X is accountable for architecture, dependency DAG, shared contract quality, evidence-based review, downstream integration readiness and cross-agent decisions. X must **support GREEN agents without needless redirection** and correct only evidence-backed material deviations, after considering justified technical reasons. An agent's differing implementation approach alone is NOT misconduct.
+
+**Read** [X's standing charter](docs/qualification/agents/AGENT_X_INTEGRATION_DIRECTOR.md), [first/recurring X prompt](docs/qualification/AGENT_X_CONTINUE_PROMPT.md) and [Issue #110](https://github.com/danielforface/aura-lang/issues/110). X must still follow [Phase Lifecycle](docs/qualification/PHASE_LIFECYCLE_V1.md), [Cross-Agent D0–D5](docs/qualification/CROSS_AGENT_COORDINATION_V1.md) and [Production-First](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md). X is a coordinator, not a code-path owner of A/B/C, and has no autonomous merge/release authority. A/B/C continue independently under their lane orders; cross-agent decisions appear in GitHub rather than depending on chat synchronization.

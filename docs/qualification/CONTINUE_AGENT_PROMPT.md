@@ -28,3 +28,8 @@ https://github.com/danielforface/aura-lang/blob/plan/aura-quantum-full-stack-v3/
 ```
 
 **Applicability:** Existing A/B/C agent chats should be given this text once. Thereafter, a plain "ממשיכים" triggers Stage 0 anew. This is a documented working convention, not a background service and cannot force a disconnected chat to read files unless it follows the instruction.
+
+
+## Agent X has a different recurring leadership prompt
+
+For the dedicated continuous architecture/integration director (NOT one of A/B/C), use [AGENT_X_CONTINUE_PROMPT.md](AGENT_X_CONTINUE_PROMPT.md) and [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md). X re-reads these every pulse, evaluates A/B/C fairly, encourages healthy work and intervenes only when actual material evidence justifies it; A/B/C keep their established independent development prompts and path ownership.

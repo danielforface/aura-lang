@@ -1,5 +1,7 @@
 # Aura Qualification Program — start here
 
+> **Standing director X:** [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md) · [X recurring prompt](AGENT_X_CONTINUE_PROMPT.md) · [Issue #110](https://github.com/danielforface/aura-lang/issues/110). X leads the A/B/C integration program via recurring evidence-based pulses; support on-track agents, correct only justified material deviations, protect independent ownership and seek explicit approval before merges.
+
 > **Live agent entrypoint:** [root AGENTS.md](../../AGENTS.md), [every-phase lifecycle](PHASE_LIFECYCLE_V1.md), [cross-agent ownership/contracts](CROSS_AGENT_COORDINATION_V1.md), [universal “ממשיכים” prompt](CONTINUE_AGENT_PROMPT.md), and [structured ownership map](AGENT_OWNERSHIP.json). A/B/C must READ these at every phase, even if their active branch predates the docs.
 
 **Purpose:** ongoing, evidence-based multi-release qualification of Aura without pretending to implement all missing features in one patch.

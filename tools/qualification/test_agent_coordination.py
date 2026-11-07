@@ -33,3 +33,20 @@ assert all(("Stage "+str(i)) in life for i in range(5))
 assert "AGENT / LANE" in life and "BEFORE" in life
 assert "PR #95" in prompt and "Issue #59" in prompt or "issues/59" in prompt
 print("Agent coordination PASS: lane ownership nonoverlap; policy anchors, D0-D5 and phase re-entry present")
+
+# Agent X is a coordinator and serialized integration-doc steward, NOT an
+# additional production writer inside A/B/C's exclusive paths.
+x = data["integration_agent"]
+assert x["id"] == "X" and x["standing_issue"] == 110
+assert x["owns_code_of_other_agents"] is False
+assert x["may_merge_without_maintainer_approval"] is False
+assert x["requires_evidence_for_correction"] is True
+assert x["default_if_on_track"] == "GREEN_SUPPORT_AND_DO_NOT_DISTURB"
+assert (ROOT / x["charter"]).is_file()
+assert (ROOT / x["startup_prompt"]).is_file()
+xc = read(x["charter"])
+xs = read(x["startup_prompt"])
+for phrase in ("GREEN", "AMBER", "RED", "CROSS-LANE", "JUSTIFIED_VARIANCE", "ממשיכים", "NO_ACTION_NEEDED"):
+    assert phrase in xc, phrase
+assert all(token in xs for token in ("X-001", "AGENT", "ממשיכים", "issues/110", "issues/109"))
+print("Agent X leadership PASS: standing mandate, evidence-gated intervention, no autonomous merge")
