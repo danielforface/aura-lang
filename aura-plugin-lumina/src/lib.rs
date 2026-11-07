@@ -329,6 +329,11 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    /// Native Button keyboard focus, exclusive with focused_input.
+    focused_button: Option<u64>,
+    /// First eligible, explicitly opted TextInput can get initial focus only
+    /// once per window; later user blur/Tab/click must never be overridden.
+    autofocus_decided: bool,
     input_sessions: HashMap<u64, FocusedTextInput>,
     last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
@@ -393,6 +398,22 @@ fn sync_native_ibus_context(
         bus.sync_surrounding_text(cb,&fi.session.buffer,caret,anchor)
     };
     sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
+}
+
+/// Picks from the already-qualified focus order: clipping, visibility,
+/// disabled controls, unique callback identity and value_revision validation
+/// are enforced BEFORE this opt-in focus decision.
+#[cfg(feature = "raylib")]
+fn initial_autofocus_target(
+    tree:&UiNode,planned:&layout::LayoutNode,
+    order:&[layout::HitTarget]
+)->Option<layout::HitTarget>{
+    order.iter().find(|candidate|match candidate{
+        layout::HitTarget::TextInput{on_change,..} =>
+            find_input_by_callback(tree,planned,*on_change)
+                .is_some_and(|(node,_)|prop_string(node,"autofocus")==Some("true")),
+        _=>false,
+    }).cloned()
 }
 
 #[cfg(feature = "raylib")]
@@ -1301,6 +1322,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    focused_button: None,
+                    autofocus_decided: false,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
@@ -1372,6 +1395,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let mut delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
             let mut left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
             let mut right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let radio_up = win.rl.is_key_pressed(KeyboardKey::KEY_UP);
+            let radio_down = win.rl.is_key_pressed(KeyboardKey::KEY_DOWN);
             let mut home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
             let mut end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
             let mut enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
@@ -1385,6 +1410,14 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
+            let space = win.rl.is_key_pressed(KeyboardKey::KEY_SPACE);
+            // Sample modifiers BEFORE begin_drawing borrows the Raylib handle.
+            // A keyboard Button action may not use Ctrl/Alt/Super shortcuts.
+            let plain_button_action=!ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
             let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
@@ -1417,13 +1450,20 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
+            let invalid_radio_groups=layout::invalid_radio_groups(tree,&planned_layout);
             let mut focus_order = layout::focus_order(tree, &planned_layout);
             let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
             focus_order.retain(|entry|match entry {
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
             });
+            let keyboard_order=layout::keyboard_focus_order(tree,&planned_layout,&focus_order);
             reconcile_input_sessions(win,&focus_order,&revisions);
+            // No callback from a removed, clipped, disabled or ambiguous button.
+            if win.focused_button.is_some_and(|id|!keyboard_order.iter()
+                .any(|entry|matches!(entry,layout::HitTarget::Button(other) if *other==id))) {
+                win.focused_button=None;
+            }
             // The popup is overlaid outside the TextInput rectangle. Consume
             // its hit before ordinary layout hit testing would blur the IME.
             #[cfg(target_os="linux")]
@@ -1448,9 +1488,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
-                        switch_input(win, None);Some(id)
+                        switch_input(win,None);
+                        win.focused_button=keyboard_order.iter().find_map(|candidate|match candidate {
+                            layout::HitTarget::Button(other) if *other==id=>Some(id),
+                            _=>None,
+                        });
+                        Some(id)
                     }
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
+                        win.focused_button=None;
                         if focus_order.iter().any(|candidate|matches!(candidate,
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
                             switch_input(win,Some((on_change,on_submit,value,
@@ -1483,17 +1529,50 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                         None
                     }
-                    None => {switch_input(win,None);None}
+                    None => {
+                        win.focused_button=None;
+                        switch_input(win,None);None
+                    }
                 }
             } else {None};
+            // Tab visits eligible native Buttons as well as text fields.
+            // A live IBus composition still owns Tab until explicitly ended.
             if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
-                let active=win.focused_input.as_ref().map(|fi|fi.on_change);
-                let target=layout::next_focus(&focus_order,active,reverse_tab);
-                match target {
-                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) =>
+                let active=win.focused_button.map(layout::FocusKey::Button)
+                    .or_else(||win.focused_input.as_ref()
+                        .map(|fi|layout::FocusKey::TextInput(fi.on_change)));
+                match layout::next_keyboard_focus(&keyboard_order,active,reverse_tab) {
+                    Some(layout::HitTarget::Button(id))=>{
+                        switch_input(win,None);
+                        win.focused_button=Some(id);
+                    },
+                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                        win.focused_button=None;
                         switch_input(win,Some((on_change,on_submit,value,
-                            revisions.get(&on_change).copied().flatten()))),
-                    _=>switch_input(win,None),
+                            revisions.get(&on_change).copied().flatten())));
+                    },
+                    None=>{
+                        win.focused_button=None;
+                        switch_input(win,None);
+                    },
+                }
+            }
+            // The existing input/IME Escape branch below remains responsible
+            // for canceling preedit or blurring TextInput.
+            if escape {win.focused_button=None;}
+            // User-visible opt-in autofocus is ONE-SHOT per native window,
+            // never a repeated layout-driven focus request. A real pointer,
+            // Tab, Escape or earlier focused field has priority; the selected
+            // target was already checked for unique ID, clipping, disabled
+            // state and valid host value_revision by focus_order above.
+            if !win.autofocus_decided {
+                if clicked || tab || escape || win.focused_input.is_some() {
+                    win.autofocus_decided=true;
+                } else if let Some(layout::HitTarget::TextInput{on_change,on_submit,value})=
+                    initial_autofocus_target(tree,&planned_layout,&focus_order){
+                    switch_input(win,Some((on_change,on_submit,value,
+                        revisions.get(&on_change).copied().flatten())));
+                    win.autofocus_decided=true;
                 }
             }
             // Linux opt-in: forward sampled native Raylib keyboard semantics
@@ -1828,6 +1907,18 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 prepare_ibus_candidate_font(&mut win.rl,&win.thread,
                     &mut win.candidate_font,candidate_page.as_ref());
             }
+            // Radio arrow traversal changes focused Button and emits the
+            // target's existing callback, but never mutates host checked.
+            // Sample all key state BEFORE Raylib borrows its draw handle.
+            let radio_reverse=left || radio_up;
+            let radio_forward=right || radio_down;
+            let radio_action=if !clicked && !tab && !escape && !(enter||space)
+                && plain_button_action && win.focused_input.is_none()
+                && radio_reverse!=radio_forward {
+                win.focused_button.and_then(|id|layout::radio_arrow_target(
+                    tree,&planned_layout,&keyboard_order,id,radio_reverse))
+            }else{None};
+            if let Some(id)=radio_action{win.focused_button=Some(id);}
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -1837,7 +1928,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             if valid_frame {
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
-                    win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
+                    win.click_anim, &win.focused_input, win.focused_button,
+                    &invalid_radio_groups, &win.textures, &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
                 #[cfg(target_os="linux")]
@@ -1846,9 +1938,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     paint_ibus_candidates(&mut d,panel,page,win.candidate_font.as_ref());
                 }
             }
-            fb.clicked_callback_id = click_cb;
+            // Keyboard buttons share the exact same host callback channel
+            // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
+            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
+                && win.focused_input.is_none(){win.focused_button}else{None};
+            fb.clicked_callback_id=click_cb.or(radio_action).or(keyboard_click);
 
-            if let Some(id) = click_cb {
+            if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
             } else {
                 // Clear once the animation has elapsed.
@@ -2023,6 +2119,8 @@ fn render_children(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2031,7 +2129,9 @@ fn render_children(
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input,
+                focused_button, invalid_radio_groups, textures,
+                input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2045,6 +2145,8 @@ fn render_node(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2057,7 +2159,8 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, textures, input_sessions, text_views, fonts, shaped, false);
+            focused_input, focused_button, invalid_radio_groups,
+            textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2065,10 +2168,13 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,textures,input_sessions,text_views,fonts,shaped,true);
+                focused_input,focused_button,invalid_radio_groups,textures,
+                input_sessions,text_views,fonts,shaped,true);
         }
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input,
+        focused_button, invalid_radio_groups, textures, input_sessions,
+        text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2080,6 +2186,8 @@ fn paint_node<D: RaylibDraw>(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2349,13 +2457,102 @@ fn paint_node<D: RaylibDraw>(
         }
         "Button" => {
             let rect = bounds;
-
+            let control = layout::button_control(node);
+            let disabled = prop_string(node, "disabled") == Some("true")
+                || control == layout::ButtonControl::Invalid
+                || (matches!(control,layout::ButtonControl::Radio(_))
+                    && prop_string(node,"group")
+                        .is_some_and(|g|invalid_radio_groups.contains(g)));
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+            // Opt-in controlled form selectors reuse an Aura Button constructor
+            // and its existing callback. NEVER mutate checked on click: only
+            // the authoritative host render changes the indicator.
+            if matches!(control,layout::ButtonControl::Checkbox(_) |
+                layout::ButtonControl::Switch(_) | layout::ButtonControl::Radio(_)){
+                let accent=Color::new(32,177,124,255);
+                let accent=if disabled{Color::new(104,112,119,255)}else{accent};
+                let panel=if disabled{Color::new(58,62,68,255)}else{
+                    prop_string(node,"bg").or_else(||prop_string(node,"background"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::new(28,35,45,255))
+                };
+                let label_color=if disabled{Color::new(164,169,174,255)}else{
+                    prop_string(node,"fg").or_else(||prop_string(node,"color"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::RAYWHITE)
+                };
+                d.draw_rectangle_rec(rect,panel);
+                d.draw_rectangle_lines_ex(rect,1.0,Color::new(92,102,114,255));
+                let cx=rect.x+14.0;
+                let cy=rect.y+rect.height/2.0;
+                let label_x=match control{
+                    layout::ButtonControl::Checkbox(checked)=>{
+                        let box_rect=Rectangle::new(cx,cy-11.0,22.0,22.0);
+                        let fill=if checked{accent}else{Color::new(42,50,63,255)};
+                        d.draw_rectangle_rec(box_rect,fill);
+                        d.draw_rectangle_lines_ex(box_rect,2.0,
+                            if checked{accent}else{Color::new(173,186,197,255)});
+                        if checked {
+                            // Two opaque strokes are rasterized under the
+                            // normal per-widget scissor; no glyph dependency.
+                            d.draw_line((cx+5.0) as i32,(cy) as i32,
+                                (cx+9.0) as i32,(cy+4.0) as i32,Color::RAYWHITE);
+                            d.draw_line((cx+9.0) as i32,(cy+4.0) as i32,
+                                (cx+18.0) as i32,(cy-6.0) as i32,Color::RAYWHITE);
+                        }
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Radio(checked)=>{
+                        // A radio has a circular selected dot, unlike a
+                        // checkbox; only the host may update this state.
+                        let x=cx+11.0;
+                        d.draw_circle(x as i32,cy as i32,11.0,
+                            if disabled{Color::new(88,94,104,255)}
+                            else{Color::new(173,186,197,255)});
+                        d.draw_circle(x as i32,cy as i32,8.0,
+                            Color::new(42,50,63,255));
+                        if checked{d.draw_circle(x as i32,cy as i32,5.0,accent);}
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Switch(checked)=>{
+                        // A 44x22 pill track and independent 16px thumb.
+                        // The track fill stays stable until host checked changes.
+                        let x=cx;
+                        let track=if checked{accent}else{Color::new(66,75,87,255)};
+                        d.draw_rectangle_rec(Rectangle::new(x+11.0,cy-11.0,22.0,22.0),track);
+                        d.draw_circle((x+11.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+33.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+(if checked{33.0}else{11.0})) as i32,
+                            cy as i32,8.0,Color::RAYWHITE);
+                        cx+56.0
+                    },
+                    _=>cx+56.0,
+                };
+                let label=prop_string(node,"label").unwrap_or("");
+                let ts=18;
+                let label_y=rect.y+(rect.height-ts as f32)/2.0;
+                d.draw_text(label,label_x as i32,label_y as i32,ts,label_color);
+                // Native keyboard focus is a visual hint, NOT semantic OS a11y.
+                if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                    .is_some_and(|id|focused_button==Some(id))
+                    && rect.width>10.0 && rect.height>10.0{
+                    d.draw_rectangle_lines_ex(Rectangle::new(
+                        rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                        2.0,Color::SKYBLUE);
+                }
+                return;
+            }
+            // Disabled is an actual interaction state, not just a visual hint.
+            // Give users a visible state change without changing their theme props.
+            let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };
+            let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
+            let stroke = if disabled { Color::GRAY } else { Color::RAYWHITE };
 
-            // 200ms click tween: brighten the background briefly when clicked.
+            // 200ms click tween: never animate a disabled control.
             let mut bg = base_bg;
+            if !disabled {
             if let Some((id, start)) = click_anim {
                 if let Some(cb) = parse_callback_id(prop_string(node, "on_click")) {
                     if cb == id {
@@ -2365,6 +2562,7 @@ fn paint_node<D: RaylibDraw>(
                         bg = lerp_color(base_bg, Color::RAYWHITE, tt * 0.25);
                     }
                 }
+            }
             }
 
             // Rounded rect rendering: prefer rounded corners when radius > 0.
@@ -2380,7 +2578,7 @@ fn paint_node<D: RaylibDraw>(
                 sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader
-                    .set_shader_value(sdf.loc_border, color_to_vec4(Color::RAYWHITE));
+                    .set_shader_value(sdf.loc_border, color_to_vec4(stroke));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w_u);
 
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
@@ -2388,7 +2586,7 @@ fn paint_node<D: RaylibDraw>(
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
                 d.draw_rectangle_rec(rect, bg);
-                d.draw_rectangle_lines_ex(rect, 2.0, Color::RAYWHITE);
+                d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
             let label = prop_string(node, "label").unwrap_or("Button");
@@ -2398,6 +2596,15 @@ fn paint_node<D: RaylibDraw>(
             let tx = rect.x + (rect.width - est_w) / 2.0;
             let ty = rect.y + (rect.height - ts as f32) / 2.0;
             d.draw_text(label, tx as i32, ty as i32, ts, fg);
+            // Inset optical ring for native keyboard/pointer Button focus.
+            // This does not claim an OS accessibility focus tree.
+            if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                .is_some_and(|id|focused_button==Some(id))
+                && rect.width>10.0 && rect.height>10.0 {
+                d.draw_rectangle_lines_ex(Rectangle::new(
+                    rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                    2.0,Color::SKYBLUE);
+            }
 
         }
         _ => {}

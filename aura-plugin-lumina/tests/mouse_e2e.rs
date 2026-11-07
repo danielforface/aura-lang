@@ -64,3 +64,192 @@ fn real_x11_mouse_topmost_click_and_hidden_overflow_guard() {
     assert!(clipped.is_empty(),"clipped off-Box Button unexpectedly received click: {clipped:?}");
     drop(plugin);
 }
+
+#[test]
+fn real_x11_disabled_button_blocks_click_through_and_tracks_host_state() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut nexus=NexusContext::default();
+    let mut tree=node("App",&[("bg","#102030")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","120"),
+            ("height","70"),("on_click","cb:41"),("label","back")],vec![]),
+        node("Button",&[("x","35"),("y","25"),("width","90"),
+            ("height","45"),("on_click","cb:42"),("label","top"),
+            ("disabled","true")],vec![]),
+        node("Button",&[("x","200"),("y","20"),("width","90"),
+            ("height","45"),("on_click","cb:43"),("label","enabled")],vec![]),
+    ]);
+    for _ in 0..3 {render(&plugin,&tree,&mut nexus);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..4 {render(&plugin,&tree,&mut nexus);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("actual native X11 window");
+    let disabled=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(disabled.is_empty(),
+        "disabled topmost Button must neither dispatch nor activate the lower Button: {disabled:?}");
+    let under=click(&plugin,&tree,&mut nexus,id,25,30);
+    assert!(under.contains(&41),"uncovered enabled Button must remain clickable: {under:?}");
+    let other=click(&plugin,&tree,&mut nexus,id,230,40);
+    assert!(other.contains(&43),"independent enabled Button must stay actionable: {other:?}");
+    tree.children[1].set_prop("disabled","false");
+    let enabled=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(enabled.contains(&42),"host enabling must restore topmost click: {enabled:?}");
+    assert!(!enabled.contains(&41),"topmost enabled Button must not pass click through");
+    tree.children[1].set_prop("disabled","true");
+    let disabled_again=click(&plugin,&tree,&mut nexus,id,50,40);
+    assert!(disabled_again.is_empty(),
+        "host re-disabling must remove native callback immediately: {disabled_again:?}");
+    eprintln!("LUMINA_DISABLED_BUTTON_X11 disabled_blocks=true uncovered_enabled=true dynamic_reenable=true disabled_again_blocks=true");
+}
+
+
+/// Native controlled selection contract: a click emits a callback, but the
+/// visual state stays unchanged until the Aura host supplies a new checked
+/// prop. Real software-OpenGL X11 framebuffers are sampled for both widgets.
+#[test]
+fn real_x11_controlled_checkbox_and_switch_host_state_pixel_contract() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut nexus=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","210"),("height","50"),
+            ("control","checkbox"),("checked","false"),("label","Remember choice"),
+            ("on_click","cb:71")],vec![]),
+        node("Button",&[("x","20"),("y","100"),("width","210"),("height","50"),
+            ("control","switch"),("checked","false"),("label","Enable alerts"),
+            ("on_click","cb:72")],vec![]),
+        node("Button",&[("x","280"),("y","20"),("width","175"),("height","56"),
+            ("on_click","cb:73"),("label","Behind invalid")],vec![]),
+        node("Button",&[("x","290"),("y","25"),("width","150"),("height","48"),
+            ("control","checkbox"),("checked","sometimes"),
+            ("on_click","cb:74")],vec![]),
+        node("Button",&[("x","280"),("y","100"),("width","175"),("height","50"),
+            ("control","switch"),("on_click","cb:75")],vec![]),
+    ]);
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    assert!(plugin.diagnostic_resize_window(640,400));
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native X11 window");
+    let initial_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0)
+        .expect("checkbox GPU pixel before host update");
+    let initial_switch=plugin.diagnostic_capture_pixel(55.0,117.0)
+        .expect("switch GPU track pixel before host update");
+
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,44,45),vec![71],
+        "click must use the established on_click channel");
+    let unchanged_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0).unwrap();
+    assert_eq!(initial_checkbox,unchanged_checkbox,
+        "native click must not optimistically mutate host-owned checked");
+    tree.children[0].set_prop("checked","true");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let checked_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0).unwrap();
+    assert!(checked_checkbox.g>initial_checkbox.g.saturating_add(65),
+        "checked host prop must produce visible green checkbox indicator: off={initial_checkbox:?}, on={checked_checkbox:?}");
+
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,52,125),vec![72]);
+    let unchanged_switch=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert_eq!(initial_switch,unchanged_switch,
+        "switch must not toggle a local copy before authoritative host update");
+    tree.children[1].set_prop("checked","true");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let checked_switch=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert!(checked_switch.g>initial_switch.g.saturating_add(65),
+        "host checked must visibly toggle native switch track: off={initial_switch:?}, on={checked_switch:?}");
+
+    // Unknown control boolean and missing checked fail closed, including
+    // click-through to an underlying ordinary Button.
+    assert!(click(&plugin,&tree,&mut nexus,id,320,45).is_empty(),
+        "invalid checkbox must block own callback and lower overlapping button");
+    assert!(click(&plugin,&tree,&mut nexus,id,325,125).is_empty(),
+        "missing mandatory checked must fail closed");
+
+    tree.children[1].set_prop("disabled","true");
+    assert!(click(&plugin,&tree,&mut nexus,id,52,125).is_empty(),
+        "disabled controlled switch cannot fire");
+    tree.children[1].set_prop("disabled","false");
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,52,125),vec![72],
+        "re-enabled switch becomes actionable without stale state copy");
+    tree.children[1].set_prop("checked","false");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let turned_off=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert_eq!(turned_off,initial_switch,
+        "host false update must restore exact off-track color");
+
+    eprintln!("LUMINA_CONTROLLED_SELECTION_X11 checkbox_click=true switch_click=true host_only_visuals=true malformed_blocks_underlay=true missing_checked_blocks=true disable_reenable=true pixel_off_on_off=true");
+}
+
+
+/// A single-select radio group is host-owned. The native renderer samples
+/// actual GPU pixels, while real XTest mouse clicks reach public callbacks.
+#[test]
+fn real_x11_radio_group_exclusivity_conflict_recovery_and_gpu_state() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","220"),("height","55"),
+            ("on_click","cb:10"),("label","Underlay")],vec![]),
+        node("Button",&[("x","30"),("y","25"),("width","200"),("height","50"),
+            ("control","radio"),("group","plan"),("checked","true"),
+            ("label","Standard"),("on_click","cb:21")],vec![]),
+        node("Button",&[("x","30"),("y","100"),("width","200"),("height","50"),
+            ("control","radio"),("group","plan"),("checked","false"),
+            ("label","Premium"),("on_click","cb:22")],vec![]),
+        node("Button",&[("x","30"),("y","175"),("width","200"),("height","50"),
+            ("control","radio"),("group","other"),("checked","false"),
+            ("label","Other"),("on_click","cb:31")],vec![]),
+        node("Button",&[("x","30"),("y","250"),("width","200"),("height","50"),
+            ("control","radio"),("checked","false"),
+            ("label","Missing group"),("on_click","cb:41")],vec![]),
+        node("Button",&[("x","280"),("y","25"),("width","180"),("height","50"),
+            ("control","checkbox"),("checked","false"),
+            ("label","Stay active"),("on_click","cb:51")],vec![]),
+    ]);
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native X11 window");
+    let selected=plugin.diagnostic_capture_pixel(55.0,50.0)
+        .expect("radio A selected pixel");
+    let off=plugin.diagnostic_capture_pixel(55.0,125.0)
+        .expect("radio B off pixel");
+    assert!(selected.g>off.g.saturating_add(65),
+        "native radio dot must be green only for host selected: selected={selected:?} off={off:?}");
+
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,125),vec![22],
+        "radio pointer emits original callback, no synthetic selection change");
+    let unchanged=plugin.diagnostic_capture_pixel(55.0,125.0).unwrap();
+    assert_eq!(unchanged,off,"click alone must not mutate checked");
+    tree.children[1].set_prop("checked","false");
+    tree.children[2].set_prop("checked","true");
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    let host_selected=plugin.diagnostic_capture_pixel(55.0,125.0).unwrap();
+    assert!(host_selected.g>off.g.saturating_add(65),
+        "host atomic group update must produce actual checked radio dot");
+    let first_off=plugin.diagnostic_capture_pixel(55.0,50.0).unwrap();
+    assert_eq!(first_off,off,"both radio options use same off-dot paint");
+
+    // Host bug: conflicting selected values. Block all conflicted members,
+    // including click-through into an overlapped ordinary Button.
+    tree.children[1].set_prop("checked","true");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,65,50).is_empty(),
+        "invalid top radio must not activate the ordinary underlying Button");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,125).is_empty(),
+        "second checked radio must fail closed until authoritative repair");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,200),vec![31],
+        "a separate radio group must keep working");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,275).is_empty(),
+        "missing mandatory group token must fail closed");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,310,50),vec![51],
+        "independent Checkbox must not be blocked by radio group conflict");
+
+    tree.children[1].set_prop("checked","false");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,50),vec![21],
+        "after host repair radio callback is actionable again");
+    tree.children[1].set_prop("disabled","true");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,50).is_empty());
+    tree.children[1].set_prop("disabled","false");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,50),vec![21]);
+    eprintln!("LUMINA_RADIO_GROUP_MOUSE_X11 host_checked_pixels=true no_optimistic_toggle=true duplicate_selected_fail_closed=true underlay_block=true independent_groups=true malformed_group_block=true repair=true disable_reenable=true");
+}
