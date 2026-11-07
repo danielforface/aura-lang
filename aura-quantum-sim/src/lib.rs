@@ -10,6 +10,7 @@ pub mod json_protocol;
 pub mod density;
 pub mod noisy_circuit;
 pub mod noisy_json;
+pub mod stabilizer;
 
 use std::mem::size_of;
 
