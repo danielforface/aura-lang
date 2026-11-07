@@ -67,6 +67,7 @@ pub struct FactorState {
     peak_logical_bytes:usize,
     projective_wire_splits:usize,
     projective_split_deferred:usize,
+    product_preserving_two_wire_gates:usize,
 }
 impl FactorState {
     pub fn zero(qubits:usize,budget_bytes:usize)->Result<Self,FactorError> {
@@ -92,6 +93,7 @@ impl FactorState {
         Ok(Self{
             qubits,factors,budget_bytes,peak_logical_bytes:bytes,
             projective_wire_splits:0,projective_split_deferred:0,
+            product_preserving_two_wire_gates:0,
         })
     }
     pub fn qubits(&self)->usize {self.qubits}
@@ -111,6 +113,11 @@ impl FactorState {
     /// Eligible splits skipped due to logical memory or fallible allocation.
     /// The state remains collapsed and physically equivalent when deferred.
     pub fn projective_split_deferred(&self)->usize {self.projective_split_deferred}
+    /// Only provably non-entangling cross-factor CX/CZ operations. Includes
+    /// true identity operations; no amplitude tolerance or SVD is involved.
+    pub fn product_preserving_two_wire_gates(&self)->usize {
+        self.product_preserving_two_wire_gates
+    }
     fn check_wire(&self,q:usize)->Result<(),FactorError> {
         if q>=self.qubits {Err(FactorError::InvalidQubit{qubit:q,qubits:self.qubits})}
         else {Ok(())}
@@ -137,6 +144,89 @@ impl FactorState {
         self.factors.iter().enumerate().find_map(|(factor,block)|
             block.wires.iter().position(|&q|q==wire).map(|local|(factor,local))
         ).expect("validated factor partition invariant")
+    }
+    /// A qubit can be used as an exact computational-basis control iff
+    /// one of the two disjoint supports is EMPTY. Inspect raw complex
+    /// coefficients, never compare rounded Born probabilities to 0 or 1:
+    /// a probability such as 1-1e-13 does *not* prove separability.
+    fn exact_z_eigenvalue(
+        &self, owner:usize, local:usize,
+    )->Result<Option<bool>,FactorError> {
+        let f=&self.factors[owner];
+        let mask=1usize<<local;
+        let mut has_zero=false;
+        let mut has_one=false;
+        for i in 0..(1usize<<f.wires.len()) {
+            let a=f.state.amplitude(i)?;
+            if a!=Complex::ZERO {
+                if i&mask==0 {has_zero=true;} else {has_one=true;}
+                if has_zero&&has_one {return Ok(None);}
+            }
+        }
+        // Normalized source vectors cannot have empty total support.
+        if has_zero==has_one {return Ok(None);}
+        Ok(Some(has_one))
+    }
+
+    /// True only if the ENTIRE local factor is a +1 or -1 eigenvector
+    /// of Pauli X on this wire. This includes a wire correlated to
+    /// other wires, but only when the *whole* factor obeys X|ψ>=±|ψ>.
+    /// Compare both real and imaginary components EXACTLY. Ambiguous
+    /// almost-eigenvectors fall back to full checked tensor joins.
+    fn exact_x_eigenvalue(
+        &self, owner:usize, local:usize,
+    )->Result<Option<bool>,FactorError> {
+        let f=&self.factors[owner];
+        let mask=1usize<<local;
+        let mut plus=true;
+        let mut minus=true;
+        for i in 0..(1usize<<f.wires.len()) {
+            if i&mask!=0 {continue;}
+            let a=f.state.amplitude(i)?;
+            let b=f.state.amplitude(i|mask)?;
+            if a!=b {plus=false;}
+            if a.re!=-b.re || a.im!=-b.im {minus=false;}
+            if !plus&&!minus {return Ok(None);}
+        }
+        if plus {Ok(Some(false))} // X eigenvalue +1.
+        else if minus {Ok(Some(true))} // X eigenvalue -1.
+        else {Ok(None)}
+    }
+
+    /// A cross-factor controlled gate is product-preserving in these
+    /// independently sufficient, *exact* algebraic cases:
+    ///   CX: Z-eigen control -> apply X on target iff control is |1>;
+    ///       X-eigen target -> apply Z on control iff eigenvalue is -1.
+    ///   CZ: either end in a Z basis eigenstate -> apply Z to the
+    ///       opposite factor iff the eigenvalue is |1>.
+    /// Global phase and control/target entanglement are preserved.
+    /// Does not touch factor topology, consume RNG, or allocate amplitudes.
+    fn apply_product_preserving_controlled(
+        &mut self, gate:&Gate, ia:usize, la:usize, ib:usize, lb:usize,
+    )->Result<bool,FactorError> {
+        match gate {
+            Gate::Cnot{..}=>{
+                if let Some(high)=self.exact_z_eigenvalue(ia,la)? {
+                    if high {self.factors[ib].state.apply(Gate::X(lb))?;}
+                } else if let Some(minus)=self.exact_x_eigenvalue(ib,lb)? {
+                    if minus {self.factors[ia].state.apply(Gate::Z(la))?;}
+                } else {
+                    return Ok(false);
+                }
+            }
+            Gate::Cz{..}=>{
+                if let Some(high)=self.exact_z_eigenvalue(ia,la)? {
+                    if high {self.factors[ib].state.apply(Gate::Z(lb))?;}
+                } else if let Some(high)=self.exact_z_eigenvalue(ib,lb)? {
+                    if high {self.factors[ia].state.apply(Gate::Z(la))?;}
+                } else {
+                    return Ok(false);
+                }
+            }
+            _=>return Ok(false),
+        }
+        self.product_preserving_two_wire_gates+=1;
+        Ok(true)
     }
     pub fn apply(&mut self,gate:Gate)->Result<(),FactorError> {
         self.check_gate(&gate)?;
@@ -176,6 +266,12 @@ impl FactorState {
                         Gate::Cnot{control:la,target:lb}
                     } else {Gate::Cz{control:la,target:lb}};
                     self.factors[ia].state.apply(mapped)?;
+                    return Ok(());
+                }
+                // Before attempting an expensive, width-limited join,
+                // execute only mathematically PROVEN non-entangling cross
+                // interactions locally, preserving exact factor topology.
+                if self.apply_product_preserving_controlled(&gate,ia,la,ib,lb)? {
                     return Ok(());
                 }
                 let left=&self.factors[ia];
@@ -373,6 +469,8 @@ pub struct FactorBatch {
     pub projective_wire_splits:usize,
     /// Cumulative eligible releases deferred because allocations were denied.
     pub projective_split_deferred:usize,
+    /// Sum of real CX/CZ calls provably executed without factor joins.
+    pub product_preserving_two_wire_gates:usize,
 }
 #[derive(Debug,Clone)]
 pub struct FactorCircuit {
@@ -464,6 +562,7 @@ impl FactorCircuit {
         let mut peak=0usize;
         let mut total_splits=0usize;
         let mut total_deferred=0usize;
+        let mut total_product_gates=0usize;
         for _ in 0..shots {
             let mut state=FactorState::zero(self.qubits,state_budget)?;
             let mut bits=vec![None;self.classical_bits];
@@ -498,6 +597,9 @@ impl FactorCircuit {
                 .ok_or(FactorError::ArithmeticOverflow)?;
             total_deferred=total_deferred.checked_add(state.projective_split_deferred())
                 .ok_or(FactorError::ArithmeticOverflow)?;
+            total_product_gates=total_product_gates
+                .checked_add(state.product_preserving_two_wire_gates())
+                .ok_or(FactorError::ArithmeticOverflow)?;
             records.push(ShotRecord{bits,trace});
             if shots==1 {single=Some(state);}
         }
@@ -508,6 +610,7 @@ impl FactorCircuit {
             peak_logical_state_bytes:peak,
             projective_wire_splits:total_splits,
             projective_split_deferred:total_deferred,
+            product_preserving_two_wire_gates:total_product_gates,
         })
     }
 }
