@@ -1,0 +1,27 @@
+{
+  "schema": "aura.quantum.stabilizer-request/1",
+  "qubits": 2,
+  "classical_bits": 0,
+  "seed": 7,
+  "shots": 1,
+  "max_memory_bytes": 16777216,
+  "inspect_generators": true,
+  "inspect_probabilities": true,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    }
+  ]
+}
