@@ -1,7 +1,7 @@
 //! AURA-Q28-010 offline exact symbolic contract through public JSON and real
 //! executable. Positive, negative and interop isolation acceptance.
 use aura_quantum_sim::symbolic_json::{
-    execute_symbolic_json, SymbolicProtocolError, SYMBOLIC_REQUEST_SCHEMA,
+    execute_symbolic_json, SymbolicProtocolError,
     MAX_SYMBOLIC_INPUT_BYTES,
 };
 use aura_quantum_sim::{DEFAULT_MEMORY_BUDGET, symbolic::SymbolicError};

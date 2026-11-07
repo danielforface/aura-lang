@@ -58,8 +58,19 @@ def branch_case(n: int, case: int) -> list:
             {"op":"gate","gate":{"kind":"t","target":q}},
             {"op":"gate","gate":{"kind":"h","target":q}},
         ])
-    for _ in range(6):
-        ops.append({"op":"gate","gate":gate(n,rng)})
+    # Keep q0's HTH support nonzero by restricting later local gates to
+    # the other wires (or diagonal phases on q0 if n==1).
+    # An optional CX from q0 entangles the wires without altering q0's
+    # computational-basis marginal, so the selected outcome stays possible.
+    for step in range(6):
+        if n==1:
+            g={"kind":"s" if step % 2==0 else "t","target":0}
+        else:
+            q=1+rng.randrange(n-1)
+            g={"kind":rng.choice(("h","s","t","y","z")),"target":q}
+        ops.append({"op":"gate","gate":g})
+    if n>1:
+        ops.append({"op":"gate","gate":{"kind":"cx","control":0,"target":1}})
     # Construct a projective branch. Check nonzero support at each case in the
     # independent dense oracle rather than requiring arbitrary sampling.
     ops.append({"op":"measure","qubit":0,"into_bit":0,"outcome":True})

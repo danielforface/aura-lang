@@ -332,3 +332,61 @@ separate exact seed-by-seed measurements are tested in Rust.
 The existing pure/noisy JSON v1 schemas are **unchanged** and no
 Q22/Q23/Q27 consumer may treat the new schema as a frozen IR without
 a reviewed producer/consumer contract.
+
+
+## Exact small symbolic Clifford+T phase oracle — AURA-Q28-010
+
+The **distinct** `aura_quantum_sim::symbolic` Rust engine represents each
+amplitude *exactly* as an element of
+`(a + b√2 + i(c + d√2)) / 2^k` with checked **signed i128**
+integer coefficients and an explicitly bounded shared power-of-two
+denominator. It executes the existing nine H/X/Y/Z/S/T/CX/CZ/SWAP
+gate families with no floating-point arithmetic in the symbolic update,
+including non-Clifford T phases. It returns exact complex coherences,
+Born joint weights `(a+b√2)/2^k` and exact ray equivalence
+via cross-multiplication (including global-phase invariance). Any
+integer overflow fails closed, not modulo wrapping.
+
+Projective Z measurements are **forced branches**, not stochastic
+sampling or normalized postselection. This distinction is essential:
+the normalized amplitude after selecting a general Clifford+T
+outcome need not belong to the same elementary coefficient ring.
+Instead the engine preserves an *unnormalized* conditional vector and
+returns **exact joint weight before/after** each projection. The exact
+conditional probability is the **ratio** of those two algebraic
+weights. A numerical approximate ratio is separately labeled and is
+**never used to evolve the symbolic state**.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example symbolic_phase
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_hth_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_bell_forced_v1.json
+```
+
+
+The new bounded offline CLI uses experimental strict
+`aura.quantum.symbolic-request/1` →
+`aura.quantum.symbolic-result/1`, totally disjoint
+from the existing pure/noisy/stabilizer schemas. **Exact signed i128
+coefficients are encoded as decimal strings**, avoiding JavaScript's
+53-bit integer precision limit. A `float` approximation exists
+solely for display, testing and independent numerical-oracle comparison.
+No QPU submission, network, seed or shots are accepted. Limits:
+1–4 qubits, at most 128 instructions, at most 48 H/T operations,
+16 classical bits, 64 KiB request, 1 MiB encoded response and
+16 MiB logical memory admission (excluding runtime/OS RSS).
+
+Acceptance: analytic `H T H |0>` produces exact Born values
+`(2+√2)/4` and `(2−√2)/4`; a forced Bell
+branch preserves exact joint probability 1/2 with a classically
+controlled correction. Small deterministic mixed Clifford+T
+circuits are cross-checked against the existing numerical
+Statevector, and an independent Qiskit 2.6.1 / NumPy 2.3.4 suite
+compares *full complex amplitudes* and exact transport for
+64 unitary + 16 projected cases (1–4 qubits). The latter is
+only **empirical parity**, not formal Q23 equivalence or a universal
+numeric bound. This is an experimental finite-width CPU oracle,
+NOT a universal high-performance Quantum runtime or a released
+Aura/QIR feature.

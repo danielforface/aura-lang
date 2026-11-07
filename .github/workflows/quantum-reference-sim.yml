@@ -65,6 +65,14 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_inspection_v1.json > /tmp/q28-stab-inspect.json
           python3 -c 'import json; a=json.load(open("/tmp/q28-stab-bell.json")); b=json.load(open("/tmp/q28-stab-inspect.json")); assert a["shots"]==256 and sum(a["histogram"].values())==256 and all(v["bits"][1] is False for v in a["results"]); assert b["basis_probabilities"]==[.5,0,0,.5] and b["stabilizer_generators"]==["+XX","+ZZ"]; print("Q28_STABILIZER_CLI_REAL_CALLER_PASS shots=256 exact_bell_probs=4")'
 
+      - name: Execute exact Clifford+T symbolic phase app and offline JSON fixtures
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example symbolic_phase
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_hth_v1.json > /tmp/q28-symbolic-hth.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_bell_forced_v1.json > /tmp/q28-symbolic-bell.json
+          python3 -c 'import json; a=json.load(open("/tmp/q28-symbolic-hth.json")); b=json.load(open("/tmp/q28-symbolic-bell.json")); p=a["basis_joint_weights"]; assert (p[0]["numerator"]["rational"],p[0]["numerator"]["radical"],p[0]["denominator_power_of_two"])==("2","1",2); assert (p[1]["numerator"]["rational"],p[1]["numerator"]["radical"],p[1]["denominator_power_of_two"])==("2","-1",2); assert b["classical_register"]==[True,False] and b["final_joint_mass"]["denominator_power_of_two"]==1; assert a["sampling"]=="none;forced-outcomes-only" and a["qpu_hardware_jobs"]==0; print("Q28_SYMBOLIC_CLI_REAL_CALLER_PASS exact_HTH=2pmroot2_over4 Bell_branch=1_over2")'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -100,6 +108,11 @@ jobs:
           set -euo pipefail
           cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run
           python aura-quantum-sim/tools/check_qiskit_stabilizer.py aura-quantum-sim/target/release/aura-quantum-stabilizer-run ci-artifacts/q28/c009-stabilizer-qiskit.json
+      - name: Verify exact symbolic Clifford+T complex phase and forced branches against pinned Qiskit
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run
+          python aura-quantum-sim/tools/check_qiskit_symbolic.py aura-quantum-sim/target/release/aura-quantum-symbolic-run ci-artifacts/q28/c010-symbolic-qiskit.json
       - name: Upload reproducible parity evidence
         if: always()
         uses: actions/upload-artifact@v4
