@@ -456,7 +456,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
     fputs(";const baseline=",out);
     if(baseline)emitrun(out,baseline);else fputs("null",out);
     fputs(";const $=id=>document.getElementById(id);const sets=[candidate,baseline].filter(Boolean);"
-          "let active=0,chosen=0,focus=null;const n=x=>Number(n||0).toLocaleString('en-US');"
+          "let active=0,chosen=0,focus=null;const n=x=>Number(x||0).toLocaleString('en-US');"
           "const attrs=['sample','pid','creation','score','cpu','read','write','delta','ws','c','i','m','name','quality'];"
           "const value=(v)=>v<0?'unknown':n(v);"
           "function tile(k,v,sub){const el=document.createElement('div');el.className='stat';"

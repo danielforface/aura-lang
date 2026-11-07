@@ -130,6 +130,11 @@ jobs:
           $html = Get-Content "dist/ci-report.html" -Raw
           if ($html.Length -lt 9000 -or !$html.Contains('id="filter"') -or !$html.Contains('id="metric"') -or !$html.Contains('id="matrix"') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "XR-03 evidence workbench missing required multi-axis features" }
           if ($html -match '(?i)(https?://|src="[^"]+\.js|process_name)') { throw "Offline report has unexpected external dependency or privacy leak" }
+          # Verified post-render regression: previous XR-03 candidate displayed NaN
+          # because the formatter referenced its own function name instead of x.
+          if (!$html.Contains("const n=x=>Number(x||0).toLocaleString('en-US')")) {
+            throw "XR03 number formatter regression: cards/event inspector can display NaN"
+          }
           Write-Host "XRAY_TEMPORAL_ORACLE_PASS vectors=$($vectors.Count) elapsed_ms=$($end[0].elapsed_ms) report_bytes=$($html.Length)"
           # Replay the actual Windows runner capture, and reject any tampered score.
           & "dist/AuraXRay.exe" --replay "dist/ci-capture.jsonl" --report "dist/ci-replay.html"
