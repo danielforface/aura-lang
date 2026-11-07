@@ -1087,3 +1087,85 @@ cell interpolated_nul(n: u32) ->:
         }
     }
 }
+
+
+#[test]
+fn native_float32_record_field_interpolation_preserves_widened_numeric_value() {
+    // Q03-001: a nominal Record containing an f32 already has a qualified
+    // C 'float' field layout; projection gives CType::F32. The previous
+    // snapshot printer omitted CType::F32 and leaked "{measured}" literally.
+    // Test real Aura source + Record construction/field projection/Cell ABI,
+    // original and optimized IR, strict Clang O0/O2, with float boundary
+    // values and a separate f32 argument to detect formatting buffer reuse.
+    let source = r#"
+type Reading = record { measured: f32, code: u32 }
+cell render_f32(sensor: f32, other: f32) ->:
+    val reading: Reading = Reading { measured: sensor, code: 7 }
+    val measured: f32 = reading.measured
+    val saved: String = "record={reading}; measured={measured}; source={sensor}; other={other}; percent=100%"
+    io.println(saved)
+    yield reading.code
+"#;
+    let ast = aura_parse::parse_source(source).expect("f32 Record source parses");
+    Checker::new().check_program(&ast).expect("f32 Record source typechecks");
+    let original = lower_program(&ast).expect("real source f32 Record lowers");
+    validate_module(&original).expect("original f32 Record IR validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized f32 Record IR validates");
+
+    let samples: [f32; 18] = [
+        0.0, -0.0, 0.1, -0.1, 1.5, -2.25, 0.25, 65536.0,
+        16_777_216.0, f32::MIN_POSITIVE, f32::from_bits(1),
+        f32::from_bits(2), f32::EPSILON, f32::MAX, f32::MIN,
+        f32::INFINITY, f32::NEG_INFINITY, f32::NAN,
+    ];
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let artifact = emit_module(ir, None).expect("f32 Record emits valid Native C");
+        assert!(artifact.module_c.contains("aura_f64_display("),
+            "{label}: f32 interpolation must use explicit float-to-display ABI");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &artifact.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &artifact.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), concat!(
+            "#include <stdlib.h>\n",
+            "#include <stdint.h>\n",
+            "uint32_t render_f32(float, float);\n",
+            "int main(int argc, char** argv) {\n",
+            " if (argc != 2) return 2;\n",
+            " char *end = NULL;\n",
+            " float sensor = strtof(argv[1], &end);\n",
+            " if (!end || *end) return 3;\n",
+            " return render_f32(sensor, 1.5f) == 7u ? 0 : 4;\n",
+            "}\n",
+        )).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("f32_record_{label}_{}", &opt[1..]));
+            let cc = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang native CI compiler");
+            assert!(cc.status.success(),
+                "{label}/{opt}: native f32 Record build failed: {}\n{}",
+                String::from_utf8_lossy(&cc.stderr), artifact.module_c);
+            for sample in samples {
+                let run = Command::new(&exe).arg(sample.to_string())
+                    .output().expect("linked f32 Record native executable");
+                assert!(run.status.success(),
+                    "{label}/{opt}: f32 Record execution failed for {}: {}",
+                    sample, String::from_utf8_lossy(&run.stderr));
+                // The AVM stores Float as f64. The native field is an
+                // actual f32: widen only after it was rounded by the
+                // native ABI to compare the numeric representation of
+                // that same f32 value (not the pre-rounding input).
+                let widened = (sample as f64).to_string();
+                let expected = format!(
+                    "record=<Reading>; measured={widened}; source={widened}; other=1.5; percent=100%\n"
+                );
+                assert_eq!(run.stdout, expected.as_bytes(),
+                    "{label}/{opt}: numeric value or template mismatched f32 input {sample}");
+            }
+        }
+    }
+}

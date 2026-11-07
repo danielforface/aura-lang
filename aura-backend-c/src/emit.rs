@@ -2462,7 +2462,13 @@ fn render_string_snapshot(
                     CType::I8 | CType::I16 | CType::I32 =>
                         Some(("%d", format!("(int)({c_name})"))),
                     CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
-                    CType::F64 => Some(("%s", format!(
+                    // An f32 is stored exactly as a C float in qualified
+                    // nominal Record fields. Widen to double *after* the
+                    // float rounding, then print its exact numeric value by
+                    // the same native formatter used for the AVM's f64
+                    // storage. Do not silently leave a valid {f32} slot
+                    // unexpanded or let printf's default %f truncate it.
+                    CType::F32 | CType::F64 => Some(("%s", format!(
                         "aura_f64_display((double)({c_name}), (char[400]){{0}})"
                     ))),
                     CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
