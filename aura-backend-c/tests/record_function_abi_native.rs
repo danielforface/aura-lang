@@ -746,3 +746,180 @@ cell invalid_construct(n: u32) ->:
             "{label}: missing explicit captured String Record ABI diagnostic: {err}");
     }
 }
+
+
+#[test]
+fn signed_record_arithmetic_wraps_consistently_with_ir_oracle_and_ubsan() {
+    // AURA-Q03-001 / Q03-006: a real source Record projects signed
+    // fields into SSA arithmetic. The IR Oracle has wrapping I64 Add/Sub/Mul
+    // and Neg; signed C overflow is UB and can disagree under Clang -O2.
+    // Exercise externally supplied boundary values (not constant folding),
+    // original+optimized Aura IR, both C optimization levels and UBSan.
+    let source = r#"
+type Signed64 = record { value: i64 }
+type Signed32 = record { value: i32 }
+cell add64(p: Signed64, delta: i64) ->:
+    yield p.value + delta
+cell sub64(p: Signed64, delta: i64) ->:
+    yield p.value - delta
+cell mul64(p: Signed64, delta: i64) ->:
+    yield p.value * delta
+cell neg64(p: Signed64) ->:
+    yield -p.value
+cell add32(p: Signed32, delta: i32) ->:
+    yield p.value + delta
+cell sub32(p: Signed32, delta: i32) ->:
+    yield p.value - delta
+cell mul32(p: Signed32, delta: i32) ->:
+    yield p.value * delta
+cell neg32(p: Signed32) ->:
+    yield -p.value
+cell aura_i64_from_wrapped_bits(n: i64) ->:
+    yield n
+cell aura_i32_from_wrapped_bits(n: i32) ->:
+    yield n
+cell probe_reserved64(n: i64) ->:
+    yield aura_i64_from_wrapped_bits(n)
+cell probe_reserved32(n: i32) ->:
+    yield aura_i32_from_wrapped_bits(n)
+"#;
+    let ast = aura_parse::parse_source(source).expect("signed Record Aura source parses");
+    Checker::new().check_program(&ast).expect("signed Record source typechecks");
+    let original = lower_program(&ast).expect("signed Record source lowers to real IR");
+    validate_module(&original).expect("source signed Record SSA validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized signed Record SSA validates");
+
+    let pairs64: &[(i64, i64)] = &[
+        (0, 0), (1, -1), (-1, -1), (i64::MAX, 1),
+        (i64::MIN, -1), (i64::MIN, 1),
+        (i64::MAX, i64::MAX), (i64::MIN, i64::MIN),
+        (i64::MIN, 0), (i64::MAX, -1),
+        (-4_294_967_303, 3_000_000_023),
+        (123_456_789_012_345_678, -9_223_372_036_854_775),
+    ];
+    let pairs32: &[(i32, i32)] = &[
+        (0, 0), (1, -1), (-1, -1), (i32::MAX, 1),
+        (i32::MIN, -1), (i32::MIN, 1),
+        (i32::MAX, i32::MAX), (i32::MIN, i32::MIN),
+        (i32::MIN, 0), (i32::MAX, -1),
+        (-2_000_000_000, 2_000_000_000),
+    ];
+
+    let check64 = |ir: &aura_ir::ModuleIR, op: &str, x: i64, y: i64, expected: i64| {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("value".to_string(), OracleValue::I64(x));
+        let record = OracleValue::Record { name: "Signed64".into(), fields };
+        let mut args = vec![record];
+        if op != "neg64" { args.push(OracleValue::I64(y)); }
+        let result = run_oracle_entry(ir, op, &args, OracleConfig::default())
+            .expect("Oracle accepts real signed Record and computes arithmetic");
+        assert!(result.ok, "{op} Oracle failed on {x}/{y}: {result:?}");
+        assert_eq!(result.return_value, Some(OracleValue::I64(expected)),
+            "{op}: signed Record IR Oracle wrapping behavior changed");
+    };
+    // Standalone driver deliberately receives runtime inputs from argv so
+    // neither the C optimizer nor the Rust IR optimizer can fold the
+    // overflowing arithmetic into an unobservable constant.
+    let driver = r#"
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+typedef struct { int64_t aura_f_76616c7565; } aura_record_5369676e65643634;
+typedef struct { int32_t aura_f_76616c7565; } aura_record_5369676e65643332;
+int64_t add64(aura_record_5369676e65643634, int64_t);
+int64_t sub64(aura_record_5369676e65643634, int64_t);
+int64_t mul64(aura_record_5369676e65643634, int64_t);
+int64_t neg64(aura_record_5369676e65643634);
+int32_t add32(aura_record_5369676e65643332, int32_t);
+int32_t sub32(aura_record_5369676e65643332, int32_t);
+int32_t mul32(aura_record_5369676e65643332, int32_t);
+int32_t neg32(aura_record_5369676e65643332);
+int64_t probe_reserved64(int64_t);
+int32_t probe_reserved32(int32_t);
+int main(int argc, char** argv) {
+  if (argc != 4) return 2;
+  const char* op = argv[1];
+  const int64_t x = (int64_t)strtoll(argv[2], NULL, 10);
+  const int64_t y = (int64_t)strtoll(argv[3], NULL, 10);
+  const aura_record_5369676e65643634 wide = { x };
+  const aura_record_5369676e65643332 narrow = { (int32_t)x };
+  long long result = 0;
+  if (!strcmp(op, "add64")) result = (long long)add64(wide,y);
+  else if (!strcmp(op, "sub64")) result = (long long)sub64(wide,y);
+  else if (!strcmp(op, "mul64")) result = (long long)mul64(wide,y);
+  else if (!strcmp(op, "neg64")) result = (long long)neg64(wide);
+  else if (!strcmp(op, "add32")) result = (long long)add32(narrow,(int32_t)y);
+  else if (!strcmp(op, "sub32")) result = (long long)sub32(narrow,(int32_t)y);
+  else if (!strcmp(op, "mul32")) result = (long long)mul32(narrow,(int32_t)y);
+  else if (!strcmp(op, "neg32")) result = (long long)neg32(narrow);
+  else if (!strcmp(op, "probe_reserved64")) result = (long long)probe_reserved64(x);
+  else if (!strcmp(op, "probe_reserved32")) result = (long long)probe_reserved32((int32_t)x);
+  else return 3;
+  printf("%lld\n", result);
+  return 0;
+}
+"#;
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let c = emit_module(ir, None).expect("signed Record emits defined native C");
+        assert!(c.runtime_h.contains("aura_i64_from_wrapped_bits")
+            && c.runtime_h.contains("aura_i32_from_wrapped_bits"),
+            "{label}: wrapped integer conversion helpers must be present");
+        assert!(c.module_c.contains("aura_cell_617572615f6936345f66726f6d5f777261707065645f62697473"),
+            "{label}: user Cell colliding with i64 runtime helper must be renamed");
+        assert!(c.module_c.contains("aura_cell_617572615f6933325f66726f6d5f777261707065645f62697473"),
+            "{label}: user Cell colliding with i32 runtime helper must be renamed");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &c.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), driver).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("signed_record_{label}_{}", &opt[1..]));
+            let build = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror",
+                       "-fsanitize=undefined", "-fno-sanitize-recover=all", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang UBSan is available in Native CI");
+            assert!(build.status.success(), "{label}/{opt}: strict C/UBSan failed:\n{}\n{}",
+                String::from_utf8_lossy(&build.stderr), c.module_c);
+            let run = |op: &str, x: i64, y: i64, expected: i64| {
+                let value = Command::new(&exe).arg(op).arg(x.to_string())
+                    .arg(y.to_string()).output().expect("Native Clang executable runs");
+                assert!(value.status.success(), "{label}/{opt} {op}({x},{y}): undefined signed arithmetic or nonzero result:\n{}",
+                    String::from_utf8_lossy(&value.stderr));
+                assert_eq!(String::from_utf8_lossy(&value.stdout),
+                    format!("{expected}\n"), "{label}/{opt} {op}({x},{y}) differs from modular arithmetic");
+            };
+            for &(x,y) in pairs64 {
+                for (op, expected) in [
+                    ("add64", x.wrapping_add(y)),
+                    ("sub64", x.wrapping_sub(y)),
+                    ("mul64", x.wrapping_mul(y)),
+                    ("neg64", x.wrapping_neg()),
+                ] {
+                    check64(ir, op, x, y, expected);
+                    run(op,x,y,expected);
+                }
+            }
+            for &(x,y) in pairs32 {
+                for (op, expected) in [
+                    ("add32", x.wrapping_add(y)),
+                    ("sub32", x.wrapping_sub(y)),
+                    ("mul32", x.wrapping_mul(y)),
+                    ("neg32", x.wrapping_neg()),
+                ] {
+                    run(op,x as i64,y as i64,expected as i64);
+                }
+            }
+            for &n in &[0i64, i64::MIN, i64::MAX] {
+                run("probe_reserved64",n,0,n);
+            }
+            for &n in &[0i32, i32::MIN, i32::MAX] {
+                run("probe_reserved32",n as i64,0,n as i64);
+            }
+        }
+    }
+}

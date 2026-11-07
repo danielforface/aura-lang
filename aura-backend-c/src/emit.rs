@@ -153,6 +153,24 @@ fn emit_runtime_h() -> String {
     out.push_str("  }\n");
     out.push_str("}\n\n");
 
+    // The IR Oracle's signed i64 arithmetic is modular, but native C
+    // signed-overflow is undefined behavior (including negating INT*_MIN).
+    // Convert signed operands to unsigned first; unsigned Add/Sub/Mul
+    // has defined modulo-2^N semantics. Convert the final bit pattern
+    // back using only representable signed casts and signed subtraction,
+    // so neither Clang -O2 nor UBSan depends on implementation-defined
+    // out-of-range unsigned->signed conversions.
+    out.push_str(r#"
+static inline int32_t aura_i32_from_wrapped_bits(uint32_t bits) {
+  if (bits <= (uint32_t)INT32_MAX) return (int32_t)bits;
+  return -1 - (int32_t)(UINT32_MAX - bits);
+}
+static inline int64_t aura_i64_from_wrapped_bits(uint64_t bits) {
+  if (bits <= (uint64_t)INT64_MAX) return (int64_t)bits;
+  return -1 - (int64_t)(UINT64_MAX - bits);
+}
+"#);
+
     // Aura char is a Unicode scalar, not a byte. The public C char ABI
     // stores it in uint32_t; printf's %c alone would truncate non-ASCII,
     // and %s alone cannot preserve U+0000. Encode one lead byte with %c
@@ -593,6 +611,7 @@ impl CNameMap {
             "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
             "aura_unicode_scalar_checked", "aura_unicode_char_lead",
             "aura_unicode_char_tail", "aura_f64_display",
+            "aura_i32_from_wrapped_bits", "aura_i64_from_wrapped_bits",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -1840,6 +1859,16 @@ fn emit_function(
                             message: format!("untyped operand v{} in unary instruction", operand.0),
                         })?;
                     let (ct, expr_s) = match op {
+                        // The same signed modular interpretation as the IR
+                        // Oracle, without invoking undefined signed C negation.
+                        UnaryOp::Neg if operand_type == CType::I32 => (
+                            operand_type,
+                            format!("aura_i32_from_wrapped_bits(0u - (uint32_t)({operand_name}))"),
+                        ),
+                        UnaryOp::Neg if operand_type == CType::I64 => (
+                            operand_type,
+                            format!("aura_i64_from_wrapped_bits(0ULL - (uint64_t)({operand_name}))"),
+                        ),
                         UnaryOp::Neg if matches!(
                             operand_type,
                             CType::I32 | CType::I64 | CType::U32 | CType::U64
@@ -2692,6 +2721,19 @@ fn emit_binop(
             });
         }
         let symbol = match op { Add => "+", Sub => "-", Mul => "*", _ => unreachable!() };
+        // Signed overflow in C is UB. Perform the exact-width modular
+        // operation as an unsigned value, then decode the result without
+        // implementation-defined out-of-range casts to a signed integer.
+        if matches!(lhs_type, CType::I32 | CType::I64) {
+            let (unsigned, wrapped) = if lhs_type == CType::I32 {
+                ("uint32_t", "aura_i32_from_wrapped_bits")
+            } else {
+                ("uint64_t", "aura_i64_from_wrapped_bits")
+            };
+            return Ok((lhs_type, format!(
+                "{wrapped}((({unsigned})({l})) {symbol} (({unsigned})({r})))"
+            )));
+        }
         return Ok((lhs_type, format!("({l}) {symbol} ({r})")));
     }
 
