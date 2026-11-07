@@ -1,9 +1,9 @@
 //! Bounded offline histogram-only CPU sampling without retaining shot traces.
 //! Independent strict schema: does not change factorized-request/1 semantics.
 use crate::factorized::{
-    FactorCircuit,FactorError,FactorCounts,
+    FactorCircuit,FactorCounts,
     MAX_FACTOR_GLOBAL_QUBITS,MAX_FACTOR_INSTRUCTIONS,
-    MAX_FACTOR_COUNT_SHOTS,MAX_FACTOR_COUNT_BINS,MAX_FACTOR_COUNT_WORK_UNITS,
+    MAX_FACTOR_COUNT_SHOTS,MAX_FACTOR_COUNT_WORK_UNITS,
     MAX_FACTOR_QUBITS,FACTORIZED_COUNTS_RESULT_SCHEMA,FACTORIZED_PROFILE,
 };
 use crate::factorized_json::{

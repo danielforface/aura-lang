@@ -503,6 +503,8 @@ pub struct FactorCounts {
     /// Always zero; this API does not retain records or traces.
     pub retained_shot_records:usize,
 }
+/// Internal shared state/measurement/optional-trace kernel output.
+type OneShotExecution=(FactorState,Vec<Option<bool>>,Vec<TraceEntry>);
 #[derive(Debug,Clone)]
 pub struct FactorCircuit {
     qubits:usize,
@@ -587,7 +589,7 @@ impl FactorCircuit {
     fn run_one(
         &self, rng:&mut SeededRng, state_budget:usize,
         with_trace:bool, trace_cap:usize,
-    )->Result<(FactorState,Vec<Option<bool>>,Vec<TraceEntry>),FactorError> {
+    )->Result<OneShotExecution,FactorError> {
         let mut state=FactorState::zero(self.qubits,state_budget)?;
         let mut bits=vec![None;self.classical_bits];
         let mut trace=Vec::new();
