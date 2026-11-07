@@ -176,3 +176,80 @@ fn real_x11_controlled_checkbox_and_switch_host_state_pixel_contract() {
 
     eprintln!("LUMINA_CONTROLLED_SELECTION_X11 checkbox_click=true switch_click=true host_only_visuals=true malformed_blocks_underlay=true missing_checked_blocks=true disable_reenable=true pixel_off_on_off=true");
 }
+
+
+/// A single-select radio group is host-owned. The native renderer samples
+/// actual GPU pixels, while real XTest mouse clicks reach public callbacks.
+#[test]
+fn real_x11_radio_group_exclusivity_conflict_recovery_and_gpu_state() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","220"),("height","55"),
+            ("on_click","cb:10"),("label","Underlay")],vec![]),
+        node("Button",&[("x","30"),("y","25"),("width","200"),("height","50"),
+            ("control","radio"),("group","plan"),("checked","true"),
+            ("label","Standard"),("on_click","cb:21")],vec![]),
+        node("Button",&[("x","30"),("y","100"),("width","200"),("height","50"),
+            ("control","radio"),("group","plan"),("checked","false"),
+            ("label","Premium"),("on_click","cb:22")],vec![]),
+        node("Button",&[("x","30"),("y","175"),("width","200"),("height","50"),
+            ("control","radio"),("group","other"),("checked","false"),
+            ("label","Other"),("on_click","cb:31")],vec![]),
+        node("Button",&[("x","30"),("y","250"),("width","200"),("height","50"),
+            ("control","radio"),("checked","false"),
+            ("label","Missing group"),("on_click","cb:41")],vec![]),
+        node("Button",&[("x","280"),("y","25"),("width","180"),("height","50"),
+            ("control","checkbox"),("checked","false"),
+            ("label","Stay active"),("on_click","cb:51")],vec![]),
+    ]);
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native X11 window");
+    let selected=plugin.diagnostic_capture_pixel(55.0,50.0)
+        .expect("radio A selected pixel");
+    let off=plugin.diagnostic_capture_pixel(55.0,125.0)
+        .expect("radio B off pixel");
+    assert!(selected.g>off.g.saturating_add(65),
+        "native radio dot must be green only for host selected: selected={selected:?} off={off:?}");
+
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,125),vec![22],
+        "radio pointer emits original callback, no synthetic selection change");
+    let unchanged=plugin.diagnostic_capture_pixel(55.0,125.0).unwrap();
+    assert_eq!(unchanged,off,"click alone must not mutate checked");
+    tree.children[1].set_prop("checked","false");
+    tree.children[2].set_prop("checked","true");
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    let host_selected=plugin.diagnostic_capture_pixel(55.0,125.0).unwrap();
+    assert!(host_selected.g>off.g.saturating_add(65),
+        "host atomic group update must produce actual checked radio dot");
+    let first_off=plugin.diagnostic_capture_pixel(55.0,50.0).unwrap();
+    assert_eq!(first_off,off,"both radio options use same off-dot paint");
+
+    // Host bug: conflicting selected values. Block all conflicted members,
+    // including click-through into an overlapped ordinary Button.
+    tree.children[1].set_prop("checked","true");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,65,50).is_empty(),
+        "invalid top radio must not activate the ordinary underlying Button");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,125).is_empty(),
+        "second checked radio must fail closed until authoritative repair");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,200),vec![31],
+        "a separate radio group must keep working");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,275).is_empty(),
+        "missing mandatory group token must fail closed");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,310,50),vec![51],
+        "independent Checkbox must not be blocked by radio group conflict");
+
+    tree.children[1].set_prop("checked","false");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,50),vec![21],
+        "after host repair radio callback is actionable again");
+    tree.children[1].set_prop("disabled","true");
+    assert!(click(&plugin,&tree,&mut ctx,id,65,50).is_empty());
+    tree.children[1].set_prop("disabled","false");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,65,50),vec![21]);
+    eprintln!("LUMINA_RADIO_GROUP_MOUSE_X11 host_checked_pixels=true no_optimistic_toggle=true duplicate_selected_fail_closed=true underlay_block=true independent_groups=true malformed_group_block=true repair=true disable_reenable=true");
+}

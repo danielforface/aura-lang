@@ -265,3 +265,91 @@ fn native_x11_checkbox_and_switch_keyboard_host_authority_and_invalid_revocation
     assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
     eprintln!("LUMINA_SELECTION_KEYBOARD_X11 checkbox_enter_space=true switch_space=true skip_invalid_disabled=true checked_host_update_keeps_focus=true invalid_revokes_focus=true pointer_restore=true escape_blurs=true");
 }
+
+
+/// X11 keyboard-only radio group navigation. Left/Up and Right/Down select a
+/// target callback, never local checked; unlike Tab, arrows stay in one group.
+#[test]
+fn native_x11_radio_arrows_group_bounds_host_authority_and_invalid_revoke() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","190"),("height","40"),
+            ("on_change","cb:10"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","75"),("width","230"),("height","48"),
+            ("control","radio"),("group","plan"),("checked","true"),
+            ("on_click","cb:101"),("label","Standard")],vec![]),
+        node("Button",&[("x","20"),("y","135"),("width","230"),("height","48"),
+            ("control","radio"),("group","plan"),("checked","false"),
+            ("on_click","cb:102"),("label","Premium")],vec![]),
+        node("Button",&[("x","20"),("y","195"),("width","230"),("height","48"),
+            ("control","radio"),("group","plan"),("checked","false"),
+            ("disabled","true"),("on_click","cb:103")],vec![]),
+        node("Button",&[("x","20"),("y","255"),("width","230"),("height","48"),
+            ("control","radio"),("group","other"),("checked","true"),
+            ("on_click","cb:201")],vec![]),
+        node("Button",&[("x","300"),("y","75"),("width","190"),("height","48"),
+            ("on_click","cb:301"),("label","Submit")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,420));
+    frames(&plugin,&root,&mut ctx,3);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",id]);
+
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"q",false),10,"Aq"));
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Right"),vec![102],
+        "Right arrow selects next enabled radio callback");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Down"),vec![101],
+        "Down wraps and skips disabled third option");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Left"),vec![102],
+        "Left wraps to previous radio within the same group");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Up"),vec![101],
+        "Up selects previous radio without leaving group");
+    // No host update: Enter on the currently focused radio remains valid.
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![101]);
+
+    // Host changes selection atomically, existing focus remains stable.
+    root.children[1].set_prop("checked","false");
+    root.children[2].set_prop("checked","true");
+    assert!(button_frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Right"),vec![102]);
+    // Tab leaves plan group for the *other* group, not another plan option.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Right").is_empty(),
+        "a single-member other group cannot move arrows to plan/Submit");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![201]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![301],
+        "ordinary Button stays actionable, radio arrows do not affect it");
+    assert!(button_key(&plugin,&root,&mut ctx,"Left").is_empty(),
+        "ordinary Button must not navigate radio groups");
+
+    // Focus radio 102 via mouse, then inject conflicting host selections.
+    xdo(&["mousemove","--window",id,"70","155"]);
+    button_frames(&plugin,&root,&mut ctx,3);
+    xdo(&["mousedown","1"]);
+    let clicked=button_frames(&plugin,&root,&mut ctx,5);
+    xdo(&["mouseup","1"]);
+    button_frames(&plugin,&root,&mut ctx,2);
+    assert_eq!(clicked,vec![102]);
+    root.children[1].set_prop("checked","true");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "two selected radios must revoke stale keyboard focus");
+    assert!(button_key(&plugin,&root,&mut ctx,"Right").is_empty(),
+        "conflicted group arrow callbacks must be blocked");
+
+    root.children[1].set_prop("checked","false");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "repair does not silently reacquire user keyboard focus");
+    // Only a new genuine Tab or mouse action is allowed to re-acquire.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    // From no focus, Tab starts at TextInput again (not radio).
+    assert!(has(&press(&plugin,&root,&mut ctx,"z",false),10,"Aqz"));
+    eprintln!("LUMINA_RADIO_ARROW_X11 four_directions=true wraps_skips_disabled=true host_checked_authority=true separate_group=true nonradio_no_arrow=true conflict_revokes_focus=true repair_no_autofocus=true");
+}

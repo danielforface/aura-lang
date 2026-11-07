@@ -1395,6 +1395,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let mut delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
             let mut left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
             let mut right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let radio_up = win.rl.is_key_pressed(KeyboardKey::KEY_UP);
+            let radio_down = win.rl.is_key_pressed(KeyboardKey::KEY_DOWN);
             let mut home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
             let mut end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
             let mut enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
@@ -1448,6 +1450,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
+            let invalid_radio_groups=layout::invalid_radio_groups(tree,&planned_layout);
             let mut focus_order = layout::focus_order(tree, &planned_layout);
             let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
             focus_order.retain(|entry|match entry {
@@ -1904,6 +1907,18 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 prepare_ibus_candidate_font(&mut win.rl,&win.thread,
                     &mut win.candidate_font,candidate_page.as_ref());
             }
+            // Radio arrow traversal changes focused Button and emits the
+            // target's existing callback, but never mutates host checked.
+            // Sample all key state BEFORE Raylib borrows its draw handle.
+            let radio_reverse=left || radio_up;
+            let radio_forward=right || radio_down;
+            let radio_action=if !clicked && !tab && !escape && !(enter||space)
+                && plain_button_action && win.focused_input.is_none()
+                && radio_reverse!=radio_forward {
+                win.focused_button.and_then(|id|layout::radio_arrow_target(
+                    tree,&planned_layout,&keyboard_order,id,radio_reverse))
+            }else{None};
+            if let Some(id)=radio_action{win.focused_button=Some(id);}
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -1914,7 +1929,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, win.focused_button,
-                    &win.textures, &win.input_sessions,
+                    &invalid_radio_groups, &win.textures, &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
                 #[cfg(target_os="linux")]
@@ -1927,7 +1942,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
             let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
                 && win.focused_input.is_none(){win.focused_button}else{None};
-            fb.clicked_callback_id=click_cb.or(keyboard_click);
+            fb.clicked_callback_id=click_cb.or(radio_action).or(keyboard_click);
 
             if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
@@ -2105,6 +2120,7 @@ fn render_children(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2114,7 +2130,8 @@ fn render_children(
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
             render_node(d, child, prepared, now, sdf, click_anim, focused_input,
-                focused_button, textures, input_sessions, text_views, fonts, shaped);
+                focused_button, invalid_radio_groups, textures,
+                input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2129,6 +2146,7 @@ fn render_node(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2141,8 +2159,8 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, focused_button, textures, input_sessions,
-            text_views, fonts, shaped, false);
+            focused_input, focused_button, invalid_radio_groups,
+            textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2150,11 +2168,13 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,focused_button,textures,input_sessions,text_views,fonts,shaped,true);
+                focused_input,focused_button,invalid_radio_groups,textures,
+                input_sessions,text_views,fonts,shaped,true);
         }
     }
     render_children(d, node, layout, now, sdf, click_anim, focused_input,
-        focused_button, textures, input_sessions, text_views, fonts, shaped);
+        focused_button, invalid_radio_groups, textures, input_sessions,
+        text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2167,6 +2187,7 @@ fn paint_node<D: RaylibDraw>(
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2438,14 +2459,18 @@ fn paint_node<D: RaylibDraw>(
             let rect = bounds;
             let control = layout::button_control(node);
             let disabled = prop_string(node, "disabled") == Some("true")
-                || control == layout::ButtonControl::Invalid;
+                || control == layout::ButtonControl::Invalid
+                || (matches!(control,layout::ButtonControl::Radio(_))
+                    && prop_string(node,"group")
+                        .is_some_and(|g|invalid_radio_groups.contains(g)));
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
             // Opt-in controlled form selectors reuse an Aura Button constructor
             // and its existing callback. NEVER mutate checked on click: only
             // the authoritative host render changes the indicator.
-            if matches!(control,layout::ButtonControl::Checkbox(_) | layout::ButtonControl::Switch(_)){
+            if matches!(control,layout::ButtonControl::Checkbox(_) |
+                layout::ButtonControl::Switch(_) | layout::ButtonControl::Radio(_)){
                 let accent=Color::new(32,177,124,255);
                 let accent=if disabled{Color::new(104,112,119,255)}else{accent};
                 let panel=if disabled{Color::new(58,62,68,255)}else{
@@ -2477,6 +2502,18 @@ fn paint_node<D: RaylibDraw>(
                             d.draw_line((cx+9.0) as i32,(cy+4.0) as i32,
                                 (cx+18.0) as i32,(cy-6.0) as i32,Color::RAYWHITE);
                         }
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Radio(checked)=>{
+                        // A radio has a circular selected dot, unlike a
+                        // checkbox; only the host may update this state.
+                        let x=cx+11.0;
+                        d.draw_circle(x as i32,cy as i32,11.0,
+                            if disabled{Color::new(88,94,104,255)}
+                            else{Color::new(173,186,197,255)});
+                        d.draw_circle(x as i32,cy as i32,8.0,
+                            Color::new(42,50,63,255));
+                        if checked{d.draw_circle(x as i32,cy as i32,5.0,accent);}
                         cx+34.0
                     },
                     layout::ButtonControl::Switch(checked)=>{

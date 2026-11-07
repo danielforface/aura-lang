@@ -314,7 +314,16 @@ pub(crate) enum ButtonControl {
     Push,
     Checkbox(bool),
     Switch(bool),
+    Radio(bool),
     Invalid,
+}
+/// Group names are bounded, nonblank Unicode identifiers. Whitespace at the
+/// boundary and control characters would create invisible distinct groups.
+fn radio_group(node:&UiNode)->Option<&str> {
+    let group=prop(node,"group")?;
+    if group.is_empty() || group.len()>128 || group.trim()!=group
+        || group.chars().any(char::is_control) {return None;}
+    Some(group)
 }
 pub(crate) fn button_control(node:&UiNode)->ButtonControl {
     let checked=||match prop(node,"checked"){
@@ -328,12 +337,64 @@ pub(crate) fn button_control(node:&UiNode)->ButtonControl {
             .unwrap_or(ButtonControl::Invalid),
         Some("switch")=>checked().map(ButtonControl::Switch)
             .unwrap_or(ButtonControl::Invalid),
+        Some("radio")=>if radio_group(node).is_some(){
+            checked().map(ButtonControl::Radio).unwrap_or(ButtonControl::Invalid)
+        }else{ButtonControl::Invalid},
         _=>ButtonControl::Invalid,
     }
 }
 fn button_actionable(node:&UiNode)->bool {
     prop(node,"disabled")!=Some("true")
         && button_control(node)!=ButtonControl::Invalid
+}
+/// Conflicting selected options or callback IDs revoke the *entire* visible
+/// radio group. Never guess which host-owned selected value is authoritative.
+/// Hidden/clipped-away nodes have no physical interaction in this view.
+pub(crate) fn invalid_radio_groups(
+    root:&UiNode,plan:&LayoutNode
+)->std::collections::HashSet<String>{
+    use std::collections::{HashMap,HashSet};
+    fn visit(node:&UiNode,plan:&LayoutNode,
+        selected:&mut HashMap<String,usize>,
+        callbacks:&mut HashMap<u64,Vec<String>>,
+        all_buttons:&mut HashMap<u64,usize>){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="Button" {
+            if let Some(id)=callback(node,"on_click"){
+                *all_buttons.entry(id).or_default()+=1;
+            }
+            if let ButtonControl::Radio(on)=button_control(node) {
+                if let Some(group)=radio_group(node){
+                    if on {*selected.entry(group.to_owned()).or_default()+=1;}
+                    if let Some(id)=callback(node,"on_click"){
+                        callbacks.entry(id).or_default().push(group.to_owned());
+                    }
+                }
+            }
+        }
+        for (child,prepared) in node.children.iter().zip(&plan.children){
+            if let Some(prepared)=prepared{visit(child,prepared,selected,callbacks,all_buttons);}
+        }
+    }
+    let mut selected=HashMap::new();
+    let mut callbacks=HashMap::new();
+    let mut all_buttons=HashMap::new();
+    visit(root,plan,&mut selected,&mut callbacks,&mut all_buttons);
+    let mut conflicts:HashSet<String>=selected.into_iter()
+        .filter_map(|(group,count)|if count>1{Some(group)}else{None})
+        .collect();
+    for (id,groups) in callbacks{
+        if all_buttons.get(&id).copied().unwrap_or(0)>1{
+            conflicts.extend(groups);
+        }
+    }
+    conflicts
+}
+fn button_actionable_in(node:&UiNode,invalid:&std::collections::HashSet<String>)->bool{
+    button_actionable(node) && match button_control(node){
+        ButtonControl::Radio(_)=>radio_group(node).is_some_and(|g|!invalid.contains(g)),
+        _=>true,
+    }
 }
 /// A disabled visible control occupies its pointer surface but never fires
 /// its callback. Distinguish "blocked" from "miss" so a lower z-order button
@@ -343,11 +404,12 @@ enum PointerHit {
     Blocked,
     Action(HitTarget),
 }
-fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> PointerHit {
+fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32,
+    invalid:&std::collections::HashSet<String>) -> PointerHit {
     if !layout.clip.contains(x, y) { return PointerHit::Miss; }
     for (child, planned) in node.children.iter().zip(layout.children.iter()).rev() {
         if let Some(planned) = planned {
-            match hit_test_inner(child, planned, x, y) {
+            match hit_test_inner(child, planned, x, y, invalid) {
                 PointerHit::Miss => {},
                 resolved => return resolved,
             }
@@ -355,7 +417,7 @@ fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Pointer
     }
     if !layout.bounds.contains(x, y) { return PointerHit::Miss; }
     match node.kind.as_str() {
-        "Button" if !button_actionable(node) => PointerHit::Blocked,
+        "Button" if !button_actionable_in(node,invalid) => PointerHit::Blocked,
         "Button" => callback(node, "on_click")
             .map(|id| PointerHit::Action(HitTarget::Button(id)))
             .unwrap_or(PointerHit::Miss),
@@ -374,7 +436,8 @@ fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Pointer
 /// Pure clip-aware, reversed-paint-order pointer resolution. The public
 /// result reports only trusted enabled targets; blocked clicks stay unhandled.
 pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
-    match hit_test_inner(node, layout, x, y) {
+    let invalid=invalid_radio_groups(node,layout);
+    match hit_test_inner(node, layout, x, y, &invalid) {
         PointerHit::Action(target) => Some(target),
         PointerHit::Blocked | PointerHit::Miss => None,
     }
@@ -462,12 +525,13 @@ pub(crate) fn keyboard_focus_order(
             HitTarget::TextInput{on_change,..}=>Some(*on_change),
             HitTarget::Button(_)=>None,
         }).collect();
+    let invalid=invalid_radio_groups(root,plan);
     fn collect(node:&UiNode,plan:&LayoutNode,allowed:&std::collections::HashSet<u64>,
-        output:&mut Vec<HitTarget>){
+        invalid:&std::collections::HashSet<String>,output:&mut Vec<HitTarget>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if prop(node,"disabled")!=Some("true"){
             match node.kind.as_str(){
-                "Button" if button_actionable(node)=>{
+                "Button" if button_actionable_in(node,invalid)=>{
                     if let Some(id)=callback(node,"on_click"){
                         output.push(HitTarget::Button(id));
                     }
@@ -487,11 +551,11 @@ pub(crate) fn keyboard_focus_order(
             }
         }
         for (child,prepared) in node.children.iter().zip(&plan.children){
-            if let Some(prepared)=prepared{collect(child,prepared,allowed,output);}
+            if let Some(prepared)=prepared{collect(child,prepared,allowed,invalid,output);}
         }
     }
     let mut output=Vec::new();
-    collect(root,plan,&valid_inputs,&mut output);
+    collect(root,plan,&valid_inputs,&invalid,&mut output);
     let mut multiplicity=std::collections::HashMap::<u64,usize>::new();
     for item in &output{
         if let HitTarget::Button(id)=item{
@@ -521,9 +585,173 @@ pub(crate) fn next_keyboard_focus(
     Some(order[index].clone())
 }
 
+/// A radio group uses its own existing on_click callbacks. Arrow keys move
+/// focus and propose the next member by callback; checked remains host-owned.
+/// Only radio peers already present in the validated keyboard order participate.
+fn radio_group_for_callback(root:&UiNode,plan:&LayoutNode,id:u64)->Option<String>{
+    if plan.bounds.intersect(plan.clip).is_empty(){return None;}
+    if root.kind=="Button" && callback(root,"on_click")==Some(id)
+        && matches!(button_control(root),ButtonControl::Radio(_)){
+        return radio_group(root).map(|g|g.to_owned());
+    }
+    for (child,prepared) in root.children.iter().zip(&plan.children){
+        if let Some(prepared)=prepared{
+            if let Some(found)=radio_group_for_callback(child,prepared,id){return Some(found);}
+        }
+    }
+    None
+}
+pub(crate) fn radio_arrow_target(root:&UiNode,plan:&LayoutNode,
+    keyboard_order:&[HitTarget],active:u64,reverse:bool)->Option<u64>{
+    if !keyboard_order.contains(&HitTarget::Button(active)){return None;}
+    let group=radio_group_for_callback(root,plan,active)?;
+    let members:Vec<u64>=keyboard_order.iter().filter_map(|entry|{
+        let HitTarget::Button(id)=entry else{return None;};
+        if radio_group_for_callback(root,plan,*id).as_deref()==Some(group.as_str()){
+            Some(*id)
+        }else{None}
+    }).collect();
+    if members.len()<2{return None;}
+    let current=members.iter().position(|id|*id==active)?;
+    let next=if reverse{(current+members.len()-1)%members.len()}
+        else{(current+1)%members.len()};
+    Some(members[next])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_group_strict_tokens_bounded_unicode_and_missing_group_fail_closed(){
+        let mut radio=n("Button",&[("control","radio"),("group","plan"),
+            ("checked","false"),("on_click","cb:11")],vec![]);
+        assert_eq!(button_control(&radio),ButtonControl::Radio(false));
+        radio.set_prop("checked","true");
+        assert_eq!(button_control(&radio),ButtonControl::Radio(true));
+        radio.set_prop("group","מסלול־זהב");
+        assert_eq!(button_control(&radio),ButtonControl::Radio(true));
+        radio.set_prop("group"," plan");
+        assert_eq!(button_control(&radio),ButtonControl::Invalid);
+        radio.set_prop("group","plan\nother");
+        assert_eq!(button_control(&radio),ButtonControl::Invalid);
+        radio.set_prop("group","");
+        assert_eq!(button_control(&radio),ButtonControl::Invalid);
+        radio.set_prop("group",&"a".repeat(129));
+        assert_eq!(button_control(&radio),ButtonControl::Invalid);
+        radio.set_prop("group","plan");
+        radio.set_prop("checked","1");
+        assert_eq!(button_control(&radio),ButtonControl::Invalid);
+        radio.set_prop("checked","true");
+        assert_eq!(button_control(&radio),ButtonControl::Radio(true));
+    }
+
+    #[test]
+    fn radio_conflicting_host_selection_blocks_whole_group_and_underlay(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","180"),("height","55"),
+                ("on_click","cb:11")],vec![]),
+            n("Button",&[("x","35"),("y","25"),("width","140"),("height","45"),
+                ("control","radio"),("group","plan"),("checked","true"),
+                ("on_click","cb:21")],vec![]),
+            n("Button",&[("x","35"),("y","95"),("width","140"),("height","45"),
+                ("control","radio"),("group","plan"),("checked","true"),
+                ("on_click","cb:22")],vec![]),
+            n("Button",&[("x","35"),("y","165"),("width","140"),("height","45"),
+                ("control","radio"),("group","other"),("checked","true"),
+                ("on_click","cb:23")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,400.0,280.0));
+        let invalid=invalid_radio_groups(&root,&plan);
+        assert!(invalid.contains("plan"));
+        assert!(!invalid.contains("other"));
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),None,
+            "conflicted foreground radio blocks its own callback and the underlay");
+        assert_eq!(hit_test(&root,&plan,60.0,115.0),None);
+        assert_eq!(hit_test(&root,&plan,60.0,185.0),Some(HitTarget::Button(23)));
+        let order=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(order,vec![HitTarget::Button(11),HitTarget::Button(23)]);
+        root.children[2].set_prop("checked","false");
+        assert!(invalid_radio_groups(&root,&plan).is_empty());
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),Some(HitTarget::Button(21)));
+        let repaired=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(repaired,vec![HitTarget::Button(11),HitTarget::Button(21),
+            HitTarget::Button(22),HitTarget::Button(23)]);
+        root.children[1].set_prop("checked","false");
+        root.children[2].set_prop("checked","true");
+        assert!(invalid_radio_groups(&root,&plan).is_empty(),
+            "atomic host-controlled selection handoff should remain valid");
+    }
+
+    #[test]
+    fn radio_duplicate_callback_id_across_groups_revokes_both_groups(){
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("control","radio"),
+                ("checked","false"),("group","a"),("on_click","cb:6")],vec![]),
+            n("Button",&[("x","20"),("y","100"),("control","radio"),
+                ("checked","false"),("group","b"),("on_click","cb:6")],vec![]),
+            n("Button",&[("x","20"),("y","180"),("control","checkbox"),
+                ("checked","false"),("on_click","cb:7")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,500.0,300.0));
+        let bad=invalid_radio_groups(&root,&plan);
+        assert!(bad.contains("a")&&bad.contains("b"));
+        assert_eq!(hit_test(&root,&plan,40.0,40.0),None);
+        assert_eq!(hit_test(&root,&plan,40.0,120.0),None);
+        assert_eq!(keyboard_focus_order(&root,&plan,&[]),vec![HitTarget::Button(7)]);
+    }
+
+    #[test]
+    fn radio_callback_collision_with_plain_button_blocks_only_radio_group(){
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("control","radio"),
+                ("checked","false"),("group","choice"),("on_click","cb:51")],vec![]),
+            n("Button",&[("x","20"),("y","90"),("on_click","cb:51")],vec![]),
+            n("Button",&[("x","20"),("y","165"),("control","radio"),
+                ("checked","true"),("group","independent"),("on_click","cb:52")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,400.0,290.0));
+        let bad=invalid_radio_groups(&root,&plan);
+        assert!(bad.contains("choice"));
+        assert!(!bad.contains("independent"));
+        assert_eq!(hit_test(&root,&plan,40.0,40.0),None);
+        assert_eq!(hit_test(&root,&plan,40.0,110.0),Some(HitTarget::Button(51)),
+            "plain Button preserves its prior pointer semantics");
+        assert_eq!(hit_test(&root,&plan,40.0,185.0),Some(HitTarget::Button(52)));
+        assert_eq!(keyboard_focus_order(&root,&plan,&[]),
+            vec![HitTarget::Button(51),HitTarget::Button(52)]);
+    }
+
+    #[test]
+    fn radio_arrow_order_wraps_within_group_skips_disabled_and_ignores_nonradio(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("control","radio"),
+                ("group","plan"),("checked","true"),("on_click","cb:10")],vec![]),
+            n("Button",&[("x","20"),("y","80"),("control","radio"),
+                ("group","plan"),("checked","false"),("disabled","true"),
+                ("on_click","cb:11")],vec![]),
+            n("Button",&[("x","20"),("y","140"),("control","radio"),
+                ("group","plan"),("checked","false"),("on_click","cb:12")],vec![]),
+            n("Button",&[("x","20"),("y","200"),("control","radio"),
+                ("group","other"),("checked","true"),("on_click","cb:20")],vec![]),
+            n("Button",&[("x","300"),("y","20"),("on_click","cb:30")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,600.0,350.0));
+        let o=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(radio_arrow_target(&root,&plan,&o,10,false),Some(12));
+        assert_eq!(radio_arrow_target(&root,&plan,&o,12,false),Some(10));
+        assert_eq!(radio_arrow_target(&root,&plan,&o,10,true),Some(12));
+        assert_eq!(radio_arrow_target(&root,&plan,&o,12,true),Some(10));
+        assert_eq!(radio_arrow_target(&root,&plan,&o,11,false),None);
+        assert_eq!(radio_arrow_target(&root,&plan,&o,20,false),None);
+        assert_eq!(radio_arrow_target(&root,&plan,&o,30,false),None);
+        root.children[2].set_prop("checked","true");
+        let bad=keyboard_focus_order(&root,&plan,&[]);
+        assert!(radio_arrow_target(&root,&plan,&bad,10,false).is_none());
+        root.children[0].set_prop("checked","false");
+        let fixed=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(radio_arrow_target(&root,&plan,&fixed,12,true),Some(10));
+    }
 
     #[test]
     fn controlled_selection_requires_exact_boolean_and_known_control_variant() {
