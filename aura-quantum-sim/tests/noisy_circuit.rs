@@ -48,9 +48,11 @@ fn unobserved_reset_is_nonselective_cptp_and_retains_other_wire_reduced_state() 
     rho.apply_gate(Gate::Cnot{control:0,target:1}).unwrap();
     let before = rho.reduced_qubit(1).unwrap();
     rho.reset_unobserved(0).unwrap();
-    for i in 0..2 {for j in 0..2 {
-        ceq(before[i][j],rho.reduced_qubit(1).unwrap()[i][j]);
-    }}
+    for (i,row) in before.iter().enumerate() {
+        for (j,value) in row.iter().enumerate() {
+            ceq(*value,rho.reduced_qubit(1).unwrap()[i][j]);
+        }
+    }
     close(rho.basis_probability(0).unwrap(),0.5);
     close(rho.basis_probability(2).unwrap(),0.5);
     close(rho.basis_probability(1).unwrap(),0.0);
