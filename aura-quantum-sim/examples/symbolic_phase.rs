@@ -12,11 +12,13 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
     }
     let bright=state.basis_weight(0)?;
     let dark=state.basis_weight(1)?;
-    if bright!=ExactProbability{
-        numerator:Root2::new(2,1),denominator_power_of_two:2
-    } || dark!=ExactProbability{
-        numerator:Root2::new(2,-1),denominator_power_of_two:2
-    } {
+    let expected_bright=ExactProbability {
+        numerator:Root2::new(2,1),denominator_power_of_two:2,
+    };
+    let expected_dark=ExactProbability {
+        numerator:Root2::new(2,-1),denominator_power_of_two:2,
+    };
+    if bright!=expected_bright || dark!=expected_dark {
         return Err("exact HTH interference identity failed".into());
     }
     let mut circuit=SymbolicCircuit::new(1,1);
