@@ -18,3 +18,9 @@ Date: 2026-11-07. **STATUS: experimental integration candidate only. NOT MERGED,
 5. If shared governance requires adopted V3 policy first, mark BLOCKED_ON_CONTRACT; do not bypass controls by describing a draft as a shipped feature.
 
 Authoritative coordination: Issue #110 (X), Issue #109 (integration), #59 (ownership); source PR #108.
+
+## X-002 — externally executable consumer acceptance (same frozen C-009)
+- Source package SHA stays pinned to C-009; Agent C acknowledged identical source trees in [Issue #110](https://github.com/danielforface/aura-lang/issues/110#issuecomment-6711318452). Later C-010 symbolic source is deliberately excluded.
+- **No edits** to C-owned Rust, agent-C workflow or note trees. The integration steward owns new `tools/integration/q28_cli_contract.py` and added `X002` job step in the integration-only workflow.
+- Black-box **compiled CLI** consumer acceptance covers all three distinct JSON v1 profiles, exact seed replay across independent processes, per-shot Bell Z correlation in pure/stabilizer engines, native error code/stderr/empty-stdout, bounded input and schema rejection, a nonphysical noise probability, non-Clifford T rejection and analytical noisy density `[[0.68,0.20],[0.20,0.32]]`, trace 1 and purity 0.6448.
+- These tests are integration guards, **not** an Aura compiler integration, scientific formal proof, cross-platform release test or owner approval to merge. The new exact-head candidate CI must complete before this gate is called GREEN.

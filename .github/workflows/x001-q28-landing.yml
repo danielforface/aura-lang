@@ -6,6 +6,7 @@ on:
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/qualification/integration/**'
+      - 'tools/integration/**'
       - '.github/workflows/x001-q28-landing.yml'
   pull_request:
     branches:
@@ -13,6 +14,7 @@ on:
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/qualification/integration/**'
+      - 'tools/integration/**'
       - '.github/workflows/x001-q28-landing.yml'
   workflow_dispatch:
 
@@ -52,6 +54,12 @@ jobs:
           assert s["schema"]=="aura.quantum.stabilizer-result/1" and s["basis_probabilities"]==[.5,0,0,.5]
           print("X001_STANDALONE_CANDIDATE_REAL_CLI_PASS")
           PY
+      - name: X002 external JSON process contract and analytic physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --quiet --manifest-path aura-quantum-sim/Cargo.toml --bins
+          python3 tools/integration/q28_cli_contract.py --bin-dir aura-quantum-sim/target/debug
   independent-science:
     runs-on: ubuntu-latest
     timeout-minutes: 20
