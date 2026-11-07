@@ -419,7 +419,9 @@ It is NOT a generic MPS/SVD network, a state-of-the-art tensor
 compression algorithm, an approximate rank-truncation scheme or
 support for arbitrary globally entangled 128-qubit states. It uses
 the existing validated Statevector gate engine *inside each factor*.
-Cross-factor CNOT/CZ atomically join factors; a SWAP between
+Cross-factor CNOT/CZ atomically join factors **unless an exact
+local Pauli-eigenstate proof shows the gate is product-preserving**;
+a SWAP between
 disconnected components exchanges their wire labels without
 needlessly merging them. Any attempted merge beyond **10 qubits
 in one factor** fails closed with no truncation.
@@ -554,3 +556,72 @@ over 56 circuits of 2–8 wires, including T and cross-factor SWAP.
 The prior five-backend Qiskit tests, resource controls and direct
 CLI parity remain enabled. This is Q28-008/Q28-011 scoped simulation
 assurance, **not QIR, hardware, a formal proof or Q28-wide release**.
+
+
+## C-014 — Exact non-entangling CX/CZ across factor boundaries
+
+The CPU factor-product simulator now safely executes *certain*
+two-wire controlled gates without an exponential tensor-factor join.
+An actual cross-factor CX/CZ is optimized only if a strict **algebraic
+Pauli eigenstate proof** establishes that the global pure state remains
+a tensor product. Proven cases are:
+
+- CX with a control known to be Z eigenstate `|0>` or `|1>`:
+  do nothing for zero, or apply the existing local X gate on the
+  target factor for one.
+- CX with the *entire target factor* a +1 or -1 eigenvector of X
+  at that wire: no action for +1; apply local Z on the **control**
+  factor for -1. This preserves conditional phases and supports
+  a previously merged factor that is physically separable.
+- CZ with **either** operand in an exact Z eigenstate:
+  do nothing for zero, or apply local Z to the opposite factor
+  for one, even if that opposite factor contains up to 10
+  entangled wires.
+
+The test examines **complex coefficient support or exact per-pair
+equality**, not a rounded Born probability close to zero/one
+and not a floating-point epsilon. If no algebraic proof holds,
+the prior strict atomic factor join executes or fails under
+the same 10-wire factor and memory limits. Previously invalid
+aliased/out-of-range qubits remain invalid. There is no SVD,
+truncation, branch postselection, additional RNG draw, change
+to the quantum state or relaxation of fail-closed resource gates.
+A result-only counter `product_preserving_two_wire_gates`
+records how many real CX/CZ calls were proved not to require a
+cross-factor join; it aggregates over all simulated shots.
+The request schema and all other backend CLIs remain unchanged.
+
+**Real runnable program:** 128 total qubits, one exact `|1>`
+control and 127 freshly prepared targets; H(target), CZ,
+CX, H(target) on every target, followed by three T phases.
+The 512-op circuit provably leaves 128 independent 1-qubit
+factors, bypasses **254 otherwise expensive cross-factor
+joins** and preserves the final all-one 128-wire basis
+probability ~1 with **4,096 logical complex state bytes**.
+Its direct CLI and unified auto-dispatch return the exact
+same nested quantum result. In contrast, non-eigenstate
+two-wire interactions still form genuinely entangled
+components and reject beyond 10 wires.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml \
+  --example factorized_classical_control_fanout
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_control_fanout_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_control_fanout_v1.json
+```
+
+
+The source tests include dense 2–11q phase parity and
+adversarial controls for exact Z0/Z1, X+/X−, local
+uncomputation, formerly width-blocked 10q factors,
+memory-tight success/fail-closed rejection, and
+seeded measurement replay. A separately pinned
+Qiskit complex amplitude oracle evaluates 112
+2–8q circuits, **8,128 complete complex amplitudes**
+and poisoned negative controls, with positive evidence
+that actual entangling operations remain joined.
+This is a pure **CPU simulation optimization**, not a
+general MPS exactness theorem, formal equivalence proof,
+QPU execution or an integrated Aura IR/QIR interface.

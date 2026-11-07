@@ -96,6 +96,14 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_projective_reuse_v1.json > /tmp/q28-projective-auto-128.json
           python3 -c 'import json; d=json.load(open("/tmp/q28-projective-128.json")); a=json.load(open("/tmp/q28-projective-auto-128.json")); assert a["selected_backend"]=="factor_product" and a["engine_result"]==d and a["qpu_hardware_jobs"]==0; assert d["qubits"]==128 and d["shots"]==1 and d["projective_wire_splits"]==127 and d["projective_split_deferred"]==0 and len(d["factors"])==128 and len(d["results"][0]["trace"])==127; assert d["peak_logical_state_bytes"]<5000 and d["truncation"]=="none;factor-width-hard-limit" and d["qpu_hardware_jobs"]==0; print("Q28_PROJECTIVE_RECYCLE_CLI_PASS wires=128 projective_splits=127 factors=128 original_result_equal=yes qpu_jobs=0")'
 
+      - name: Run real 128-wire exact-control fanout via Rust app and both JSON CLIs
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_classical_control_fanout
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_control_fanout_v1.json > /tmp/q28-control-fanout.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_control_fanout_v1.json > /tmp/q28-control-fanout-auto.json
+          python3 -c 'import json; a=json.load(open("/tmp/q28-control-fanout.json")); d=json.load(open("/tmp/q28-control-fanout-auto.json")); assert d["engine_result"]==a and d["selected_backend"]=="factor_product" and d["qpu_hardware_jobs"]==0; assert a["qubits"]==128 and a["shots"]==1 and a["product_preserving_two_wire_gates"]==254 and len(a["factors"])==128 and a["peak_logical_state_bytes"]==4096 and a["projective_wire_splits"]==0 and a["qpu_hardware_jobs"]==0; assert abs(a["inspected_basis_probability"]-1.0)<1e-10; print("Q28_EXACT_CONTROL_CLI_PASS qubits=128 instructions=512 no_merge_CX_CZ=254 state_bytes=4096 qpu_jobs=0")'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -146,6 +154,12 @@ jobs:
           set -euo pipefail
           test -x aura-quantum-sim/target/release/aura-quantum-factorized-run
           python aura-quantum-sim/tools/check_qiskit_projective_recycling.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c013-projective-dynamic-qiskit.json
+
+      - name: Independently compare exact-eigenstate cross-CX/CZ against pinned Qiskit
+        run: |
+          set -euo pipefail
+          test -x aura-quantum-sim/target/release/aura-quantum-factorized-run
+          python aura-quantum-sim/tools/check_qiskit_exact_product_controls.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c014-exact-controls-qiskit.json
 
       - name: Upload reproducible parity evidence
         if: always()

@@ -1,9 +1,10 @@
 //! AURA-Q28-008 — untruncated *disconnected-factor tensor network* for pure CPU circuits.
 //!
 //! A state is an explicit tensor product of small fully complex Statevectors.
-//! One/two-qubit gates on the same component are delegated to the independently
-//! qualified dense oracle; a nonlocal two-qubit gate atomically joins two
-//! components. Cross-component SWAP merely relabels factor wire identities.
+//! One/two-qubit gates on the same component use the already validated dense
+//! oracle. Cross-component CNOT/CZ join components **unless** a mathematically
+//! exact local Pauli eigenstate proof permits an equivalent local operation
+//! without entanglement. SWAP relabels disconnected factor wire identities.
 //! No SVD, truncation, approximation of entanglement, rank compression or claim
 //! to arbitrary-width globally entangled simulation. Arithmetic remains f64.
 //!
