@@ -154,3 +154,120 @@ fn unqualified_wide_division_in_main_must_fail_closed_not_drop_backend_error() {
         ),
     }
 }
+
+
+#[test]
+fn typed_i32_modular_arithmetic_is_ubsan_clean_with_signed_extremes() {
+    // AURA-Q03 native arithmetic accepts precisely typed IR and must avoid
+    // UB for I32 Add/Sub/Mul/Neg even when signed bounds are exceeded.
+    // The SOURCE-level I32 Return ABI is a separate qualified boundary;
+    // exercise the supported C backend with explicit IR type metadata,
+    // not an invented signed source Return contract.
+    let span: Span = (0,0).into();
+    let mut source = ModuleIR::new();
+    for (cell, arithmetic) in [
+        ("add32", Arithmetic::Binary(BinOp::Add)),
+        ("sub32", Arithmetic::Binary(BinOp::Sub)),
+        ("mul32", Arithmetic::Binary(BinOp::Mul)),
+        ("neg32", Arithmetic::Unary(UnaryOp::Neg)),
+    ] {
+        let unary = matches!(arithmetic, Arithmetic::Unary(_));
+        let params = if unary {
+            vec![Param { name:"x".into(), ty:Type::I32,span,value:ValueId(0) }]
+        } else {
+            vec![
+                Param { name:"x".into(), ty:Type::I32,span,value:ValueId(0) },
+                Param { name:"y".into(), ty:Type::I32,span,value:ValueId(1) }
+            ]
+        };
+        let kind = match arithmetic {
+            Arithmetic::Binary(op) => InstKind::Binary {
+                op, left:ValueId(0), right:ValueId(1),
+            },
+            Arithmetic::Unary(op) => InstKind::Unary {
+                op, operand:ValueId(0),
+            },
+        };
+        source.functions.insert(cell.to_string(), FunctionIR {
+            name:cell.into(), span, params, ret:Type::I32,entry:BlockId(0),
+            blocks:vec![BasicBlock {
+                id:BlockId(0),span,hint:ExecutionHint::Sequential,
+                insts:vec![Inst { span, dest:Some(ValueId(2)),kind }],
+                term:Terminator::Return(Some(ValueId(2))),
+            }],
+        });
+    }
+    let mut optimized=source.clone();
+    aura_ir::optimize_module(&mut optimized);
+    let driver = r#"
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+int32_t add32(int32_t,int32_t);
+int32_t sub32(int32_t,int32_t);
+int32_t mul32(int32_t,int32_t);
+int32_t neg32(int32_t);
+int main(int argc,char** argv) {
+  if (argc!=4) return 2;
+  const char* mode=argv[1];
+  const int32_t x=(int32_t)strtoll(argv[2],NULL,10);
+  const int32_t y=(int32_t)strtoll(argv[3],NULL,10);
+  int32_t out;
+  if (!strcmp(mode,"add32")) out=add32(x,y);
+  else if (!strcmp(mode,"sub32")) out=sub32(x,y);
+  else if (!strcmp(mode,"mul32")) out=mul32(x,y);
+  else if (!strcmp(mode,"neg32")) out=neg32(x);
+  else return 3;
+  printf("%lld\n",(long long)out);
+  return 0;
+}
+"#;
+    let samples: &[(i32,i32)]=&[
+        (0,0), (1,-1), (-1,-1),
+        (i32::MAX,1), (i32::MIN,-1),
+        (i32::MIN,1), (i32::MAX,i32::MAX),
+        (i32::MIN,i32::MIN), (i32::MIN,0),
+        (i32::MAX,-1), (-2_000_000_000,2_000_000_000)
+    ];
+    for (label,ir) in [("source_ir",&source),("optimized_ir",&optimized)] {
+        let artifacts=emit_module(ir,None).expect("typed i32 IR emits C without signed UB");
+        assert!(artifacts.module_c.contains("aura_i32_from_wrapped_bits"),
+            "{label}: I32 must use modular native C conversion");
+        let root=Scratch::new();
+        fs::write(root.root.join("aura_runtime.h"),&artifacts.runtime_h).unwrap();
+        fs::write(root.root.join("module.c"),&artifacts.module_c).unwrap();
+        fs::write(root.root.join("driver.c"),driver).unwrap();
+        for opt in ["-O0","-O2"] {
+            let exe=root.root.join(format!("signed_i32_{label}_{}",&opt[1..]));
+            let compile=Command::new("clang")
+                .args(["-std=gnu11","-Wall","-Werror",
+                       "-fsanitize=undefined","-fno-sanitize-recover=all",
+                       opt,"-I"])
+                .arg(&root.root).arg(root.root.join("module.c"))
+                .arg(root.root.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang UBSan must exist on Native runner");
+            assert!(compile.status.success(),
+                "{label}/{opt} typed IR C compilation failed: {}\n{}",
+                String::from_utf8_lossy(&compile.stderr),artifacts.module_c);
+            for &(x,y) in samples {
+                for (op,want) in [
+                    ("add32",x.wrapping_add(y)),
+                    ("sub32",x.wrapping_sub(y)),
+                    ("mul32",x.wrapping_mul(y)),
+                    ("neg32",x.wrapping_neg()),
+                ] {
+                    let output=Command::new(&exe).arg(op)
+                        .arg(x.to_string()).arg(y.to_string())
+                        .output().expect("i32 native executable runs");
+                    assert!(output.status.success(),
+                        "{label}/{opt} {op}({x},{y}): undefined behavior:\n{}",
+                        String::from_utf8_lossy(&output.stderr));
+                    assert_eq!(String::from_utf8_lossy(&output.stdout),
+                        format!("{want}\n"),
+                        "{label}/{opt} {op}({x},{y}) is not modular i32");
+                }
+            }
+        }
+    }
+}
