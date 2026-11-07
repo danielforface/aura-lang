@@ -1631,8 +1631,13 @@ fn emit_function(
                                     .unwrap_or((CType::Tensor, format!("v{}", source.0)));
                                 (
                                     source_ct,
+                                    // CString maps to "const char*"; an extra
+                                    // leading const creates invalid strict C:
+                                    // "const const char*". This Local alias
+                                    // copies the pointer value, not the data.
                                     format!(
-                                        "const {} v{} = {};",
+                                        "{}{} v{} = {};",
+                                        if source_ct == CType::CString { "" } else { "const " },
                                         map_ctype_decl(source_ct),
                                         dest.0,
                                         source_name
