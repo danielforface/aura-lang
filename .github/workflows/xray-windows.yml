@@ -170,7 +170,7 @@ jobs:
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
-          Copy-Item "dist/ci-report.html" "dist/CI-REPORT.html"
+          Copy-Item "dist/ci-report.html" "dist/XR02-EXAMPLE-REPORT.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -181,7 +181,7 @@ jobs:
             dist/AuraXRay.exe
             dist/BUILD-MANIFEST.json
             dist/README.txt
-            dist/CI-REPORT.html
+            dist/XR02-EXAMPLE-REPORT.html
           retention-days: 30
           if-no-files-found: error
 
