@@ -203,7 +203,7 @@ fn repeated_projective_measurement_of_same_wire_does_not_invent_split_or_rng() {
     }
     let mut ra=SeededRng::new(456);
     let mut rb=SeededRng::new(456);
-    for repeat in 0..12 {
+    for _ in 0..12 {
         assert_eq!(factor.measure(0,&mut ra).unwrap(),
                    reference.measure(0,&mut rb).unwrap());
         assert_eq!(factor.projective_wire_splits(),1);
@@ -211,7 +211,6 @@ fn repeated_projective_measurement_of_same_wire_does_not_invent_split_or_rng() {
         assert_eq!(factor.projective_split_deferred(),0);
         assert_eq!(ra.next_u64(),rb.next_u64());
         equal_amplitudes(&factor,&reference,2);
-        assert_eq!(repeat < 12,true);
     }
 }
 #[test]
@@ -229,6 +228,6 @@ fn dropped_temporary_split_does_not_reinterpret_classical_result() {
     // state budget after reserving output is set carefully.
     let exact=factor.execute_shots(1,6789,600).unwrap();
     assert_eq!(exact.records[0].trace.len(),1);
-    assert_eq!(exact.records[0].bits[0].is_some(),true);
+    assert!(exact.records[0].bits[0].is_some());
     assert_eq!(exact.projective_wire_splits+exact.projective_split_deferred,1);
 }

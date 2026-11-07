@@ -442,8 +442,16 @@ complex f64**, with the old `NORM_TOLERANCE`. Tensor
 performed; this is *not* a guarantee of zero floating-point
 rounding error. No dense-state approximation or implicit
 conditioning happens when a merge exceeds the explicit width.
-Post-measurement factors are conservatively left joined; there is
-no automatic Schmidt splitting or dynamic regrouping.
+After a projective Z measurement, the measured coordinate is known
+to be separable by the exact measurement postulate. C-013 now
+**releases that wire as a one-qubit factor** (including its full
+postselected complex phase), provided the old and replacement
+vectors fit the checked temporary logical-memory budget. The rest of
+the factor remains together even when further separation might be
+possible: this is *not* tolerance-based Schmidt/SVD splitting.
+If memory prevents the optional topology change, the already-collapsed
+original factor remains valid; that deferred optimization is visible
+in the result and later over-width joins still reject.
 
 Run real apps and JSON:
 
@@ -479,3 +487,70 @@ Verification uses full dense 1–8-wire Rust statevector phase
 comparison, adaptive seed/trace equality, high-width Bell/T,
 strict negative controls and external Qiskit full complex
 amplitude parity (separately logged; not a formal proof).
+
+
+## C-013 — Projective wire release and 128-wire mid-circuit reuse
+
+A mid-circuit projective Z measurement on any nontrivial factor
+**guarantees** mathematical separation
+`|measured_bit> ⊗ |conditional_rest>`. The factor engine
+now extracts the measured coordinate after the existing trusted seeded
+measurement without a second random draw, retaining all complex
+amplitudes of the remaining conditional state with their phases.
+There is no Schmidt approximation or truncation; the usual floating
+`f64` numerical limitations still apply.
+
+The implementation creates the remaining and measured states
+*before* committing a topology change. During this operation the
+old vector and both new vectors count against a temporary logical
+memory budget. If allocation or the budget prevents splitting,
+the already-collapsed factor stays intact and simulations remain
+physically consistent, albeit possibly unable to accept a later
+join exceeding width 10. A structurally impossible or numerically
+invalid state is not silently reinterpreted. Single-wire repeat
+measurements do not invent additional releases or RNG changes.
+
+Each factorized JSON result now includes additive, non-breaking
+counters `projective_wire_splits` and
+`projective_split_deferred` (totals over all
+shots). A user can inspect the exact factor wire labels after a
+single shot using `inspect_factors`; the default result
+schema remains `aura.quantum.factorized-result/1`.
+The unified `aura-quantum-auto-run` reports the
+original complete factor result unchanged inside `engine_result`.
+
+**Previously unsupported real program:** 128 qubits, repeatedly
+apply H(0), CX(0,new), measure q0, then conditionally X(q0) to
+reinitialize it, on **127 different fresh target qubits**.
+With four non-Clifford T gates on independently measured targets,
+that is the full **512 instruction admission limit**.
+Without projective release, the old engine reaches an 11-wire
+factor and rejects. With C-013, the program completes,
+uses 4,096 current logical state bytes (plus bounded temporary
+copies, classical trace and allocator overhead), has 128 separate
+one-qubit factors, 127 genuine postselection-driven factor splits,
+no deferred splits and no QPU jobs. It stores the stochastic Z
+measurement trace and tests the final selected 128-wire basis
+probability. **This is not a 128-way globally entangled state.**
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_projective_reuse
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_projective_reuse_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_projective_reuse_v1.json
+```
+
+
+Validation: `tests/factorized_recycling.rs` compares complete
+complex dense amplitudes (including phases) and seeded RNG events,
+demonstrates a 10-wire entangled factor releasing a wire to connect
+an 11th, and verifies tight-memory deferral is non-mutating for
+factor topology. A separate pinned Qiskit dynamic oracle
+`tools/check_qiskit_projective_recycling.py` independently
+evolves each gate and conditions on the *actual* simulator
+measurement/reset trace, comparing full final complex amplitudes
+over 56 circuits of 2–8 wires, including T and cross-factor SWAP.
+The prior five-backend Qiskit tests, resource controls and direct
+CLI parity remain enabled. This is Q28-008/Q28-011 scoped simulation
+assurance, **not QIR, hardware, a formal proof or Q28-wide release**.

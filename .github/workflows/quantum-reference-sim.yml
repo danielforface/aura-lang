@@ -88,6 +88,14 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_factorized_128_v1.json > /tmp/q28-routed-factor128.json
           python3 -c 'import json, math; a=json.load(open("/tmp/q28-factor128.json")); b=json.load(open("/tmp/q28-routed-factor128.json")); assert a==b["engine_result"]; assert b["selected_backend"]=="factor_product" and b["qpu_hardware_jobs"]==0; assert a["qubits"]==128 and len(a["factors"])==64 and a["peak_logical_state_bytes"]<8192; assert a["truncation_error_bound"]==0.0 and a["truncation"]=="none;factor-width-hard-limit"; assert abs(a["inspected_basis_probability"]-2**-64)<1e-25; print("Q28_FACTOR_REAL_128_PASS qubits=128 factors=64 truncation=none 128Q_phase_T=yes")'
 
+      - name: Execute 128-wire projective recycle via real Rust and independent CLI routes
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_projective_reuse
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_projective_reuse_v1.json > /tmp/q28-projective-128.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_projective_reuse_v1.json > /tmp/q28-projective-auto-128.json
+          python3 -c 'import json; d=json.load(open("/tmp/q28-projective-128.json")); a=json.load(open("/tmp/q28-projective-auto-128.json")); assert a["selected_backend"]=="factor_product" and a["engine_result"]==d and a["qpu_hardware_jobs"]==0; assert d["qubits"]==128 and d["shots"]==1 and d["projective_wire_splits"]==127 and d["projective_split_deferred"]==0 and len(d["factors"])==128 and len(d["results"][0]["trace"])==127; assert d["peak_logical_state_bytes"]<5000 and d["truncation"]=="none;factor-width-hard-limit" and d["qpu_hardware_jobs"]==0; print("Q28_PROJECTIVE_RECYCLE_CLI_PASS wires=128 projective_splits=127 factors=128 original_result_equal=yes qpu_jobs=0")'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -133,6 +141,12 @@ jobs:
           set -euo pipefail
           cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-factorized-run
           python aura-quantum-sim/tools/check_qiskit_factorized.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c012-factorized-qiskit.json
+      - name: Independently compare 56 projective/dynamic quantum circuits to pinned Qiskit
+        run: |
+          set -euo pipefail
+          test -x aura-quantum-sim/target/release/aura-quantum-factorized-run
+          python aura-quantum-sim/tools/check_qiskit_projective_recycling.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c013-projective-dynamic-qiskit.json
+
       - name: Upload reproducible parity evidence
         if: always()
         uses: actions/upload-artifact@v4
