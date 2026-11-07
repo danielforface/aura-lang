@@ -332,3 +332,111 @@ cell render_mixed(p: Point, n8: u8, n16: u16, big: u64, m8: i8, m16: i16, m32: i
         }
     }
 }
+
+
+#[test]
+fn stored_interpolated_strings_freeze_source_bindings_and_nested_aliases() {
+    // AVM evaluates StringLit on creation. The old C emitter waited until
+    // println, so names declared later altered an already-created String,
+    // and nested String aliases still contained raw source braces.
+    let source = r#"
+type Point = record { x: u32, y: u32 }
+cell render_saved(p: Point, number: u32) ->:
+    val first: String = "point={p}, value={number}, percent=100%"
+    val alias: String = first
+    val nested: String = "nested=[{alias}]"
+    val missing: String = "later={future}"
+    val future: u32 = 91
+    io.println(first)
+    io.println(alias)
+    io.println(nested)
+    io.println(missing)
+    io.println("live={future}")
+    yield p.x
+cell render_record_only(p: Point) ->:
+    io.println("record-only={p}")
+    yield 0
+"#;
+    let ast = aura_parse::parse_source(source).expect("stored String source parses");
+    Checker::new().check_program(&ast).expect("source with Record and String checks");
+    let original = lower_program(&ast).expect("real source lowers");
+    validate_module(&original).expect("source IR validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized source IR validates");
+
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let output = emit_module(ir, None).expect("frozen String source emits Native C");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &output.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &output.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), concat!(
+            "#include <stdint.h>\n",
+            "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+            "uint32_t render_saved(aura_record_506f696e74, uint32_t);\n",
+            "uint32_t render_record_only(aura_record_506f696e74);\n",
+            "int main(void) { aura_record_506f696e74 p={7u,13u};\n",
+            "return (render_saved(p,31u)==7u && render_record_only(p)==0u) ? 0 : 1; }\n"
+        )).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("frozen_string_{label}_{}", &opt[1..]));
+            let cc = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang available in Native CI");
+            assert!(cc.status.success(), "{label}/{opt}: {}\n{}",
+                String::from_utf8_lossy(&cc.stderr), output.module_c);
+            let run = Command::new(&exe).output().expect("linked Native C executes");
+            assert!(run.status.success(), "{label}/{opt}: wrong return: {}",
+                String::from_utf8_lossy(&run.stderr));
+            assert_eq!(String::from_utf8_lossy(&run.stdout), concat!(
+                "point=<Point>, value=31, percent=100%\n",
+                "point=<Point>, value=31, percent=100%\n",
+                "nested=[point=<Point>, value=31, percent=100%]\n",
+                "later={future}\n",
+                "live=91\n",
+                "record-only=<Point>\n",
+            ), "{label}/{opt}: snapshot must be evaluated before later declarations");
+        }
+    }
+}
+
+#[test]
+fn interpolated_string_return_and_user_cell_escape_fail_closed() {
+    // This native C ABI still passes raw const char* for String. Direct
+    // println is qualified, but returning or passing a captured String to
+    // another Cell would expose the raw unformatted literal. Do not claim
+    // an interprocedural ownership/representation guarantee.
+    for (case, source) in [
+        ("Return", r#"
+cell escape_saved(number: u32) ->:
+    val saved: String = "value={number}"
+    yield saved
+"#),
+        ("Call", r#"
+cell accept_string(s: String) ->:
+    io.println(s)
+    yield 1
+cell pass_saved(number: u32) ->:
+    val saved: String = "value={number}"
+    yield accept_string(saved)
+"#),
+    ] {
+        let ast = aura_parse::parse_source(source).expect("escape source parses");
+        Checker::new().check_program(&ast).expect("escape source passes Checker");
+        let original = lower_program(&ast).expect("escape source lowers");
+        validate_module(&original).expect("escape source IR structurally validates");
+        let mut optimized = original.clone();
+        aura_ir::optimize_module(&mut optimized);
+        validate_module(&optimized).expect("optimized escape source IR validates");
+        for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+            let err = emit_module(ir, None).err().expect(
+                "raw C string pointer must not silently represent captured interpolation"
+            );
+            assert!(err.message.contains("unqualified interpolated String escape")
+                && err.message.contains(case),
+                "{case}/{label}: wrong unsupported ABI diagnostic: {err}");
+        }
+    }
+}

@@ -945,6 +945,13 @@ fn emit_function(
     emit_function_signature(out, f, record_layouts,
         c_names.symbol(source_name), &c_names.formals[source_name])?;
     out.push_str(" {\n");
+    if function_has_string_interpolation(f) {
+        // Nominal and scalar parameters may be used only as captured
+        // template identifiers; strict C -Wunused-parameter must not fail.
+        for index in 0..f.params.len() {
+            out.push_str(&format!("  (void)({});\n", c_names.formal(source_name, index)));
+        }
+    }
 
     // The *callee* is also a public C ABI trust boundary. Aura call sites
     // have verified RangeCheck instructions, but an external C caller has
@@ -1009,9 +1016,9 @@ fn emit_function(
     // bindings separately from scalar printf operands; no C struct ABI cast.
     let mut named_record_types: HashMap<String, String> = HashMap::new();
 
-    // Keep the raw template associated with a string SSA value so io.println
-    // can lower interpolation instead of forwarding literal braces.
-    let mut string_literals: HashMap<ValueId, String> = HashMap::new();
+    // Preserve the frozen source-value bindings through local aliases.
+    let mut string_literals: HashMap<ValueId, StringSnapshot> = HashMap::new();
+    let mut named_string_snapshots: HashMap<String, StringSnapshot> = HashMap::new();
 
     for (index, p) in f.params.iter().enumerate() {
         if let Some(record) = qualified_record_abi_type(&p.ty, record_layouts)? {
@@ -1596,13 +1603,26 @@ fn emit_function(
                                     record_type_symbol(&record), cname, from));
                                 named_values.remove(name);
                                 named_record_types.insert(name.clone(), record.clone());
+                                named_string_snapshots.remove(name);
                                 records.insert(dest, (record, cname));
+                                if function_has_string_interpolation(f) {
+                                    out.push_str(&format!("  (void)v{};\n", dest.0));
+                                }
                                 continue;
                             }
                         }
                         // RValue::Local is an alias, so its C type must be the
                         // source value's type. The old prototype hard-coded
                         // Tensor here, which is incorrect for u32/bool/string.
+                        // Capture before binding the new source name, so
+                        // self-referential and forward names remain unknown.
+                        let captured = match expr {
+                            RValue::ConstString(t) => Some(capture_string_snapshot(
+                                t, &named_values, &named_record_types, &named_string_snapshots
+                            )),
+                            RValue::Local(src) => string_literals.get(src).cloned(),
+                            _ => None,
+                        };
                         let (ct, decl) = match expr {
                             RValue::Local(source) => {
                                 let (source_ct, source_name) = values
@@ -1631,20 +1651,18 @@ fn emit_function(
                         named_record_types.remove(name);
                         named_values.insert(name.clone(), binding);
 
-                        match expr {
-                            RValue::ConstString(template) => {
-                                string_literals.insert(dest, template.clone());
-                            }
-                            RValue::Local(source) => {
-                                if let Some(template) = string_literals.get(source).cloned() {
-                                    string_literals.insert(dest, template);
-                                } else {
-                                    string_literals.remove(&dest);
-                                }
-                            }
-                            _ => {
-                                string_literals.remove(&dest);
-                            }
+                        if let Some(snapshot) = captured {
+                            string_literals.insert(dest, snapshot.clone());
+                            named_string_snapshots.insert(name.clone(), snapshot);
+                        } else {
+                            string_literals.remove(&dest);
+                            named_string_snapshots.remove(name);
+                        }
+                        if function_has_string_interpolation(f) {
+                            // Optimizer roots the textual interpolation
+                            // dependencies; consume each retained C binding
+                            // even when used only through a source template.
+                            out.push_str(&format!("  (void)v{};\n", dest.0));
                         }
                     }
                 }
@@ -1851,9 +1869,21 @@ fn emit_function(
                             "unqualified C Record argument in external/builtin call '{}'", callee
                         ) });
                     }
+                    // A raw const char* is not the evaluated AVM String.
+                    // Other Cells and foreign calls require an owned String
+                    // representation, so reject rather than pass raw braces.
+                    if c_names.callee(callee) != "aura_io_println" &&
+                        args.iter().any(|arg| string_literals.get(arg)
+                            .is_some_and(StringSnapshot::has_substitutions))
+                    {
+                        return Err(CBackendError { message: format!(
+                            "unqualified interpolated String escape in Call '{}': native C string ABI cannot preserve captured values",
+                            callee
+                        ) });
+                    }
                     emit_call(
                         out, inst.dest, callee, args, &mut call_values, &records, ret_map,
-                        &string_literals, &named_values, &named_record_types, c_names,
+                        &string_literals, c_names,
                     );
                     if let Some(dest) = inst.dest {
                         if let Some(binding) = call_values.get(&dest).cloned() {
@@ -1875,6 +1905,12 @@ fn emit_function(
         // Terminator
         match &b.term {
             Terminator::Return(Some(v)) => {
+                if string_literals.get(v).is_some_and(StringSnapshot::has_substitutions) {
+                    return Err(CBackendError { message: format!(
+                        "unqualified interpolated String escape in Return of '{}': native C pointer cannot represent its captured source value",
+                        f.name
+                    ) });
+                }
                 let expected_record = qualified_record_abi_type(&f.ret, record_layouts)?;
                 let name = if let Some(expected) = expected_record {
                     let (actual, c_name) = records.get(v).ok_or_else(|| CBackendError {
@@ -2121,73 +2157,124 @@ fn push_c_printf_literal(out: &mut String, text: &str) {
     }
 }
 
-fn emit_interpolated_println(
-    out: &mut String,
+
+#[derive(Clone, Debug)]
+enum CapturedStringSlot {
+    Scalar(CType, String),
+    NominalRecord(String),
+    EarlierString(Box<StringSnapshot>),
+}
+
+// Source String literals freeze their interpolation environment at creation,
+// as the AVM does. No public IR or C ABI representation is changed.
+#[derive(Clone, Debug)]
+struct StringSnapshot {
+    template: String,
+    slots: HashMap<String, CapturedStringSlot>,
+}
+impl StringSnapshot {
+    fn has_substitutions(&self) -> bool { !self.slots.is_empty() }
+}
+
+fn capture_string_snapshot(
     template: &str,
     named_values: &HashMap<String, (CType, String)>,
     named_record_types: &HashMap<String, String>,
+    earlier_strings: &HashMap<String, StringSnapshot>,
+) -> StringSnapshot {
+    let mut slots = HashMap::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else { break };
+        let key = &after[..close];
+        if !slots.contains_key(key) {
+            let slot = if let Some(earlier) = earlier_strings.get(key) {
+                Some(CapturedStringSlot::EarlierString(Box::new(earlier.clone())))
+            } else if let Some((ctype, c_name)) = named_values.get(key) {
+                Some(CapturedStringSlot::Scalar(*ctype, c_name.clone()))
+            } else {
+                named_record_types.get(key).cloned().map(CapturedStringSlot::NominalRecord)
+            };
+            if let Some(slot) = slot { slots.insert(key.to_string(), slot); }
+        }
+        rest = &after[close + 1..];
+    }
+    StringSnapshot { template: template.to_string(), slots }
+}
+
+fn render_string_snapshot(
+    snapshot: &StringSnapshot,
+    format_string: &mut String,
+    arguments: &mut Vec<String>,
 ) -> bool {
-    let mut format_string = String::with_capacity(template.len() + 8);
-    let mut arguments: Vec<String> = Vec::new();
+    let template = &snapshot.template;
     let mut cursor = 0usize;
     let mut replaced_any = false;
-
     while cursor < template.len() {
         let Some(open_rel) = template[cursor..].find('{') else {
-            push_c_printf_literal(&mut format_string, &template[cursor..]);
+            push_c_printf_literal(format_string, &template[cursor..]);
             break;
         };
-
         let open = cursor + open_rel;
-        push_c_printf_literal(&mut format_string, &template[cursor..open]);
-
+        push_c_printf_literal(format_string, &template[cursor..open]);
         let after_open = open + 1;
         let Some(close_rel) = template[after_open..].find('}') else {
-            push_c_printf_literal(&mut format_string, &template[open..]);
+            push_c_printf_literal(format_string, &template[open..]);
             break;
         };
-
         let close = after_open + close_rel;
         let key = &template[after_open..close];
-
-        let replacement = named_values.get(key).and_then(|(ct, c_name)| match *ct {
-            // printf's variadic integer promotions require an explicit
-            // matching argument type, independent of the narrower Aura ABI.
-            CType::U8 | CType::U16 | CType::U32 =>
-                Some(("%u", format!("(unsigned int)({c_name})"))),
-            CType::U64 => Some(("%llu", format!("(unsigned long long)({c_name})"))),
-            CType::I8 | CType::I16 | CType::I32 =>
-                Some(("%d", format!("(int)({c_name})"))),
-            CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
-            CType::F64 => Some(("%f", format!("(double)({c_name})"))),
-            CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
-            CType::CString => Some(("%s", format!("({c_name})"))),
-            _ => None,
-        });
-
-        if let Some((specifier, argument)) = replacement {
-            format_string.push_str(specifier);
-            arguments.push(argument);
-            replaced_any = true;
-        } else if let Some(record) = named_record_types.get(key) {
-            // Mirror AVM's nominal Record display, e.g. <Point>. This is
-            // a static type tag, not stringification of the struct payload.
-            // Escape printf meta-characters in the nominal type name.
-            push_c_printf_literal(&mut format_string, &format!("<{record}>"));
-            replaced_any = true;
-        } else {
-            // Match AVM behavior: unknown/unsupported identifiers remain
-            // visible as their original `{ident}` text.
-            push_c_printf_literal(&mut format_string, &template[open..close + 1]);
+        match snapshot.slots.get(key) {
+            Some(CapturedStringSlot::NominalRecord(record)) => {
+                push_c_printf_literal(format_string, &format!("<{record}>"));
+                replaced_any = true;
+            }
+            Some(CapturedStringSlot::EarlierString(earlier)) => {
+                render_string_snapshot(earlier, format_string, arguments);
+                // Even a plain earlier string was evaluated as a value,
+                // rather than being reparsed in the later environment.
+                replaced_any = true;
+            }
+            Some(CapturedStringSlot::Scalar(ct, c_name)) => {
+                let replacement = match *ct {
+                    CType::U8 | CType::U16 | CType::U32 =>
+                        Some(("%u", format!("(unsigned int)({c_name})"))),
+                    CType::U64 =>
+                        Some(("%llu", format!("(unsigned long long)({c_name})"))),
+                    CType::I8 | CType::I16 | CType::I32 =>
+                        Some(("%d", format!("(int)({c_name})"))),
+                    CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
+                    CType::F64 => Some(("%f", format!("(double)({c_name})"))),
+                    CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
+                    CType::CString => Some(("%s", format!("({c_name})"))),
+                    _ => None,
+                };
+                if let Some((specifier, argument)) = replacement {
+                    format_string.push_str(specifier);
+                    arguments.push(argument);
+                    replaced_any = true;
+                } else {
+                    push_c_printf_literal(format_string, &template[open..close + 1]);
+                }
+            }
+            None => {
+                // An unresolved name stays unresolved, even when a
+                // declaration of that spelling appears before io.println.
+                push_c_printf_literal(format_string, &template[open..close + 1]);
+            }
         }
-
         cursor = close + 1;
     }
+    replaced_any
+}
 
-    if !replaced_any {
+fn emit_interpolated_println(out: &mut String, snapshot: &StringSnapshot) -> bool {
+    let mut format_string = String::with_capacity(snapshot.template.len() + 8);
+    let mut arguments = Vec::new();
+    if !render_string_snapshot(snapshot, &mut format_string, &mut arguments) {
         return false;
     }
-
     out.push_str("  printf(\"");
     out.push_str(&format_string);
     out.push_str("\\n\"");
@@ -2207,16 +2294,14 @@ fn emit_call(
     values: &mut HashMap<ValueId, (CType, String)>,
     records: &HashMap<ValueId, (String, String)>,
     ret_map: &HashMap<String, CType>,
-    string_literals: &HashMap<ValueId, String>,
-    named_values: &HashMap<String, (CType, String)>,
-    named_record_types: &HashMap<String, String>,
+    string_literals: &HashMap<ValueId, StringSnapshot>,
     c_names: &CNameMap,
 ) {
     let c_fn = c_names.callee(callee);
 
     if c_fn == "aura_io_println" && args.len() == 1 {
-        if let Some(template) = string_literals.get(&args[0]) {
-            if emit_interpolated_println(out, template, named_values, named_record_types) {
+        if let Some(snapshot) = string_literals.get(&args[0]) {
+            if emit_interpolated_println(out, snapshot) {
                 // The template SSA is deliberately retained because the
                 // interpolation dependency is not first-class in IR/DCE.
                 // This printf substitutes the template; its original C
