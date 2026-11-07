@@ -360,6 +360,7 @@ where
             Stmt::UnsafeBlock(s) => self.unsupported_top_level(s.span),
             Stmt::Prop(s) => self.unsupported_top_level(s.span),
             Stmt::Assign(s) => self.unsupported_top_level(s.span),
+            Stmt::FieldAssign(s) => self.unsupported_top_level(s.span),
             Stmt::Match(s) => self.unsupported_top_level(s.span),
             Stmt::While(s) => self.unsupported_top_level(s.span),
             Stmt::Requires(s) => self.unsupported_top_level(s.span),
@@ -455,6 +456,13 @@ where
                 }
                 Ok(())
             }
+            Stmt::FieldAssign(a) => Err(VerifyError {
+                kind: crate::solver::VerifyFailureKind::Unsupported,
+                message: "Record field update has no qualified SMT proof semantics".to_string(),
+                span: a.span,
+                model: None,
+                meta: None,
+            }),
             Stmt::Assign(a) => {
                 let v = self.eval_any(&a.expr, st, nexus)?;
                 match v {
@@ -2359,6 +2367,9 @@ fn collect_mutated_vars(block: &aura_ast::Block, out: &mut BTreeSet<String>) {
     for s in &block.stmts {
         match s {
             Stmt::Assign(a) => {
+                out.insert(a.target.node.clone());
+            }
+            Stmt::FieldAssign(a) => {
                 out.insert(a.target.node.clone());
             }
             Stmt::Layout(lb) => collect_mutated_vars(&lb.body, out),

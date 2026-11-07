@@ -144,6 +144,10 @@ fn const_from_rvalue(rv: &RValue, consts: &BTreeMap<ValueId, ConstVal>) -> Optio
         RValue::ConstF64(f) => Some(ConstVal::F64(*f)),
         RValue::ConstBool(b) => Some(ConstVal::Bool(*b)),
         RValue::ConstChar(c) => Some(ConstVal::Char(*c)),
+        // Interpolation is a source-environment snapshot, not a constant
+        // template that can be copied and re-evaluated at a later binding.
+        // Keep the Local alias edge until captured string values enter IR.
+        RValue::ConstString(s) if s.contains('{') && s.contains('}') => None,
         RValue::ConstString(s) => Some(ConstVal::String(s.clone())),
         RValue::Local(v) => consts.get(v).cloned(),
     }
@@ -216,10 +220,44 @@ fn dce(f: &mut FunctionIR) -> bool {
         }
     }
 
-    while let Some(v) = work.pop_front() {
-        let Some((bi, ii)) = defs.get(&v).copied() else { continue };
-        let inst = &f.blocks[bi].insts[ii];
-        seed_value_uses_from_inst(&inst.kind, &mut needed_values, &mut work);
+    // String placeholders are presently textual source-name uses, not
+    // explicit IR SSA edges. Retain each live template's named bindings
+    // and their operand-def chains to a fixed point, including aliases.
+    // This is conservative across branches but cannot manufacture a value.
+    loop {
+        while let Some(v) = work.pop_front() {
+            let Some((bi, ii)) = defs.get(&v).copied() else { continue };
+            let inst = &f.blocks[bi].insts[ii];
+            seed_value_uses_from_inst(&inst.kind, &mut needed_values, &mut work);
+        }
+        let mut names = BTreeSet::new();
+        for b in &f.blocks {
+            for inst in &b.insts {
+                if inst.dest.is_some_and(|v| needed_values.contains(&v)) {
+                    if let InstKind::BindStrand { expr: RValue::ConstString(t), .. } = &inst.kind {
+                        let mut rest = t.as_str();
+                        while let Some(open) = rest.find('{') {
+                            let after = &rest[open + 1..];
+                            let Some(close) = after.find('}') else { break };
+                            names.insert(after[..close].to_string());
+                            rest = &after[close + 1..];
+                        }
+                    }
+                }
+            }
+        }
+        let mut added = false;
+        for b in &f.blocks {
+            for inst in &b.insts {
+                if let (Some(v), InstKind::BindStrand { name, .. }) = (inst.dest, &inst.kind) {
+                    if names.contains(name) && needed_values.insert(v) {
+                        work.push_back(v);
+                        added = true;
+                    }
+                }
+            }
+        }
+        if !added { break; }
     }
 
     for b in &mut f.blocks {

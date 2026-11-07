@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::{
     BinOp, BlockId, FunctionIR, InstKind, ModuleIR, RValue, Terminator, Type, UnaryOp, ValueId,
@@ -97,12 +97,50 @@ pub fn run_oracle_entry(
 /// This is a lightweight, structural sanity check (not a full verifier).
 pub fn validate_module(module: &ModuleIR) -> Result<(), OracleError> {
     for (name, f) in &module.functions {
-        validate_function(name, f)?;
+        validate_function(module, name, f)?;
     }
     Ok(())
 }
 
-fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
+// EV-193: all non-Phi instruction uses are ordinary SSA uses at their
+// instruction position. Phi inputs are different: they are read on incoming
+// predecessor edges and are validated separately below.
+fn non_phi_operands(inst: &InstKind) -> Vec<ValueId> {
+    match inst {
+        InstKind::AllocCapability { .. } => Vec::new(),
+        InstKind::BindStrand { expr: RValue::Local(value), .. } => vec![*value],
+        InstKind::BindStrand { .. } => Vec::new(),
+        InstKind::Call { args, .. } | InstKind::ComputeKernel { args, .. } |
+        InstKind::ConstructEnumVariant { args, .. } => args.clone(),
+        InstKind::RangeCheckU32 { value, .. } | InstKind::RangeCheck { value, .. } => vec![*value],
+        InstKind::SetField { base, value, .. } => vec![*base, *value],
+        InstKind::ConstructRecord { fields, .. } =>
+            fields.iter().map(|(_, value)| *value).collect(),
+        InstKind::GetField { base, .. } | InstKind::GetEnumTag { base } |
+        InstKind::GetEnumPayload { base, .. } => vec![*base],
+        InstKind::Unary { operand, .. } => vec![*operand],
+        InstKind::Binary { left, right, .. } => vec![*left, *right],
+        InstKind::Phi { .. } => Vec::new(),
+    }
+}
+
+// EV-194: deliberately limited primitive-category facts available from
+// trusted parameter declarations and unambiguous literal definitions.
+// This is NOT a complete SSA type inference pass or full IR type checker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KnownPrimitiveKind { Bool, Integer }
+
+fn known_primitive_type(ty: &Type) -> Option<KnownPrimitiveKind> {
+    match ty {
+        Type::Bool => Some(KnownPrimitiveKind::Bool),
+        Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::USize |
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::I128 | Type::ISize =>
+            Some(KnownPrimitiveKind::Integer),
+        _ => None,
+    }
+}
+
+fn validate_function(module: &ModuleIR, name: &str, f: &FunctionIR) -> Result<(), OracleError> {
     if f.name != name {
         return Err(OracleError {
             message: format!("oracle: function key '{name}' mismatches FunctionIR.name='{}'", f.name),
@@ -177,6 +215,354 @@ fn validate_function(name: &str, f: &FunctionIR) -> Result<(), OracleError> {
                     }
                 }
             }
+        }
+    }
+
+    // EV-191: a Phi is an edge-indexed selection, not an arbitrary set of
+    // block/value pairs. Establish the reachable CFG from *terminators*,
+    // independently of the incoming labels supplied by the IR.
+    let mut reachable = BTreeSet::from([f.entry]);
+    let mut pending = VecDeque::from([f.entry]);
+    let mut predecessors: BTreeMap<BlockId, BTreeSet<BlockId>> = BTreeMap::new();
+    while let Some(id) = pending.pop_front() {
+        let bb = &f.blocks[blocks_by_id[&id]];
+        let edges: Vec<BlockId> = match &bb.term {
+            Terminator::Return(_) => Vec::new(),
+            Terminator::Br(target) => vec![*target],
+            Terminator::CondBr { then_bb, else_bb, .. } => vec![*then_bb, *else_bb],
+            Terminator::Switch { default_bb, cases, .. } =>
+                std::iter::once(*default_bb)
+                    .chain(cases.iter().map(|(_, target)| *target)).collect(),
+        };
+        for successor in edges {
+            predecessors.entry(successor).or_default().insert(id);
+            if reachable.insert(successor) {
+                pending.push_back(successor);
+            }
+        }
+    }
+
+    // Fixed-point dominators over reachable blocks. Incoming SSA values must
+    // be available at the *end* of the predecessor edge (not only somewhere
+    // in the function or along a different branch).
+    let mut dominators: BTreeMap<BlockId, BTreeSet<BlockId>> = reachable.iter()
+        .map(|&bb| (bb, if bb == f.entry {
+            BTreeSet::from([bb])
+        } else {
+            reachable.clone()
+        })).collect();
+    loop {
+        let mut changed = false;
+        for &bb in &reachable {
+            if bb == f.entry { continue; }
+            let mut parent_sets = predecessors.get(&bb).into_iter()
+                .flat_map(|ps| ps.iter())
+                .map(|pred| dominators[pred].clone());
+            let Some(mut intersection) = parent_sets.next() else { continue; };
+            for parent_dom in parent_sets {
+                intersection = intersection.intersection(&parent_dom).copied().collect();
+            }
+            intersection.insert(bb);
+            if dominators[&bb] != intersection {
+                dominators.insert(bb, intersection);
+                changed = true;
+            }
+        }
+        if !changed { break; }
+    }
+    // Record the defining instruction index (params are available from entry).
+    // A globally duplicated SSA destination is never a valid redefinition,
+    // even if both definitions live in different branches.
+    let mut definitions: HashMap<ValueId, (BlockId, Option<usize>)> = HashMap::new();
+    for param in &f.params {
+        if definitions.insert(param.value, (f.entry, None)).is_some() {
+            return Err(OracleError { message: format!(
+                "oracle: function '{}' has duplicate parameter SSA definition {:?}",
+                f.name, param.value
+            ) });
+        }
+    }
+    for bb in &f.blocks {
+        for (index, inst) in bb.insts.iter().enumerate() {
+            if let Some(value) = inst.dest {
+                if definitions.insert(value, (bb.id, Some(index))).is_some() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' has duplicate SSA definition {:?} in {:?}",
+                        f.name, value, bb.id
+                    ) });
+                }
+            }
+        }
+    }
+    // A Phi reads values at block entry, before any ordinary instruction.
+    // Even if the source back end currently happens to accept it, a Phi
+    // appearing after an ordinary instruction violates our SSA IR contract.
+    // Check placement, result and non-empty incoming list in *all* blocks,
+    // including unreachable IR that later optimization may expose.
+    for bb in &f.blocks {
+        let mut has_non_phi = false;
+        for inst in &bb.insts {
+            if let InstKind::Phi { incomings } = &inst.kind {
+                if has_non_phi {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} occurs after a non-Phi instruction",
+                        f.name, bb.id
+                    ) });
+                }
+                if inst.dest.is_none() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has no SSA destination",
+                        f.name, bb.id
+                    ) });
+                }
+                if incomings.is_empty() {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has no incoming edges",
+                        f.name, bb.id
+                    ) });
+                }
+            } else {
+                has_non_phi = true;
+            }
+        }
+    }
+
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        let actual = predecessors.get(&bb.id).cloned().unwrap_or_default();
+        for inst in &bb.insts {
+            let InstKind::Phi { incomings } = &inst.kind else { continue; };
+            let mut present = BTreeSet::new();
+            for (from, value) in incomings {
+                if !present.insert(*from) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has duplicate incoming predecessor {:?}",
+                        f.name, bb.id, from
+                    ) });
+                }
+                if !actual.contains(from) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} has incoming {:?} that is not a reachable CFG predecessor",
+                        f.name, bb.id, from
+                    ) });
+                }
+                let (def_bb, _) = definitions.get(value).ok_or_else(|| OracleError {
+                    message: format!(
+                        "oracle: function '{}' Phi in {:?} references undefined incoming SSA value {:?}",
+                        f.name, bb.id, value
+                    )
+                })?;
+                if !dominators[from].contains(def_bb) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Phi in {:?} incoming {:?} definition in {:?} does not dominate predecessor {:?}",
+                        f.name, bb.id, value, def_bb, from
+                    ) });
+                }
+            }
+            if present != actual {
+                return Err(OracleError { message: format!(
+                    "oracle: function '{}' Phi in {:?} missing incoming predecessor(s): expected {:?}, got {:?}",
+                    f.name, bb.id, actual, present
+                ) });
+            }
+        }
+    }
+
+    // For non-Phi uses, the definition must dominate the *use block*,
+    // not merely one incoming predecessor. Inside one block, it must also
+    // precede the use. A terminator reads values after the last instruction.
+    // All reachable ordinary instruction/terminator operand variants are
+    // checked, not just Binary or Return.
+    let check_use = |value: ValueId, use_bb: BlockId, before: usize, context: &str|
+        -> Result<(), OracleError>
+    {
+        let &(def_bb, def_pos) = definitions.get(&value).ok_or_else(|| OracleError {
+            message: format!(
+                "oracle: function '{}' undefined SSA value {:?} in {} of {:?}",
+                f.name, value, context, use_bb
+            )
+        })?;
+        if def_bb == use_bb {
+            if let Some(pos) = def_pos {
+                if pos >= before {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' SSA {:?} use-before-definition in {} of {:?} (definition index {}, use index {})",
+                        f.name, value, context, use_bb, pos, before
+                    ) });
+                }
+            }
+        } else if !dominators[&use_bb].contains(&def_bb) {
+            return Err(OracleError { message: format!(
+                "oracle: function '{}' SSA {:?} definition in {:?} does not dominate {} in {:?}",
+                f.name, value, def_bb, context, use_bb
+            ) });
+        }
+        Ok(())
+    };
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        for (index, inst) in bb.insts.iter().enumerate() {
+            if matches!(&inst.kind, InstKind::Phi { .. }) { continue; }
+            for value in non_phi_operands(&inst.kind) {
+                check_use(value, bb.id, index, "non-Phi instruction")?;
+            }
+        }
+        let terminal_uses: Vec<ValueId> = match &bb.term {
+            Terminator::Return(Some(value)) => vec![*value],
+            Terminator::CondBr { cond, .. } => vec![*cond],
+            Terminator::Switch { scrut, .. } => vec![*scrut],
+            Terminator::Return(None) | Terminator::Br(_) => Vec::new(),
+        };
+        for value in terminal_uses {
+            check_use(value, bb.id, bb.insts.len(), "terminator")?;
+        }
+    }
+
+    // Fail closed when an operand's primitive category is *already known*.
+    // Integer widths may differ legally at source-refined ABI boundaries,
+    // so validate Bool-vs-integer only; do not falsely promise width proof.
+    // EV-195: derive primitive-category facts only where they follow from
+    // a trusted parameter, a literal, a known operation result, or the SSA
+    // equality constraint of a Phi. Iterate because loop-header Phi values
+    // and backedge Binary expressions can form a cyclic definition graph.
+    // Unknown values remain unknown: never default an unresolved producer to
+    // U32/Bool, and never reinterpret an existing known category.
+    let mut known: HashMap<ValueId, KnownPrimitiveKind> = HashMap::new();
+    for p in &f.params {
+        if let Some(kind) = known_primitive_type(&p.ty) { known.insert(p.value, kind); }
+    }
+    loop {
+        let mut progressed = false;
+        for bb in &f.blocks {
+            if !reachable.contains(&bb.id) { continue; }
+            for inst in &bb.insts {
+                let Some(dest) = inst.dest else { continue; };
+                let kind = match &inst.kind {
+                    InstKind::BindStrand { expr, .. } => match expr {
+                        RValue::ConstBool(_) => Some(KnownPrimitiveKind::Bool),
+                        RValue::ConstU32(_) | RValue::ConstI64(_) =>
+                            Some(KnownPrimitiveKind::Integer),
+                        RValue::Local(value) => known.get(value).copied(),
+                        _ => None,
+                    },
+                    // EV-196: the declared result of a *defined* user Cell
+                    // is a stable primitive-category fact. Unknown builtins,
+                    // external calls, nominal returns and all widths remain
+                    // outside this limited type-provenance guarantee.
+                    InstKind::Call { callee, .. } =>
+                        module.functions.get(callee)
+                            .and_then(|target| known_primitive_type(&target.ret)),
+                    InstKind::Unary { op: UnaryOp::Not, operand } =>
+                        (known.get(operand) == Some(&KnownPrimitiveKind::Bool))
+                            .then_some(KnownPrimitiveKind::Bool),
+                    InstKind::Unary { op: UnaryOp::Neg, operand } =>
+                        (known.get(operand) == Some(&KnownPrimitiveKind::Integer))
+                            .then_some(KnownPrimitiveKind::Integer),
+                    InstKind::Binary { op, left, right } => match op {
+                        // The IR operators below yield a Bool category
+                        // regardless of the primitive *width* of their inputs.
+                        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt |
+                        BinOp::Le | BinOp::Ge | BinOp::And | BinOp::Or =>
+                            Some(KnownPrimitiveKind::Bool),
+                        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div =>
+                            (known.get(left) == Some(&KnownPrimitiveKind::Integer)
+                                && known.get(right) == Some(&KnownPrimitiveKind::Integer))
+                                .then_some(KnownPrimitiveKind::Integer),
+                    },
+                    InstKind::Phi { incomings } => {
+                        let mut candidate = None;
+                        for (_, incoming) in incomings {
+                            if let Some(actual) = known.get(incoming).copied() {
+                                if let Some(previous) = candidate {
+                                    if previous != actual {
+                                        return Err(OracleError { message: format!(
+                                            "oracle: function '{}' Phi type mismatch in {:?}: SSA {:?} has {:?} and {:?} incoming categories",
+                                            f.name, bb.id, dest, previous, actual
+                                        ) });
+                                    }
+                                } else {
+                                    candidate = Some(actual);
+                                }
+                            }
+                        }
+                        candidate
+                    }
+                    _ => None,
+                };
+                if let Some(actual) = kind {
+                    if let Some(previous) = known.get(&dest) {
+                        if *previous != actual {
+                            return Err(OracleError { message: format!(
+                                "oracle: function '{}' SSA type conflict for {:?} in {:?}: {:?} vs {:?}",
+                                f.name, dest, bb.id, previous, actual
+                            ) });
+                        }
+                    } else {
+                        known.insert(dest, actual);
+                        progressed = true;
+                    }
+                }
+            }
+        }
+        if !progressed { break; }
+    }
+    // EV-196: an actual SSA argument with a *known* incompatible category
+    // cannot satisfy a known internal Cell's parameter category, regardless
+    // of whether the argument and parameter have independently valid SSA
+    // dominance. Width-specific, Record and extern ABI checks remain at
+    // their already-qualified backend/source boundaries.
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        for inst in &bb.insts {
+            let InstKind::Call { callee, args } = &inst.kind else { continue; };
+            let Some(target) = module.functions.get(callee) else { continue; };
+            for (index, (arg, param)) in args.iter().zip(&target.params).enumerate() {
+                if let (Some(required), Some(actual)) =
+                    (known_primitive_type(&param.ty), known.get(arg).copied())
+                {
+                    if actual != required {
+                        return Err(OracleError { message: format!(
+                            "oracle: function '{}' Call '{}' arg {} type mismatch in {:?}: SSA {:?} has {:?}, declared {:?}",
+                            f.name, callee, index, bb.id, arg, actual, required
+                        ) });
+                    }
+                }
+            }
+        }
+    }
+
+    for bb in &f.blocks {
+        if !reachable.contains(&bb.id) { continue; }
+        match &bb.term {
+            Terminator::CondBr { cond, .. } => {
+                if matches!(known.get(cond), Some(KnownPrimitiveKind::Integer)) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' CondBr type mismatch in {:?}: SSA {:?} is known integer, expected Bool",
+                        f.name, bb.id, cond
+                    ) });
+                }
+            }
+            Terminator::Switch { scrut, .. } => {
+                if matches!(known.get(scrut), Some(KnownPrimitiveKind::Bool)) {
+                    return Err(OracleError { message: format!(
+                        "oracle: function '{}' Switch type mismatch in {:?}: SSA {:?} is Bool, expected integer",
+                        f.name, bb.id, scrut
+                    ) });
+                }
+            }
+            Terminator::Return(Some(value)) => {
+                if let (Some(expected), Some(actual)) =
+                    (known_primitive_type(&f.ret), known.get(value).copied())
+                {
+                    if actual != expected {
+                        return Err(OracleError { message: format!(
+                            "oracle: function '{}' Return type mismatch in {:?}: SSA {:?} is {:?}, signature expects {:?}",
+                            f.name, bb.id, value, actual, expected
+                        ) });
+                    }
+                }
+            }
+            Terminator::Return(None) | Terminator::Br(_) => {}
         }
     }
 

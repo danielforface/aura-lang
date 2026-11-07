@@ -6,7 +6,7 @@ use aura_core::{lower_program, Checker};
 use aura_ir::{validate_module, InstKind};
 
 #[test]
-fn source_valid_record_read_is_never_a_successful_c_artifact_without_layouts() {
+fn source_valid_record_read_emits_concrete_typed_scalar_c_layout() {
     let source = r#"
 type Point = record {
     x: u32,
@@ -29,17 +29,11 @@ cell read_x() ->:
     assert!(function.blocks.iter().flat_map(|b| b.insts.iter()).any(|i|
         matches!(&i.kind, InstKind::GetField { .. })),
         "real compiler must retain field access instruction");
-    match emit_module(&module, None) {
-        Ok(artifact) => panic!(
-            "real source Record unexpectedly emitted successful C without typed layout: {}",
-            artifact.module_c
-        ),
-        Err(error) => {
-            let msg = error.message.to_ascii_lowercase();
-            assert!(msg.contains("record") && msg.contains("unqualified"),
-                "C backend must reject Record for missing layout, not unrelated error: {error}");
-        }
-    }
+    let artifact = emit_module(&module, None)
+        .expect("qualified local scalar Record now emits real named C struct fields");
+    assert!(artifact.module_c.contains("aura_record_"));
+    assert!(artifact.module_c.contains("aura_f_"));
+
 }
 
 #[test]
