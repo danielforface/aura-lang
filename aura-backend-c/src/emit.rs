@@ -153,6 +153,23 @@ fn emit_runtime_h() -> String {
     out.push_str("  }\n");
     out.push_str("}\n\n");
 
+    // Native signed i64 division is qualified at the already-typed IR/Record
+    // ABI boundary. Unlike Add/Sub/Mul, signed division cannot be reduced
+    // modulo 2^64: both division by zero and INT64_MIN / -1 are UB in C.
+    // The IR Oracle refuses a zero divisor and Rust rejects the overflow.
+    // Reject both at runtime before any C division (including under -O2).
+    out.push_str(r#"
+static inline int64_t aura_i64_div_checked(int64_t numerator, int64_t divisor) {
+  if (divisor == 0 || (numerator == INT64_MIN && divisor == -1)) {
+    fprintf(stderr, "Aura i64 division rejected: zero divisor or signed overflow\n");
+    fflush(stderr);
+    abort();
+  }
+  return numerator / divisor;
+}
+
+"#);
+
     // The IR Oracle's signed i64 arithmetic is modular, but native C
     // signed-overflow is undefined behavior (including negating INT*_MIN).
     // Convert signed operands to unsigned first; unsigned Add/Sub/Mul
@@ -636,6 +653,7 @@ impl CNameMap {
             "aura_unicode_char_tail", "aura_f64_display",
             "aura_f64_from_bits",
             "aura_i32_from_wrapped_bits", "aura_i64_from_wrapped_bits",
+            "aura_i64_div_checked",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -2801,6 +2819,13 @@ fn emit_binop(
             format!(
                 "(AURA_RANGE_CHECK_U32((uint32_t)({r}), 1u, 0xFFFFFFFFu, \"divisor\"), ({l}) / ({r}))"
             ),
+        ),
+        // Typed i64 has a well-defined signed quotient only outside the
+        // two C/Rust trap cases. This is NOT a source-level signed-return
+        // inference change; all previously unsupported types still refuse.
+        Div if lhs_type == CType::I64 && rhs_type == CType::I64 => (
+            CType::I64,
+            format!("aura_i64_div_checked({l}, {r})"),
         ),
         Div => return Err(CBackendError {
             message: format!(
