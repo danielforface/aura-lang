@@ -1,0 +1,420 @@
+//! AURA-Q28-008 — untruncated *disconnected-factor tensor network* for pure CPU circuits.
+//!
+//! A state is an explicit tensor product of small fully complex Statevectors.
+//! One/two-qubit gates on the same component are delegated to the independently
+//! qualified dense oracle; a nonlocal two-qubit gate atomically joins two
+//! components. Cross-component SWAP merely relabels factor wire identities.
+//! No SVD, truncation, approximation of entanglement, rank compression or claim
+//! to arbitrary-width globally entangled simulation. Arithmetic remains f64.
+//!
+//! There is a deliberately strict max component size. Measurements collapse
+//! the local factor and use the shared deterministic RNG. Measured components
+//! are *not* automatically split, so admission is conservative but sound.
+//! This is standalone simulation, not QIR/Aura syntax or a QPU job.
+use crate::circuit::{Instruction, ShotRecord, TraceEntry, TraceKind};
+use crate::{Complex, Gate, SeededRng, SimError, Statevector, ENGINE_VERSION, NORM_TOLERANCE};
+use std::mem::size_of;
+
+pub const MAX_FACTOR_QUBITS: usize = 10;
+pub const MAX_FACTOR_GLOBAL_QUBITS: usize = 128;
+pub const MAX_FACTOR_INSTRUCTIONS: usize = 512;
+pub const MAX_FACTOR_SHOTS: usize = 1024;
+pub const MAX_FACTOR_WORK_UNITS: usize = 128 * 1024 * 1024;
+pub const FACTORIZED_PROFILE: &str = "local-disconnected-factor-statevector-f64-untruncated/1";
+pub const FACTORIZED_RESULT_SCHEMA: &str = "aura.quantum.factorized-result/1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactorError {
+    UnsupportedWidth { qubits: usize, max: usize },
+    FactorWidthExceeded { required: usize, max: usize },
+    InvalidQubit { qubit: usize, qubits: usize },
+    DuplicateQubit(usize),
+    InvalidBasisWidth { expected: usize, got: usize },
+    TooManyInstructions,
+    ZeroShots,
+    TooManyShots,
+    TooManyClassicalBits,
+    InvalidClassicalBit { bit: usize, bits: usize },
+    ReadBeforeWrite { bit: usize, instruction: usize },
+    ArithmeticOverflow,
+    WorkLimit,
+    AllocationFailed,
+    BudgetExceeded { required_bytes: usize, budget_bytes: usize },
+    Simulator(SimError),
+}
+impl std::fmt::Display for FactorError {
+    fn fmt(&self, f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { write!(f,"{self:?}") }
+}
+impl std::error::Error for FactorError {}
+impl From<SimError> for FactorError {
+    fn from(value:SimError)->Self { Self::Simulator(value) }
+}
+
+#[derive(Debug,Clone)]
+struct Factor {
+    /// The i-th vector coordinate refers to global wire wires[i].
+    /// Order is arbitrary, unique across all factors and preserved across
+    /// cross-component SWAP by replacing labels without touching amplitudes.
+    wires:Vec<usize>,
+    state:Statevector,
+}
+#[derive(Debug,Clone)]
+pub struct FactorState {
+    qubits:usize,
+    factors:Vec<Factor>,
+    budget_bytes:usize,
+    peak_logical_bytes:usize,
+}
+impl FactorState {
+    pub fn zero(qubits:usize,budget_bytes:usize)->Result<Self,FactorError> {
+        if !(1..=MAX_FACTOR_GLOBAL_QUBITS).contains(&qubits) {
+            return Err(FactorError::UnsupportedWidth{qubits,max:MAX_FACTOR_GLOBAL_QUBITS});
+        }
+        // 2 complex amplitudes per single-qubit factor. No 2^n allocation.
+        let bytes=qubits.checked_mul(2 * size_of::<Complex>())
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if bytes>budget_bytes {
+            return Err(FactorError::BudgetExceeded {
+                required_bytes:bytes,budget_bytes,
+            });
+        }
+        let mut factors=Vec::new();
+        factors.try_reserve_exact(qubits).map_err(|_|FactorError::AllocationFailed)?;
+        for qubit in 0..qubits {
+            factors.push(Factor {
+                wires:vec![qubit],
+                state:Statevector::zero(1,budget_bytes)?,
+            });
+        }
+        Ok(Self{qubits,factors,budget_bytes,peak_logical_bytes:bytes})
+    }
+    pub fn qubits(&self)->usize {self.qubits}
+    pub fn factor_count(&self)->usize {self.factors.len()}
+    pub fn factor_widths(&self)->Vec<usize> {
+        self.factors.iter().map(|f|f.wires.len()).collect()
+    }
+    pub fn factor_wires(&self)->Vec<Vec<usize>> {
+        self.factors.iter().map(|f|f.wires.clone()).collect()
+    }
+    pub fn logical_state_bytes(&self)->usize {
+        self.factors.iter().map(|f|f.state.state_bytes()).sum()
+    }
+    pub fn peak_logical_bytes(&self)->usize {self.peak_logical_bytes}
+    fn check_wire(&self,q:usize)->Result<(),FactorError> {
+        if q>=self.qubits {Err(FactorError::InvalidQubit{qubit:q,qubits:self.qubits})}
+        else {Ok(())}
+    }
+    fn check_gate(&self,g:&Gate)->Result<(),FactorError> {
+        match g {
+            Gate::H(q)|Gate::X(q)|Gate::Y(q)|Gate::Z(q)|
+            Gate::S(q)|Gate::T(q)=>self.check_wire(*q),
+            Gate::Cnot{control,target}|Gate::Cz{control,target}=>{
+                self.check_wire(*control)?;self.check_wire(*target)?;
+                if control==target {return Err(FactorError::DuplicateQubit(*control));}
+                Ok(())
+            }
+            Gate::Swap{a,b}=>{
+                self.check_wire(*a)?;self.check_wire(*b)?;
+                if a==b {return Err(FactorError::DuplicateQubit(*a));}
+                Ok(())
+            }
+        }
+    }
+    fn locate(&self,wire:usize)->(usize,usize) {
+        // This is only called after bounds checks. Every wire belongs to
+        // exactly one factor, including after nonlocal SWAP.
+        self.factors.iter().enumerate().find_map(|(factor,block)|
+            block.wires.iter().position(|&q|q==wire).map(|local|(factor,local))
+        ).expect("validated factor partition invariant")
+    }
+    pub fn apply(&mut self,gate:Gate)->Result<(),FactorError> {
+        self.check_gate(&gate)?;
+        match gate {
+            Gate::H(q)|Gate::X(q)|Gate::Y(q)|Gate::Z(q)|
+            Gate::S(q)|Gate::T(q)=>{
+                let (block,local)=self.locate(q);
+                let mapped=match gate {
+                    Gate::H(_)=>Gate::H(local),
+                    Gate::X(_)=>Gate::X(local),
+                    Gate::Y(_)=>Gate::Y(local),
+                    Gate::Z(_)=>Gate::Z(local),
+                    Gate::S(_)=>Gate::S(local),
+                    _=>Gate::T(local),
+                };
+                self.factors[block].state.apply(mapped)?;
+                Ok(())
+            }
+            Gate::Swap{a,b}=>{
+                let (ia,la)=self.locate(a);
+                let (ib,lb)=self.locate(b);
+                if ia==ib {
+                    self.factors[ia].state.apply(Gate::Swap{a:la,b:lb})?;
+                } else {
+                    // Swap exchanges wire OWNERSHIP; no entanglement is created
+                    // by relabeling the two tensor-factor coordinates.
+                    self.factors[ia].wires[la]=b;
+                    self.factors[ib].wires[lb]=a;
+                }
+                Ok(())
+            }
+            Gate::Cnot{control,target}|Gate::Cz{control,target}=>{
+                let (ia,la)=self.locate(control);
+                let (ib,lb)=self.locate(target);
+                if ia==ib {
+                    let mapped=if matches!(gate,Gate::Cnot{..}) {
+                        Gate::Cnot{control:la,target:lb}
+                    } else {Gate::Cz{control:la,target:lb}};
+                    self.factors[ia].state.apply(mapped)?;
+                    return Ok(());
+                }
+                let left=&self.factors[ia];
+                let right=&self.factors[ib];
+                let width=left.wires.len().checked_add(right.wires.len())
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                if width>MAX_FACTOR_QUBITS {
+                    return Err(FactorError::FactorWidthExceeded{
+                        required:width,max:MAX_FACTOR_QUBITS,
+                    });
+                }
+                let count=1usize.checked_shl(width as u32)
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                let new_bytes=count.checked_mul(size_of::<Complex>())
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                // Both old factors and new factor coexist until commit.
+                // Constrain this temporary peak, not only final logical state.
+                let temp=self.logical_state_bytes().checked_add(new_bytes)
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                if temp>self.budget_bytes {
+                    return Err(FactorError::BudgetExceeded{
+                        required_bytes:temp,budget_bytes:self.budget_bytes,
+                    });
+                }
+                let left_dim=1usize<<left.wires.len();
+                let right_dim=1usize<<right.wires.len();
+                let mut amplitudes=Vec::new();
+                amplitudes.try_reserve_exact(count)
+                    .map_err(|_|FactorError::AllocationFailed)?;
+                for r in 0..right_dim {
+                    let ar=right.state.amplitude(r)?;
+                    for l in 0..left_dim {
+                        amplitudes.push(left.state.amplitude(l)?*ar);
+                    }
+                }
+                let mut merged=Statevector::from_amplitudes(
+                    width,amplitudes,self.budget_bytes)?;
+                let mapped=if matches!(gate,Gate::Cnot{..}){
+                    Gate::Cnot{control:la,target:left.wires.len()+lb}
+                } else {
+                    Gate::Cz{control:la,target:left.wires.len()+lb}
+                };
+                // Complete two-wire gate before touching either old factor.
+                merged.apply(mapped)?;
+                let mut wires=left.wires.clone();
+                wires.extend_from_slice(&right.wires);
+                let factor=Factor{wires,state:merged};
+                let low=ia.min(ib);
+                let high=ia.max(ib);
+                self.factors.remove(high);
+                self.factors[low]=factor;
+                self.peak_logical_bytes=self.peak_logical_bytes.max(temp);
+                Ok(())
+            }
+        }
+    }
+    pub fn wire_probability(&self,qubit:usize,outcome:bool)
+        ->Result<f64,FactorError>
+    {
+        self.check_wire(qubit)?;
+        let (owner,local)=self.locate(qubit);
+        Ok(self.factors[owner].state.wire_probability(local,outcome)?)
+    }
+    pub fn measure(&mut self,qubit:usize,rng:&mut SeededRng)
+        ->Result<bool,FactorError>
+    {
+        self.check_wire(qubit)?;
+        let (owner,local)=self.locate(qubit);
+        Ok(self.factors[owner].state.measure(local,rng)?)
+    }
+    pub fn amplitude_bits(&self,bits:&[bool])->Result<Complex,FactorError> {
+        if bits.len()!=self.qubits {
+            return Err(FactorError::InvalidBasisWidth{
+                expected:self.qubits,got:bits.len(),
+            });
+        }
+        let mut result=Complex::ONE;
+        for f in &self.factors {
+            let mut index=0;
+            for (local,&global) in f.wires.iter().enumerate() {
+                if bits[global] {index|=1usize<<local;}
+            }
+            result=result*f.state.amplitude(index)?;
+        }
+        Ok(result)
+    }
+    pub fn basis_probability(&self,bits:&[bool])->Result<f64,FactorError> {
+        Ok(self.amplitude_bits(bits)?.norm_squared())
+    }
+}
+#[derive(Debug,Clone,PartialEq)]
+pub struct FactorMetadata {
+    pub schema:&'static str,
+    pub version:&'static str,
+    pub profile:&'static str,
+    pub precision:&'static str,
+    pub truncation:&'static str,
+    pub seed:u64,
+    pub shots:usize,
+    pub norm_tolerance:f64,
+    pub qpu_hardware_jobs:u8,
+    pub evidence_class:&'static str,
+}
+impl FactorMetadata {
+    fn new(seed:u64,shots:usize)->Self {
+        Self {
+            schema:FACTORIZED_RESULT_SCHEMA,
+            version:ENGINE_VERSION,
+            profile:FACTORIZED_PROFILE,
+            precision:"f64-complex",
+            truncation:"none;factor-width-hard-limit",
+            seed,shots,norm_tolerance:NORM_TOLERANCE,
+            qpu_hardware_jobs:0,evidence_class:"simulation",
+        }
+    }
+}
+#[derive(Debug,Clone)]
+pub struct FactorBatch {
+    pub metadata:FactorMetadata,
+    pub records:Vec<ShotRecord>,
+    /// Final state intentionally kept only for single-shot inspection.
+    pub one_shot_state:Option<FactorState>,
+    pub peak_logical_state_bytes:usize,
+}
+#[derive(Debug,Clone)]
+pub struct FactorCircuit {
+    qubits:usize,
+    classical_bits:usize,
+    instructions:Vec<Instruction>,
+}
+impl FactorCircuit {
+    pub fn new(qubits:usize,classical_bits:usize)->Self {
+        Self{qubits,classical_bits,instructions:Vec::new()}
+    }
+    pub fn push(&mut self,op:Instruction) {self.instructions.push(op);}
+    pub fn instructions(&self)->&[Instruction] {&self.instructions}
+    fn preflight(&self,shots:usize,budget:usize)->Result<(usize,usize),FactorError> {
+        if !(1..=MAX_FACTOR_GLOBAL_QUBITS).contains(&self.qubits) {
+            return Err(FactorError::UnsupportedWidth{
+                qubits:self.qubits,max:MAX_FACTOR_GLOBAL_QUBITS,
+            });
+        }
+        if shots==0 {return Err(FactorError::ZeroShots);}
+        if shots>MAX_FACTOR_SHOTS {return Err(FactorError::TooManyShots);}
+        if self.instructions.len()>MAX_FACTOR_INSTRUCTIONS {
+            return Err(FactorError::TooManyInstructions);
+        }
+        if self.classical_bits>64 {return Err(FactorError::TooManyClassicalBits);}
+        let work=shots.checked_mul(self.instructions.len().max(1))
+            .and_then(|x|x.checked_mul(1usize<<MAX_FACTOR_QUBITS))
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if work>MAX_FACTOR_WORK_UNITS {return Err(FactorError::WorkLimit);}
+        let state=FactorState::zero(self.qubits,budget)?;
+        let mut written=vec![false;self.classical_bits];
+        let mut traces=0usize;
+        for (index,op) in self.instructions.iter().enumerate(){
+            match op {
+                Instruction::Gate(g)=>state.check_gate(g)?,
+                Instruction::If{bit,gate,..}=>{
+                    if *bit>=self.classical_bits {
+                        return Err(FactorError::InvalidClassicalBit{
+                            bit:*bit,bits:self.classical_bits,
+                        });
+                    }
+                    state.check_gate(gate)?;
+                    if !written[*bit] {
+                        return Err(FactorError::ReadBeforeWrite{
+                            bit:*bit,instruction:index,
+                        });
+                    }
+                }
+                Instruction::Measure{qubit,into_bit}=>{
+                    state.check_wire(*qubit)?;
+                    if *into_bit>=self.classical_bits {
+                        return Err(FactorError::InvalidClassicalBit{
+                            bit:*into_bit,bits:self.classical_bits,
+                        });
+                    }
+                    written[*into_bit]=true;
+                    traces+=1;
+                }
+                Instruction::Reset{qubit}=>{
+                    state.check_wire(*qubit)?;
+                    traces+=1;
+                }
+            }
+        }
+        let per_shot=self.classical_bits.checked_mul(size_of::<Option<bool>>())
+            .and_then(|x|x.checked_add(size_of::<ShotRecord>()))
+            .and_then(|x|x.checked_add(traces.checked_mul(size_of::<TraceEntry>())?))
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let output=shots.checked_mul(per_shot)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let required=output.checked_add(state.logical_state_bytes())
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if required>budget {
+            return Err(FactorError::BudgetExceeded{
+                required_bytes:required,budget_bytes:budget,
+            });
+        }
+        Ok((traces,budget-output))
+    }
+    pub fn execute_shots(&self,shots:usize,seed:u64,budget:usize)
+        ->Result<FactorBatch,FactorError>
+    {
+        let (trace_cap,state_budget)=self.preflight(shots,budget)?;
+        let mut rng=SeededRng::new(seed);
+        let mut records=Vec::new();
+        records.try_reserve_exact(shots)
+            .map_err(|_|FactorError::AllocationFailed)?;
+        let mut single=None;
+        let mut peak=0usize;
+        for _ in 0..shots {
+            let mut state=FactorState::zero(self.qubits,state_budget)?;
+            let mut bits=vec![None;self.classical_bits];
+            let mut trace=Vec::new();
+            trace.try_reserve_exact(trace_cap)
+                .map_err(|_|FactorError::AllocationFailed)?;
+            for (instruction,op) in self.instructions.iter().enumerate(){
+                match op {
+                    Instruction::Gate(g)=>state.apply(g.clone())?,
+                    Instruction::Measure{qubit,into_bit}=>{
+                        let value=state.measure(*qubit,&mut rng)?;
+                        bits[*into_bit]=Some(value);
+                        trace.push(TraceEntry{instruction,qubit:*qubit,
+                            kind:TraceKind::Measure{into_bit:*into_bit,value}});
+                    }
+                    Instruction::Reset{qubit}=>{
+                        let previous_value=state.measure(*qubit,&mut rng)?;
+                        if previous_value {state.apply(Gate::X(*qubit))?;}
+                        trace.push(TraceEntry{instruction,qubit:*qubit,
+                            kind:TraceKind::Reset{previous_value}});
+                    }
+                    Instruction::If{bit,equals,gate}=>{
+                        let value=bits[*bit].ok_or(FactorError::ReadBeforeWrite{
+                            bit:*bit,instruction,
+                        })?;
+                        if value==*equals {state.apply(gate.clone())?;}
+                    }
+                }
+            }
+            peak=peak.max(state.peak_logical_bytes());
+            records.push(ShotRecord{bits,trace});
+            if shots==1 {single=Some(state);}
+        }
+        Ok(FactorBatch{
+            metadata:FactorMetadata::new(seed,shots),
+            records,
+            one_shot_state:single,
+            peak_logical_state_bytes:peak,
+        })
+    }
+}
