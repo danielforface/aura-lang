@@ -462,3 +462,106 @@ fn real_x11_form_cancel_once_per_busy_generation_underlay_and_host_recovery(){
     assert_eq!(click(&plugin,&tree,&mut ctx,id,365,140),vec![300]);
     eprintln!("LUMINA_CANCEL_MOUSE_X11 busy_submit_blocked=true single_cancel_per_generation=true cancel_disabled_pixel=true no_underlay_leak=true unrelated_button=true ready_blocks=true aba_revision_guard=true higher_revision_rearms=true malformed_revision_blocks=true foreign_form_blocks=true");
 }
+
+
+/// Native X11 acknowledgement requires an actual earlier cancel callback,
+/// exact host revision matching, and still cannot revive a terminal Submit.
+/// A route subtree may unmount/remount without discarding this window-local
+/// monotonic cancellation history (no host field persistence claim).
+#[test]
+fn real_x11_form_cancel_acknowledgement_pixels_stale_epoch_and_route_reentry(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("TextInput",&[("x","320"),("y","20"),("width","230"),("height","46"),
+            ("form","checkout"),("value","A"),("on_change","cb:401")],vec![]),
+        node("Button",&[("x","20"),("y","110"),("width","250"),("height","64"),
+            ("on_click","cb:100"),("form_submit","checkout"),
+            ("form_status","cancelled"),("form_request_revision","7"),
+            ("form_cancel_ack_revision","7"),("form_cancel_notice","Acknowledged"),
+            ("label","Send")],vec![]),
+        node("Button",&[("x","20"),("y","220"),("width","250"),("height","54"),
+            ("form_cancel","checkout"),("on_click","cb:200"),
+            ("label","Cancel operation")],vec![]),
+        node("Button",&[("x","320"),("y","220"),("width","200"),("height","54"),
+            ("on_click","cb:300"),("label","Other action")],vec![]),
+    ]);
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let wins=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=wins.lines().next().expect("real native window");
+    let first=plugin.diagnostic_capture_pixel(21.0,140.0).unwrap();
+    assert!(click(&plugin,&tree,&mut ctx,id,80,145).is_empty(),
+        "host terminal claim without prior local cancellation cannot submit");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,242).is_empty(),
+        "host terminal status cannot dispatch a new cancellation");
+
+    tree.children[1].set_prop("form_status","busy");
+    tree.children[1].props.retain(|(k,_)|
+        k!="form_cancel_ack_revision" && k!="form_cancel_notice");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,80,242),vec![200],
+        "real pointer emits the native cancel callback for request 7");
+    tree.children[1].set_prop("form_status","cancelled");
+    tree.children[1].set_prop("form_cancel_ack_revision","7");
+    tree.children[1].set_prop("form_cancel_notice","Acknowledged");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let acknowledged=plugin.diagnostic_capture_pixel(21.0,140.0).unwrap();
+    assert!(acknowledged.b>first.b.saturating_add(40)
+        && acknowledged.b>acknowledged.r.saturating_add(75),
+        "verified host-owned terminal status must produce blue native border: before={first:?} after={acknowledged:?}");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,145).is_empty(),
+        "host-cancelled Submit must remain inert");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,242).is_empty(),
+        "completion cannot reissue cancel");
+
+    // Distinct route tree: no stale callback should emit during unmount.
+    let alternate=node("App",&[("bg","#101820")],vec![
+        node("Text",&[("x","20"),("y","25"),("text","Other screen")],vec![]),
+        node("Button",&[("x","320"),("y","220"),("width","200"),("height","54"),
+            ("on_click","cb:300"),("label","Other action")],vec![]),
+    ]);
+    for _ in 0..5{
+        assert_eq!(render(&plugin,&alternate,&mut ctx),None);
+    }
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let returned=plugin.diagnostic_capture_pixel(21.0,140.0).unwrap();
+    assert_eq!(returned,acknowledged,
+        "same native window reentry retains the displayed ack generation");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,242).is_empty());
+
+    // Host explicitly returns to ready; historical cancel token persists.
+    tree.children[1].set_prop("form_status","ready");
+    tree.children[1].props.retain(|(k,_)|
+        k!="form_cancel_ack_revision" && k!="form_cancel_notice");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,80,145),vec![100],
+        "explicit ready restore permits a new valid submission");
+    tree.children[1].set_prop("form_status","busy");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,80,242).is_empty(),
+        "ABA busy revision 7 cannot reuse completed cancel token");
+    tree.children[1].set_prop("form_request_revision","8");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,80,242),vec![200],
+        "new host generation 8 permits exactly one cancellation");
+
+    tree.children[1].set_prop("form_status","cancelled");
+    tree.children[1].set_prop("form_request_revision","7");
+    tree.children[1].set_prop("form_cancel_ack_revision","7");
+    tree.children[1].set_prop("form_cancel_notice","Old response");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let stale=plugin.diagnostic_capture_pixel(21.0,140.0).unwrap();
+    assert!(stale.b<acknowledged.b.saturating_sub(40),
+        "late ack for request 7 must not masquerade as completion of 8: {stale:?}");
+    tree.children[1].set_prop("form_request_revision","8");
+    tree.children[1].set_prop("form_cancel_ack_revision","8");
+    tree.children[1].set_prop("form_cancel_notice","New response");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let next=plugin.diagnostic_capture_pixel(21.0,140.0).unwrap();
+    assert!(next.b>stale.b.saturating_add(40));
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,360,242),vec![300],
+        "unrelated Button stays fully active after a terminal acknowledgement");
+    eprintln!("LUMINA_CANCEL_ACK_MOUSE_X11 no_forged_ack=true explicit_host_generation=true blue_terminal_pixel=true submit_and_cancel_occluded=true route_unmount_remount=true no_stale_generation_after_ready=true next_epoch_cancellable=true delayed_ack_rejected=true next_ack_accepted=true independent_button=true");
+}

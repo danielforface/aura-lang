@@ -594,3 +594,86 @@ fn native_x11_form_cancel_preserves_edit_session_and_undo_history(){
         "Ctrl+Z after cancel must undo only the latest local text edit, not reset session: {undone:?}");
     eprintln!("LUMINA_CANCEL_EDITOR_X11 cancel_callback_once=true draft_persisted_after_focus_revoke=true undo_history_retained=true busy_submit_skipped=true");
 }
+
+
+/// A terminal form acknowledgement is host-authored and strictly tied to a
+/// cancellation that this X11 window actually sent. It is not a synthetic
+/// timer completion and must not restore forbidden keyboard actions.
+#[test]
+fn native_x11_form_cancel_acknowledged_terminal_focus_and_ready_recovery(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","240"),("height","45"),
+            ("form","signup"),("on_change","cb:401"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","85"),("width","240"),("height","48"),
+            ("form_submit","signup"),("form_status","busy"),
+            ("form_request_revision","7"),("on_click","cb:100"),
+            ("label","Submit")],vec![]),
+        node("Button",&[("x","20"),("y","158"),("width","240"),("height","48"),
+            ("form_cancel","signup"),("on_click","cb:200"),
+            ("label","Cancel")],vec![]),
+        node("Button",&[("x","300"),("y","158"),("width","200"),("height","48"),
+            ("on_click","cb:300"),("label","Other")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,380));
+    frames(&plugin,&root,&mut ctx,3);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("real native keyboard window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Cancel; busy Submit skipped
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![200]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "held/fresh Return cannot duplicate a cancellation generation");
+    root.children[1].set_prop("form_status","cancelled");
+    root.children[1].set_prop("form_cancel_ack_revision","7");
+    root.children[1].set_prop("form_cancel_notice","Request closed");
+    assert!(button_frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "host acknowledgement does not synthesize a callback or restore focus");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Other
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300],
+        "terminal Submit/Cancel are both excluded from keyboard order");
+
+    // Stale metadata is rejected. A host must explicitly clear cancellation
+    // props when returning to ready; no implicit unfocusing/refresh-click.
+    root.children[1].set_prop("form_status","ready");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Other, stale ack blocks Submit
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300]);
+    root.children[1].props.retain(|(k,_)|
+        k!="form_cancel_ack_revision" && k!="form_cancel_notice");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Submit
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![100],
+        "explicit ready and cleared metadata reenable submission via new user action");
+
+    root.children[1].set_prop("form_status","busy");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty()); // revoked Submit focus
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Other, ABA canceller blocked
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300]);
+    root.children[1].set_prop("form_request_revision","8");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // TextInput
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Cancel
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![200],
+        "new higher host generation supports one more cancellation");
+    root.children[1].set_prop("form_status","cancelled");
+    root.children[1].set_prop("form_request_revision","7");
+    root.children[1].set_prop("form_cancel_ack_revision","7");
+    assert!(button_frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "stale terminal acknowledgement must never restore keyboard focus");
+    root.children[1].set_prop("form_request_revision","8");
+    root.children[1].set_prop("form_cancel_ack_revision","8");
+    assert!(button_frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "valid terminal acknowledgement has no synthetic Submit/Cancel callbacks");
+    eprintln!("LUMINA_CANCEL_ACK_KEYBOARD_X11 host_terminal_no_callback=true submit_and_cancel_not_focusable=true unrelated_button=true stale_ack_metadata_rejects_ready=true explicit_ready_recovery=true aba_busy_revision_blocks=true new_revision_cancellable=true stale_completion_no_focus=true valid_completion_no_autoclick=true");
+}

@@ -2591,6 +2591,8 @@ fn paint_node<D: RaylibDraw>(
             let cancel_blocked=cancel_cb
                 .is_some_and(|id|cancel_plan.blocked.contains(&id))
                 || (prop_string(node,"form_cancel").is_some() && cancel_cb.is_none());
+            let cancellation_acknowledged=cancel_cb
+                .is_some_and(|id|cancel_plan.acknowledged.contains(&id));
             let disabled = cancel_blocked ||
                 prop_string(node, "disabled") == Some("true")
                 || control == layout::ButtonControl::Invalid
@@ -2694,6 +2696,10 @@ fn paint_node<D: RaylibDraw>(
             let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
             let stroke=if matches!(submit_state,forms::SubmitState::Error(_)){
                 Color::new(235,76,89,255)
+            }else if cancellation_acknowledged{
+                // Neutral informational colour: host-authored acknowledgement,
+                // not network cancellation verified by Lumina.
+                Color::new(91,163,220,255)
             }else if disabled{Color::GRAY}else{Color::RAYWHITE};
 
             // 200ms click tween: never animate a disabled control.
@@ -2737,6 +2743,8 @@ fn paint_node<D: RaylibDraw>(
 
             let label=if cancel_cb.is_some_and(|id|cancel_plan.requested.contains(&id)){
                 "Cancel requested"
+            }else if matches!(submit_state,forms::SubmitState::Cancelled{..}){
+                if cancellation_acknowledged{"Cancelled"}else{"Unverified cancel"}
             }else if matches!(submit_state,forms::SubmitState::Busy){
                 "Submitting..."
             }else if matches!(submit_state,forms::SubmitState::Invalid){
@@ -2748,9 +2756,15 @@ fn paint_node<D: RaylibDraw>(
             // Simple centering with a rough width estimate.
             let est_w = (label.chars().count() as f32) * (ts as f32 * 0.6);
             let tx = rect.x + (rect.width - est_w) / 2.0;
-            let ty=if matches!(submit_state,forms::SubmitState::Error(_))
-                && rect.height>=46.0{rect.y+4.0}
-                else{rect.y+(rect.height-ts as f32)/2.0};
+            let cancel_notice=match submit_state {
+                forms::SubmitState::Cancelled{notice,..}
+                    if cancellation_acknowledged=>notice,
+                _=>None,
+            };
+            let ty=if (matches!(submit_state,forms::SubmitState::Error(_))
+                || cancel_notice.is_some()) && rect.height>=46.0 {
+                rect.y+4.0
+            }else{rect.y+(rect.height-ts as f32)/2.0};
             d.draw_text(label,tx as i32,ty as i32,ts,fg);
             if let forms::SubmitState::Error(message)=submit_state{
                 // Only validated, bounded, host-authored status text. The
@@ -2759,6 +2773,15 @@ fn paint_node<D: RaylibDraw>(
                     d.draw_text(message,(rect.x+8.0) as i32,
                         (rect.y+rect.height-17.0) as i32,12,
                         Color::new(255,125,130,255));
+                }
+            }
+            if let Some(message)=cancel_notice{
+                // Display only when a previously emitted request's generation
+                // matches the explicit host terminal acknowledgement.
+                if rect.width>=130.0 && rect.height>=46.0 {
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(125,195,239,255));
                 }
             }
             // Inset optical ring for native keyboard/pointer Button focus.

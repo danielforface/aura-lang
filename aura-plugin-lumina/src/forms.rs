@@ -25,12 +25,22 @@ pub(crate) enum SubmitState<'a> {
     Ready,
     Busy,
     Error(&'a str),
+    /// A terminal host claim, not proof that a remote task was aborted.
+    /// The renderer only acknowledges a revision it requested itself.
+    Cancelled{revision:u64,notice:Option<&'a str>},
     Invalid,
 }
 impl SubmitState<'_>{
     pub(crate) fn actionable(self)->bool{
         matches!(self,Self::Ready|Self::Error(_))
     }
+}
+fn safe_status_text(message:&str,max_bytes:usize)->bool {
+    !message.trim().is_empty() && message.trim()==message
+        && message.len()<=max_bytes
+        && !message.chars().any(|c|c.is_control()
+            || matches!(c,'\u{202A}'..='\u{202E}'
+                |'\u{2066}'..='\u{2069}'))
 }
 /// Form status and remote error are a single atomic host-authored snapshot.
 /// Do not display arbitrary control/bidi escape strings from remote services.
@@ -39,16 +49,27 @@ pub(crate) fn submit_state(node:&UiNode)->SubmitState<'_>{
         return SubmitState::Ready;
     }
     let error=prop(node,"form_error");
+    let acknowledge=prop(node,"form_cancel_ack_revision");
+    let notice=prop(node,"form_cancel_notice");
+    if prop(node,"form_status")!=Some("cancelled")
+        && (acknowledge.is_some() || notice.is_some()){
+        return SubmitState::Invalid;
+    }
     match prop(node,"form_status"){
         None|Some("ready") if error.is_none()=>SubmitState::Ready,
         Some("busy") if error.is_none()=>SubmitState::Busy,
         Some("error")=>{
             match error{
-                Some(message) if !message.trim().is_empty()
-                    && message.trim()==message && message.len()<=180
-                    && !message.chars().any(|c|c.is_control()
-                        || matches!(c,'\u{202A}'..='\u{202E}'
-                            |'\u{2066}'..='\u{2069}')) => SubmitState::Error(message),
+                Some(message) if safe_status_text(message,180) =>
+                    SubmitState::Error(message),
+                _=>SubmitState::Invalid,
+            }
+        },
+        Some("cancelled") if error.is_none()=>{
+            match (request_revision(node),acknowledge){
+                (Some(revision),Some(ack)) if ack==revision.to_string().as_str()
+                    && notice.is_none_or(|message|safe_status_text(message,120))=>
+                    SubmitState::Cancelled{revision,notice},
                 _=>SubmitState::Invalid,
             }
         },
@@ -70,6 +91,9 @@ pub(crate) struct CancelPlan {
     pub(crate) blocked:HashSet<u64>,
     /// A host request was already sent for the current (or older) epoch.
     pub(crate) requested:HashSet<u64>,
+    /// The host has presented a terminal status for the same generation
+    /// for which this native window actually dispatched a cancel request.
+    pub(crate) acknowledged:HashSet<u64>,
 }
 fn request_revision(node:&UiNode)->Option<u64>{
     let raw=prop(node,"form_request_revision")?;
@@ -90,15 +114,21 @@ pub(crate) fn cancel_plan(root:&UiNode,plan:&LayoutNode,
     let mut submitters:HashMap<String,Vec<Submit>>=HashMap::new();
     let mut callbacks:HashMap<u64,usize>=HashMap::new();
     let mut cancellers:Vec<(Option<u64>,Option<String>,bool)>=Vec::new();
+    let mut acknowledgements:Vec<(u64,String,u64)>=Vec::new();
     fn scan(node:&UiNode,plan:&LayoutNode,
         submits:&mut HashMap<String,Vec<Submit>>,
         callbacks:&mut HashMap<u64,usize>,
-        cancels:&mut Vec<(Option<u64>,Option<String>,bool)>){
+        cancels:&mut Vec<(Option<u64>,Option<String>,bool)>,
+        acks:&mut Vec<(u64,String,u64)>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if node.kind=="Button"{
             let id=callback(node,"on_click");
             if let Some(id)=id{*callbacks.entry(id).or_default()+=1;}
             if let Some(form)=prop(node,"form_submit"){
+                if let (Some(id),SubmitState::Cancelled{revision,..})=
+                    (id,submit_state(node)){
+                    acks.push((id,form.to_owned(),revision));
+                }
                 let revision=(matches!(submit_state(node),SubmitState::Busy)
                     && prop(node,"disabled")!=Some("true")
                     && matches!(prop(node,"control"),None|Some("button")))
@@ -111,6 +141,8 @@ pub(crate) fn cancel_plan(root:&UiNode,plan:&LayoutNode,
                     && prop(node,"form_status").is_none()
                     && prop(node,"form_error").is_none()
                     && prop(node,"form_request_revision").is_none()
+                    && prop(node,"form_cancel_ack_revision").is_none()
+                    && prop(node,"form_cancel_notice").is_none()
                     && matches!(prop(node,"control"),None|Some("button"))
                     && prop(node,"disabled")!=Some("true");
                 cancels.push((id,Some(form.to_owned()),valid));
@@ -118,12 +150,24 @@ pub(crate) fn cancel_plan(root:&UiNode,plan:&LayoutNode,
         }
         for (child,prepared) in node.children.iter().zip(&plan.children){
             if let Some(prepared)=prepared{
-                scan(child,prepared,submits,callbacks,cancels);
+                scan(child,prepared,submits,callbacks,cancels,acks);
             }
         }
     }
-    scan(root,plan,&mut submitters,&mut callbacks,&mut cancellers);
+    scan(root,plan,&mut submitters,&mut callbacks,&mut cancellers,
+        &mut acknowledgements);
     let mut result=CancelPlan::default();
+    // A terminal label is only shown when the host-authored status matches
+    // an actual cancellation requested in this same window. Malformed,
+    // ambiguous or stale generations remain nonactionable but unverified.
+    for (id,form,revision) in acknowledgements {
+        if valid_name(&form)
+            && submitters.get(&form).is_some_and(|group|group.len()==1)
+            && callbacks.get(&id)==Some(&1)
+            && last_cancelled.get(&form)==Some(&revision) {
+            result.acknowledged.insert(id);
+        }
+    }
     for (id,form,valid) in cancellers {
         let Some(id)=id else{continue;};
         let mut requested=false;
@@ -397,6 +441,141 @@ mod tests{
             _=>None,
         }).collect()
     }
+    #[test]
+    fn cancelled_submit_does_not_reenable_click_and_cancel_props_fail_closed(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("form_submit","order"),("on_click","cb:30"),
+                ("form_status","cancelled"),("form_request_revision","5"),
+                ("form_cancel_ack_revision","5")],vec![]),
+            n("Button",&[("form_cancel","order"),("on_click","cb:31")],vec![]),
+        ]);
+        let p=plan(&root);
+        assert_eq!(submit_action(&root,&p,30),SubmitAction::Reject);
+        assert!(cancel_plan(&root,&p,&HashMap::new()).acknowledged.is_empty());
+        let mut hist=HashMap::new();hist.insert("order".into(),5);
+        assert!(cancel_plan(&root,&p,&hist).acknowledged.contains(&30));
+        assert!(cancel_plan(&root,&p,&hist).blocked.contains(&31));
+        root.children[1].set_prop("form_cancel_notice","Malformed duplicate");
+        assert!(cancel_plan(&root,&p,&hist).blocked.contains(&31));
+        root.children[1].props.retain(|(k,_)|k!="form_cancel_notice");
+        root.children[1].set_prop("form_cancel_ack_revision","5");
+        assert!(cancel_plan(&root,&p,&hist).blocked.contains(&31));
+        root.children[1].props.retain(|(k,_)|k!="form_cancel_ack_revision");
+        root.children[0].set_prop("form_status","busy");
+        root.children[0].props.retain(|(k,_)|k!="form_cancel_ack_revision");
+        assert!(cancel_plan(&root,&p,&hist).blocked.contains(&31),
+            "old already cancelled busy revision must remain blocked");
+        root.children[0].set_prop("form_request_revision","6");
+        assert!(matches!(cancel_plan(&root,&p,&hist).decisions.get(&31),
+            Some(CancelDecision::Dispatch{revision:6,..})));
+    }
+    #[test]
+    fn cancellation_terminal_requires_exact_request_and_explicit_host_ack(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("form_submit","signup"),("on_click","cb:11"),
+                ("form_status","busy"),("form_request_revision","8")],vec![]),
+            n("Button",&[("form_cancel","signup"),("on_click","cb:12")],vec![]),
+        ]);
+        let mut hist=HashMap::new();hist.insert("signup".into(),8);
+        let p=plan(&root);
+        root.children[0].set_prop("form_status","cancelled");
+        assert_eq!(submit_state(&root.children[0]),SubmitState::Invalid,
+            "status alone is NOT a sufficient terminal acknowledgement");
+        assert!(!cancel_plan(&root,&p,&hist).acknowledged.contains(&11));
+        root.children[0].set_prop("form_cancel_ack_revision","8");
+        assert_eq!(submit_state(&root.children[0]),
+            SubmitState::Cancelled{revision:8,notice:None});
+        assert!(cancel_plan(&root,&p,&hist).acknowledged.contains(&11));
+        assert_eq!(submit_action(&root,&p,11),SubmitAction::Reject,
+            "cancelled submit is always nonactionable");
+        assert!(cancel_plan(&root,&p,&hist).blocked.contains(&12),
+            "cancel button cannot send a new cancellation after completion");
+        root.children[0].set_prop("form_cancel_notice","Cancelled by service");
+        assert_eq!(submit_state(&root.children[0]),
+            SubmitState::Cancelled{revision:8,notice:Some("Cancelled by service")});
+        root.children[0].set_prop("form_cancel_ack_revision","7");
+        assert_eq!(submit_state(&root.children[0]),SubmitState::Invalid);
+        root.children[0].set_prop("form_cancel_ack_revision","08");
+        assert_eq!(submit_state(&root.children[0]),SubmitState::Invalid,
+            "noncanonical ack must not be coerced");
+    }
+
+    #[test]
+    fn acknowledgement_is_bounded_bidi_safe_and_not_reused_after_ready(){
+        let mut submit=n("Button",&[("form_submit","f"),("form_status","cancelled"),
+            ("form_request_revision","2"),("form_cancel_ack_revision","2"),
+            ("on_click","cb:1")],vec![]);
+        assert!(matches!(submit_state(&submit),SubmitState::Cancelled{revision:2,..}));
+        for message in ["","\n"," leading","trailing ","bad\u{202E}rtl","bad\u{2067}rtl"]{
+            submit.set_prop("form_cancel_notice",message);
+            assert_eq!(submit_state(&submit),SubmitState::Invalid,
+                "invalid notice content must never render an acknowledgement");
+        }
+        submit.set_prop("form_cancel_notice",&"a".repeat(121));
+        assert_eq!(submit_state(&submit),SubmitState::Invalid);
+        submit.set_prop("form_cancel_notice","בוטל לבקשתך");
+        assert!(matches!(submit_state(&submit),SubmitState::Cancelled{notice:Some(_),..}));
+        submit.set_prop("form_status","ready");
+        assert_eq!(submit_state(&submit),SubmitState::Invalid,
+            "stale cancellation metadata in ready must fail closed");
+        submit.props.retain(|(k,_)|k!="form_cancel_notice"
+            && k!="form_cancel_ack_revision");
+        assert_eq!(submit_state(&submit),SubmitState::Ready);
+        submit.set_prop("form_status","busy");
+        submit.set_prop("form_cancel_ack_revision","2");
+        assert_eq!(submit_state(&submit),SubmitState::Invalid,
+            "stale acknowledgement in a new request must not leak");
+    }
+
+    #[test]
+    fn late_ack_of_older_request_is_not_presented_as_current_completion(){
+        let mut root=n("App",&[],vec![n("Button",&[
+            ("form_submit","f"),("on_click","cb:10"),("form_status","cancelled"),
+            ("form_request_revision","9"),("form_cancel_ack_revision","9")
+        ],vec![])]);
+        let p=plan(&root);
+        let mut history=HashMap::new();
+        assert!(cancel_plan(&root,&p,&history).acknowledged.is_empty(),
+            "native window cannot attest a cancellation it never requested");
+        history.insert("f".into(),10);
+        assert!(!cancel_plan(&root,&p,&history).acknowledged.contains(&10),
+            "stale host result for request 9 must not acknowledge newer 10");
+        history.insert("f".into(),9);
+        assert!(cancel_plan(&root,&p,&history).acknowledged.contains(&10));
+        root.children.push(n("Button",&[
+            ("form_submit","f"),("on_click","cb:11"),("form_status","cancelled"),
+            ("form_request_revision","9"),("form_cancel_ack_revision","9")
+        ],vec![]));
+        assert!(cancel_plan(&root,&plan(&root),&history).acknowledged.is_empty(),
+            "two submitters with the same form name are ambiguous");
+    }
+
+    #[test]
+    fn unmount_and_remount_does_not_rearm_stale_cancel_or_rewrite_history(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("form_submit","f"),("form_status","busy"),
+                ("form_request_revision","8"),("on_click","cb:10")],vec![]),
+            n("Button",&[("form_cancel","f"),("on_click","cb:11")],vec![]),
+        ]);
+        let mut history=HashMap::new();history.insert("f".to_owned(),8);
+        let first=cancel_plan(&root,&plan(&root),&history);
+        assert!(first.blocked.contains(&11));
+        let hidden=n("App",&[],vec![n("Text",&[("text","Other screen")],vec![])]);
+        assert!(cancel_plan(&hidden,&plan(&hidden),&history).acknowledged.is_empty());
+        root.children[0].set_prop("form_status","cancelled");
+        root.children[0].set_prop("form_cancel_ack_revision","8");
+        let returned=cancel_plan(&root,&plan(&root),&history);
+        assert!(returned.acknowledged.contains(&10));
+        assert!(returned.blocked.contains(&11));
+        root.children[0].set_prop("form_status","busy");
+        root.children[0].props.retain(|(k,_)|k!="form_cancel_ack_revision");
+        assert!(cancel_plan(&root,&plan(&root),&history).blocked.contains(&11),
+            "remount cannot reset cancellation deduplication with old epoch");
+        root.children[0].set_prop("form_request_revision","9");
+        assert_eq!(cancel_plan(&root,&plan(&root),&history).decisions.get(&11),
+            Some(&CancelDecision::Dispatch{form:"f".into(),revision:9}));
+    }
+
     #[test]
     fn form_cancel_emits_once_per_host_generation_and_never_replays_stale_epoch(){
         let mut root=n("App",&[],vec![

@@ -350,6 +350,8 @@ fn button_actionable(node:&UiNode)->bool {
             && prop(node,"form_status").is_none()
             && prop(node,"form_error").is_none()
             && prop(node,"form_request_revision").is_none()
+            && prop(node,"form_cancel_ack_revision").is_none()
+            && prop(node,"form_cancel_notice").is_none()
             && matches!(button_control(node),ButtonControl::Push)
             && callback(node,"on_click").is_some());
     prop(node,"disabled")!=Some("true")
@@ -666,6 +668,44 @@ mod tests {
         assert_eq!(hit_test(&root,&plan,65.0,45.0),None);
         root.children[1].props.retain(|(key,_)|key!="form_status");
         assert_eq!(hit_test(&root,&plan,65.0,45.0),Some(HitTarget::Button(20)));
+    }
+
+    #[test]
+    fn host_cancelled_submission_is_terminal_occluding_and_does_not_steal_keyboard_focus(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","235"),("height","55"),
+                ("on_click","cb:1")],vec![]),
+            n("Button",&[("x","25"),("y","25"),("width","225"),("height","50"),
+                ("on_click","cb:2"),("form_submit","order"),("form_status","cancelled"),
+                ("form_request_revision","7"),("form_cancel_ack_revision","7")],vec![]),
+            n("Button",&[("x","20"),("y","100"),("width","220"),("height","55"),
+                ("on_click","cb:3"),("form_cancel","order")],vec![]),
+            n("Button",&[("x","20"),("y","175"),("width","220"),("height","55"),
+                ("on_click","cb:4")],vec![]),
+        ]);
+        let p=arrange(&root,Bounds::new(0.0,0.0,500.0,350.0));
+        let mut history=std::collections::HashMap::new();
+        history.insert("order".to_string(),7);
+        let snapshot=crate::forms::cancel_plan(&root,&p,&history);
+        assert!(snapshot.acknowledged.contains(&2));
+        assert!(snapshot.blocked.contains(&3));
+        assert_eq!(hit_test_with_blocked(&root,&p,50.0,45.0,&snapshot.blocked),None,
+            "terminal submit keeps occluding its underlay");
+        assert_eq!(hit_test_with_blocked(&root,&p,55.0,120.0,&snapshot.blocked),None,
+            "terminal cancel request cannot leak to a button below");
+        assert_eq!(keyboard_focus_order_with_blocked(&root,&p,&[],&snapshot.blocked),
+            vec![HitTarget::Button(1),HitTarget::Button(4)]);
+        root.children[1].set_prop("form_status","ready");
+        assert_eq!(hit_test_with_blocked(&root,&p,50.0,45.0,&snapshot.blocked),None,
+            "stale acknowledgement props in ready must still block clicks");
+        root.children[1].props.retain(|(key,_)|
+            key!="form_cancel_ack_revision");
+        assert_eq!(hit_test_with_blocked(&root,&p,50.0,45.0,&snapshot.blocked),
+            Some(HitTarget::Button(2)),
+            "cleared host metadata and ready explicitly restore action");
+        root.children[2].set_prop("form_cancel_notice","untrusted");
+        assert_eq!(hit_test(&root,&p,50.0,125.0),None,
+            "ack props on cancellation control fail closed even if not preblocked");
     }
 
     #[test]
