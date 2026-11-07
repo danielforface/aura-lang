@@ -45,3 +45,28 @@ cell xray_io_impact(read_kib_s: u32, write_kib_s: u32):
 # growth_mib validated and bounded <= 16384 by the native caller.
 cell xray_memory_impact(growth_mib: u32):
     yield growth_mib * 2
+
+# XR-05 / Investigator — all behavioral thresholds are actual compiled Aura.
+# C handles only observed process identity, sample ordering and evidence transport.
+# None of these gates establishes causation, leaks, or a security diagnosis.
+# A growth delta of 32768 KiB or more is a noteworthy memory pulse.
+cell xray_burst_gate(growth_kib: u32):
+    yield growth_kib / 32768
+
+# Caller proves burst_kib >= 32768 and retraction_kib >= 0.
+# Gate is true when the net retraction is >= half the original burst.
+cell xray_recovery_gate(retraction_kib: u32, burst_kib: u32):
+    yield retraction_kib / (burst_kib / 2)
+
+# CPU >= 700 millicores = >=70% of one core for this sample.
+cell xray_cpu_hot_gate(cpu_millicores: u32):
+    yield cpu_millicores / 700
+
+# Require at least 3 consecutive comparable high-CPU samples.
+cell xray_cpu_streak_gate(consecutive_samples: u32):
+    yield consecutive_samples / 3
+
+# Transfer surge in either direction >= 16384 KiB/s.
+# This is process I/O transfer, not guaranteed physical disk throughput.
+cell xray_transfer_surge_gate(read_kib_s: u32, write_kib_s: u32):
+    yield (read_kib_s / 16384) + (write_kib_s / 16384)

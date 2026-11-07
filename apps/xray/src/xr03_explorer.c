@@ -7,6 +7,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "xr03_explorer.h"
 #include <stdint.h>
+#include "xr05_cases.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,6 +55,7 @@ typedef struct {
     unsigned kept, truncated, actual_samples;
     uint64_t source_rate_verified;
     unsigned raw_precision;
+    XR05Casebook *casebook;
 } XR3Run;
 
 static void xr3_error(char *dst,size_t cap,const char *msg,unsigned line){
@@ -190,7 +192,8 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                !copystr(run->privacy,sizeof run->privacy,field(&obj,"privacy"))){
                 xr3_error(error,cap,"invalid capture start or unsupported schema",line_no);good=0;break;
             }
-            run->raw_precision=(strncmp(run->version,"0.4.",4)==0);
+            run->raw_precision=(strncmp(run->version,"0.4.",4)==0 ||
+                                strncmp(run->version,"0.5.",4)==0);
             if(run->raw_precision){
                 raw_prev=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
                 raw_curr=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
@@ -442,6 +445,33 @@ static void jsonquote(FILE *f,const char *s){
     }
     fputc('"',f);
 }
+
+/* Cases are assembled AFTER full capture validation and do not mutate or
+ * reinterpret the source JSONL. No unscored or unverified samples are
+ * substituted. The actual decision gates are Aura-generated functions. */
+static int xr3_prepare_cases(XR3Run *r){
+    r->casebook=(XR05Casebook*)calloc(1,sizeof(*r->casebook));
+    if(!r->casebook)return 0;
+    XR05Observation *v=(XR05Observation*)calloc(r->kept?r->kept:1,sizeof(*v));
+    if(!v)return 0;
+    for(unsigned i=0;i<r->kept;i++){
+        const XR3Event *e=&r->events[i];
+        v[i].sample=e->sample;
+        v[i].pid=e->pid;
+        v[i].creation=e->creation;
+        v[i].comparable=e->has_score;
+        v[i].rate_reverified=e->rate_reverified;
+        v[i].score=e->score;
+        v[i].cpu=e->cpu;
+        v[i].read=e->read;
+        v[i].write=e->write;
+        v[i].delta_kib=e->delta_kib;
+    }
+    int ok=xr05_build_cases(v,r->kept,r->casebook);
+    free(v);
+    return ok;
+}
+
 static void emitrun(FILE *f,const XR3Run *r){
     fprintf(f,"{\"seconds\":%u,\"elapsed\":%llu,\"records\":%llu,"
               "\"derived\":%llu,\"denied\":%llu,\"failed\":%llu,"
@@ -481,7 +511,18 @@ static void emitrun(FILE *f,const XR3Run *r){
                 (unsigned)e->rate_reverified);
         fputc(']',f);
     }
-    fputs("]}",f);
+    fputs("],\"cases\":[",f);
+    if(r->casebook){
+        for(unsigned i=0;i<r->casebook->count;i++){
+            const XR05Case *c=&r->casebook->items[i];
+            if(i)fputc(',',f);
+            fprintf(f,"[%u,%u,\"%llu\",%u,%u,%u,%u,%u,%u]",
+                    c->kind,c->pid,(unsigned long long)c->creation,
+                    c->start,c->end,c->peak_sample,c->peak_value,
+                    c->recovered_kib,(unsigned)c->raw_verified);
+        }
+    }
+    fprintf(f,"],\"caseTruncated\":%u}",r->casebook?r->casebook->truncated:0u);
 }
 
 int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
@@ -494,8 +535,13 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
     }
     int ok=parsefile(candidate_path,candidate,include_names,error,cap);
     if(ok&&baseline)ok=parsefile(baseline_path,baseline,include_names,error,cap);
-    if(!ok){free(candidate->events);free(candidate);
-        if(baseline){free(baseline->events);free(baseline);}return 0;}
+    if(ok)ok=xr3_prepare_cases(candidate);
+    if(ok&&baseline)ok=xr3_prepare_cases(baseline);
+    if(!ok){
+        if(error&&cap&&!error[0])xr3_error(error,cap,"failed to build bounded evidence cases",0);
+        free(candidate->casebook);free(candidate->events);free(candidate);
+        if(baseline){free(baseline->casebook);free(baseline->events);free(baseline);}return 0;
+    }
     fputs("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
           "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
           "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
@@ -531,17 +577,18 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           ".alert{border-left:2px solid var(--amber);padding:10px 14px;margin:9px 0;background:#192330;border-radius:5px;font-size:12px}"
           ".footer{padding-top:25px;margin-top:40px;border-top:1px solid var(--edge);color:var(--muted);font-size:12px}"
           ".hidden{display:none!important}</style></head><body><div class=\"frame\">"
-          "<header><div class=\"row\"><div><div class=\"brand\">AURA / LOCAL EVIDENCE ENGINE / XR-03</div>"
+          "<header><div class=\"row\"><div><div class=\"brand\">AURA / COMPILED INVESTIGATION ENGINE / XR-05</div>"
           "<h1>X-RAY <b>workbench</b></h1>"
           "<p>Temporal evidence you can interrogate. Identical sample times for each metric. Source: Windows Toolhelp32 / PSAPI / GetProcessTimes.</p>"
           "</div><div><span class=\"tag\">OFFLINE · VERIFIED INPUT</span><p class=\"small\">NO NETWORK · NO TELEMETRY UPLOAD</p></div></div>"
           "</header><div class=\"statgrid\" id=\"stats\"></div>"
           "<div class=\"tabs\" role=\"tablist\">"
-          "<button data-tab=\"timeline\" class=\"active\">01 / Time axis</button>"
+          "<button data-tab=\"timeline\">01 / Time axis</button>"
           "<button data-tab=\"episodes\">02 / Event evidence</button>"
           "<button data-tab=\"heatmap\">03 / Process matrix</button>"
           "<button data-tab=\"integrity\">04 / Quality &amp; provenance</button>"
           "<button data-tab=\"topology\">05 / Process topology</button>"
+          "<button data-tab=\"cases\" class=\"active\">06 / Aura Investigation Cases</button>"
           "</div><div class=\"grid\"><main>"
           "<section class=\"panel\" id=\"timeline\"><div class=\"row\"><h2>Multidimensional system timeline</h2>"
           "<select id=\"metric\"><option value=\"cpu\">Sum CPU · millicores</option>"
@@ -575,6 +622,23 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"scroll\"><table><thead><tr><th>PID / name</th><th>Parent PID hint</th>"
           "<th>Threads</th><th>Sample</th><th>Score</th><th>Raw counter integrity</th>"
           "</tr></thead><tbody id=\"topoRows\"></tbody></table></div></section>"
+          "<section class=\"panel\" id=\"cases\"><div class=\"row\"><h2>Aura / Evidence casebook</h2>"
+          "<span class=\"tag\">NATIVE AURA DECISION GATES</span></div>"
+          "<p class=\"small\">Identifies memory bursts with observed retraction, sustained CPU occupancy, and high transfer intervals. "
+          "Every rule is compiled from analysis.aura. These are observed patterns, NOT evidence of a leak, bottleneck, malware, or cause. "
+          "Unobserved recovery is UNKNOWN, not proof of continuous growth.</p>"
+          "<div class=\"controls\"><select id=\"caseType\" aria-label=\"Case kind\">"
+          "<option value=\"0\">All evidence patterns</option>"
+          "<option value=\"1\">Memory bursts</option><option value=\"2\">Sustained CPU</option>"
+          "<option value=\"3\">I/O transfer surges</option></select>"
+          "<input id=\"caseFilter\" type=\"search\" placeholder=\"Filter PID\" aria-label=\"Filter cases by process PID\"></div>"
+          "<p class=\"small\" id=\"caseCount\"></p><div class=\"scroll\"><table><thead><tr>"
+          "<th>Process</th><th>Observed pattern</th><th>Samples</th><th>Measured maximum</th>"
+          "<th>Recovery evidence</th><th>Source fidelity</th>"
+          "</tr></thead><tbody id=\"caseRows\"></tbody></table></div>"
+          "<div class=\"line\"></div><h2 id=\"caseTitle\">Select a case to inspect</h2>"
+          "<p class=\"small\" id=\"caseNarrative\">Every decision carries a same-identity sample trail.</p>"
+          "<div id=\"caseTrail\"></div></section>"
           "</main><aside><div class=\"panel\"><div class=\"k\">FOCUSED EVIDENCE</div><h2 id=\"focusTitle\">Select an observation</h2>"
           "<div id=\"focusBody\" class=\"small\">Click an event row, matrix cell or a point on the timeline.</div>"
           "<div class=\"line\"></div><div class=\"k\">INVESTIGATION PRINCIPLE</div>"
@@ -583,7 +647,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"panel\" style=\"margin-top:16px\"><div class=\"k\">CURRENT vs BASELINE</div><div id=\"compareCards\"></div>"
           "<p class=\"small\">Comparisons use aggregate observed distributions, not presumed process identity across captures or causal conclusions.</p>"
           "</div></aside></div>"
-          "<div class=\"footer\">AURA ENGINE: nine compiled uint32 cells, including three XR-03 score components. "
+          "<div class=\"footer\">AURA ENGINE: fourteen compiled u32 cells, including five XR-05 evidence gates. "
           "Input validation is local and fail-closed; no external libraries. SOURCE: WINDOWS · NO NETWORK · NO EXTERNAL ASSETS."
           "<p>Build provenance is embedded in the capture, not silently inferred from this report.</p></div></div>"
           "<script>'use strict';const candidate=",out);
@@ -606,7 +670,9 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "tile('Exact source rates',candidate.rawPrecision?n(candidate.rateVerified):'legacy',"
           "candidate.rawPrecision?'Recomputed from raw Windows counters':'Score consistency only; raw counters unavailable'),"
           "tile('Process open failures',n(candidate.failed),'Denied '+candidate.denied),"
-          "tile('Truncated UI rows',n(candidate.truncated),'All input rows verified'));"
+          "tile('Truncated UI rows',n(candidate.truncated),'All input rows verified'),"
+          "tile('Aura evidence cases',n(candidate.cases.length),"
+          "'Patterns with exact process identity · '+n(candidate.caseTruncated)+' beyond case budget')); "
           "$('comparisonLegend').hidden=!baseline;$('runSelect').options[1].disabled=!baseline;"
           "for(const s of candidate.samples){const o=document.createElement('option');o.value=s[0];o.textContent='Sample '+s[0];$('sampleSelect').append(o);}"
           "const i=$('integrityStats');i.replaceChildren(tile('Unknown identities',n(candidate.unknown)),"
@@ -690,18 +756,59 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "if(!e.length){const tr=document.createElement('tr');const td=document.createElement('td');"
           "td.colSpan=6;td.textContent='Topology unavailable in legacy capture. New XR-04 recordings include parent/thread hints.';"
           "tr.append(td);rows.append(tr);}}"
-          "function tab(name){for(const t of ['timeline','episodes','heatmap','integrity','topology'])$(t).classList.toggle('hidden',t!==name);"
+                    "const caseNames=['','Memory pulse','Sustained CPU','I/O transfer surge'];"
+          "const caseUnit=c=>c[0]===1?n(c[6])+' KiB growth':"
+          "c[0]===2?n(c[6])+' millicores':n(c[6])+' KiB/s';"
+          "function showCase(c,r){$('caseTitle').textContent=caseNames[c[0]]+' / PID '+c[1];"
+          "const subtitle=c[0]===1?(c[7]>0?"
+          "'Observed net retraction of '+n(c[7])+' KiB by sample '+c[4]+'. A pulse, not established leak.':"
+          "'No >=50% retraction verified in the next three consecutive valid samples. This is NOT proof of a leak.'):"
+          "c[0]===2?'At least three adjacent samples met the Aura >=700-millicore gate.':"
+          "'At least one transfer direction reached 16,384 KiB/s. May include non-disk I/O.';"
+          "$('caseNarrative').textContent='PID '+c[1]+' · creation FILETIME '+c[2]+' · S'+c[3]+'–S'+c[4]+"
+          "' · '+subtitle+' Source: '+(c[8]?'exact raw counters independently verified':"
+          "'legacy score-only check; exact counter reconstruction unavailable')+'.';"
+          "const out=$('caseTrail');out.replaceChildren();"
+          "const trace=r.events.filter(e=>e[1]===c[1]&&e[2]===c[2]&&"
+          "e[0]>=Math.max(1,c[3]-1)&&e[0]<=Math.min(r.seconds,Math.max(c[4],c[3])+3));"
+          "for(const e of trace){const div=document.createElement('div');div.className='alert';"
+          "div.textContent='S'+e[0]+' | score '+(e[3]<0?'unknown':n(e[3]))+"
+          "' | CPU '+n(e[4])+'m | read '+n(e[5])+' KiB/s | write '+n(e[6])+"
+          "' KiB/s | WS delta '+(e[3]<0?'unknown':n(e[7])+' KiB')+"
+          "' | '+(e[16]?'raw-verified':e[13]);"
+          "div.style.cursor='pointer';div.title='Inspect this original observation';"
+          "div.addEventListener('click',()=>inspect(e,r));out.append(div);}"
+          "if(!trace.length)out.textContent='No source observations available; source history may be truncated.';}"
+          "function renderCases(){const r=sets[active]||candidate;"
+          "const kind=Number($('caseType').value)||0,q=$('caseFilter').value.trim();"
+          "const cases=(r.cases||[]).filter(c=>(!kind||c[0]===kind)&&(!q||String(c[1]).includes(q)));"
+          "$('caseCount').textContent=n(cases.length)+' matching case(s) · '+n(r.cases.length)+"
+          "' bounded cases · '+n(r.caseTruncated||0)+' additional cases omitted';"
+          "const rows=$('caseRows');rows.replaceChildren();"
+          "for(const c of cases.slice(0,200)){const tr=document.createElement('tr');"
+          "const values=['PID '+c[1],caseNames[c[0]],'S'+c[3]+(c[4]!==c[3]?'–S'+c[4]:''),"
+          "caseUnit(c),c[0]===1?(c[7]>0?n(c[7])+' KiB contracted':'not established'):"
+          "'not applicable',c[8]?'exact counters':'legacy only'];"
+          "for(const value of values){const td=document.createElement('td');td.textContent=value;tr.append(td);}"
+          "tr.addEventListener('click',()=>showCase(c,r));rows.append(tr);}"
+          "if(cases.length)showCase(cases[0],r);else{"
+          "$('caseTitle').textContent='No matching cases';"
+          "$('caseNarrative').textContent=r.truncated?'Event budget truncated source history; case coverage partial.':"
+          "'No complete observed sequence met the configured Aura evidence gates.';"
+          "$('caseTrail').replaceChildren();}}"
+          "function tab(name){for(const t of ['timeline','episodes','heatmap','integrity','topology','cases'])$(t).classList.toggle('hidden',t!==name);"
           "for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===name);"
-          "if(name==='heatmap')heat();if(name==='topology')topology();}"
+          "if(name==='heatmap')heat();if(name==='topology')topology();if(name==='cases')renderCases();}"
           "document.querySelectorAll('[data-tab]').forEach(x=>x.addEventListener('click',()=>tab(x.dataset.tab)));"
           "$('metric').addEventListener('change',draw);$('filter').addEventListener('input',renderEvents);"
           "$('sampleSelect').addEventListener('change',renderEvents);"
-          "$('runSelect').addEventListener('change',()=>{active=Number($('runSelect').value)||0;renderEvents();heat();topology();});"
-          "initStats();draw();renderEvents();tab('timeline');"
+          "$('runSelect').addEventListener('change',()=>{active=Number($('runSelect').value)||0;renderEvents();heat();topology();renderCases();});"
+          "$('caseType').addEventListener('change',renderCases);$('caseFilter').addEventListener('input',renderCases);"
+          "initStats();draw();renderEvents();tab('cases');"
           "</script></body></html>",out);
     int passed=!ferror(out);
     if(!passed)xr3_error(error,cap,"report output write failure",0);
-    free(candidate->events);free(candidate);
-    if(baseline){free(baseline->events);free(baseline);}
+    free(candidate->casebook);free(candidate->events);free(candidate);
+    if(baseline){free(baseline->casebook);free(baseline->events);free(baseline);}
     return passed;
 }

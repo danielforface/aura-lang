@@ -1,6 +1,6 @@
 # AURA X-RAY XR-03 — multidimensional offline evidence workbench
 
-**Version 0.4.0-xr04 · Windows x64 · unsigned experimental · local only**
+**Version 0.5.0-xr05 · Windows x64 · unsigned experimental · local only**
 
 XR-03 evolves the Windows process analyzer into an **importable, comparable, self-contained investigation system**. It is a real Windows EXE built with the repository's Aura C backend. Nine application-domain functions (normalization, rate calculations, activity scoring and CPU/IO/memory impact) are authored in Aura Lang and generated directly from apps/xray/src/analysis.aura. Win32 API collection, 64-bit identity checks and bounded storage are handled in C, not falsely described as fully Aura. The OS adapter does not modify process state.
 
@@ -62,7 +62,7 @@ Product ownership is limited to apps/xray/ and its scoped Windows workflow; othe
 
 User hardware verified the previous product with 2,123 process records, 1,901 complete rate vectors, ten full samples over 10.015 seconds, and no reported collector errors. XR-02 Replay had 2,195 records, 1,966 vectors and 10.016 seconds. Independent Chromium tests of Live/Replay/Compare HTML found working interactions and no JS exceptions or external requests. These results do not demonstrate better overall performance between different workload snapshots.
 
-**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.4.0-xr04. Parent PID is a **hint**, not an independently verified ancestral identity.
+**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.5.0-xr05. Parent PID is a **hint**, not an independently verified ancestral identity.
 
 **Import/replay evidence:** In XR-04 captures the offline importer rechecks every complete process score against the original CPU/IO raw counters, exact monotonic inter-sample clock intervals, identity and working-set deltas. Old XR-02/XR-03 captures lack those counters and continue to open with an explicitly marked **legacy score-only validation**. This consistency check is NOT a signature and cannot prove that adversarially rewritten captures are authentic. Data loss, counter rollback and unsupported input are not quietly turned into zero.
 
@@ -79,3 +79,32 @@ User hardware verified the previous product with 2,123 process records, 1,901 co
 Output paths must not exist; no overwrites. Names are redacted by default.
 
 **Limits:** No ETW, kernel service, verified process ancestry, device-specific disk throughput, automatic remediation, root-cause proof, native Lumina shell/GUI or formal backend proof. The Windows boundary and data ingestion remain in C; nine domain functions are genuinely Aura-compiled.
+
+## XR-05 — Aura Investigation Casebook (2026-11-07)
+
+AURA X-RAY now extracts **auditable process episodes**, rather than only rendering per-sample scores. The new sixth report view opens by default and exposes each case with its complete same-process identity (PID + Windows creation FILETIME), start/end sample, measured peak, proof source and adjacent original observations.
+
+New genuine **Aura-compiled** analytical cells in `src/analysis.aura` implement all five episode thresholds:
+- `xray_burst_gate`: one sample working-set growth >=32 MiB;
+- `xray_recovery_gate`: within the next three *consecutive comparable* observations, the measured working set contracts by at least 50% of the earlier burst. A detected retraction is evidence against *monotonic growth over that short window*; no diagnosis of leak absence;
+- `xray_cpu_hot_gate`: >=700 millicores in one complete process observation (70% of one logical CPU);
+- `xray_cpu_streak_gate`: at least three consecutive comparable CPU-hot samples;
+- `xray_transfer_surge_gate`: read OR write >=16,384 KiB/s in a complete vector.
+
+The native C episode engine `xr05_cases.c` does ONLY bounded order, identity matching, interval continuity, and evidence transport. It links actual generated Aura cells. It is *not* a pure-Aura compiler/runtime/Win32/HTML stack: capture and report shell remain native C and browser JS while Aura governs the analytical decisions. No false claim of automatic causation or malware detection.
+
+**Field acceptance from user's private XR-04 capture**, 10 seconds / 2,153 process observations / 1,928 independently reconstructed complete vectors, zero raw-rate mismatches:
+- PID 7140, sample 2: +91,932 KiB working set (score 182); at sample 3 the same identity has -106,348 KiB, observed contraction.
+- PID 7140, samples 5–10: consecutive CPU occupancy 984–1,190 millicores, six observations.
+- PID 13408, sample 7: write transfer 17,243 KiB/s.
+
+These are *patterns of source measurements*, not memory leak, bottleneck, physical disk, verified ancestry or root-cause claims. Legacy XR-02/03 files still replay, transparently marked as score-only. XR-04 and XR-05 recordings use exact raw-counter verification. Casebook source records and case truncation remain visible; names stay redacted by default. The classifier and full native executable are exercised by `--self-test` and Windows CI including synthetic negative controls for near-threshold readings, gaps and PID reuse.
+
+Windows product usage (all output paths must be new):
+
+    .\AuraXRay.exe --self-test
+    .\AuraXRay.exe --replay capture-xr04.jsonl --report xr05-casebook.html
+    .\AuraXRay.exe --capture --seconds 10 --out capture-xr05.jsonl --report xr05-live.html
+    .\AuraXRay.exe --compare capture-xr04.jsonl capture-xr05.jsonl --report xr05-compare.html
+
+Open the HTML file and choose **06 / Aura Investigation Cases**. This is a compiled-Aura-native classification path with an offline report; no network, ETW, global installer, security agent or Lumina native GUI.

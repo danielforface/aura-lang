@@ -16,12 +16,13 @@
 #include <limits.h>
 #include "xr02_engine.h"
 #include "xr03_explorer.h"
+#include "xr05_cases.h"
 
 #ifndef XR_BUILD_SHA
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.4.0-xr04"
+#define XR_VERSION "0.5.0-xr05"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -33,6 +34,11 @@ extern uint32_t xray_activity_score(uint32_t cpu_milli, uint32_t read_kib_s,
 extern uint32_t xray_cpu_impact(uint32_t cpu_milli);
 extern uint32_t xray_io_impact(uint32_t read_kib_s, uint32_t write_kib_s);
 extern uint32_t xray_memory_impact(uint32_t growth_mib);
+extern uint32_t xray_burst_gate(uint32_t growth_kib);
+extern uint32_t xray_recovery_gate(uint32_t retraction_kib, uint32_t burst_kib);
+extern uint32_t xray_cpu_hot_gate(uint32_t cpu_millicores);
+extern uint32_t xray_cpu_streak_gate(uint32_t consecutive_samples);
+extern uint32_t xray_transfer_surge_gate(uint32_t read_kib_s, uint32_t write_kib_s);
 
 static void utc_now(char *out, size_t size) {
     SYSTEMTIME t;
@@ -332,13 +338,24 @@ static int self_test(void) {
         fputs("XRAY EVIDENCE CONTRACT FAIL: decomposed Aura score components\n",stderr);
         return 0;
     }
+    if (xray_burst_gate(32767)!=0 || xray_burst_gate(32768)==0 ||
+        xray_recovery_gate(16383,32768)!=0 || xray_recovery_gate(16384,32768)==0 ||
+        xray_cpu_hot_gate(699)!=0 || xray_cpu_hot_gate(700)==0 ||
+        xray_cpu_streak_gate(2)!=0 || xray_cpu_streak_gate(3)==0 ||
+        xray_transfer_surge_gate(16383,16383)!=0 ||
+        xray_transfer_surge_gate(16384,0)==0 ||
+        !xr05_self_test()) {
+        fputs("XRAY CASEBOOK CONTRACT FAIL: Aura evidence gates or temporal episode oracle\n",stderr);
+        return 0;
+    }
     puts("AURA_CORE_CONTRACT_PASS 24 vectors; source=analysis.aura; backend=c");
+    puts("AURA_XR05_CASEBOOK_PASS memory pulse/retraction, CPU streak, transfer surge, gap/reuse isolation");
     puts("XRAY_TEMPORAL_CONTRACT_PASS baseline, rates, reset, PID reuse, unknown identity");
     return 1;
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-03 -- Multidimensional Evidence Workbench\n"
+    fputs("AURA X-RAY XR-05 -- Compiled Aura Investigation Cases\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
@@ -349,10 +366,10 @@ static void usage(FILE *out) {
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-04: exact 64-bit CPU/IO evidence, parent-PID hints and thread counts.\n"
+          "XR-05: Aura-compiled memory pulse/retraction, sustained CPU, transfer surge evidence cases.\n"
           "Reconstructs source deltas when raw counters are available; legacy /2 remains readable.\n"
           "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
-          "Optional offline workbench; process names are opt-in only.\n"
+          "Offline casebook/replay/compare and topology; process names are opt-in only.\n"
           "Limitations: no ETW, no automatic fixes, no causal/root-cause proof.\n", out);
 }
 
