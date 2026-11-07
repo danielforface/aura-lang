@@ -25,6 +25,10 @@
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
 extern uint32_t xray_working_set_mib(uint32_t working_set_kib);
+extern uint32_t xray_read_kib_per_sec(uint32_t delta_kib, uint32_t elapsed_ms);
+extern uint32_t xray_cpu_millicores(uint32_t delta_cpu_ms, uint32_t elapsed_ms);
+extern uint32_t xray_activity_score(uint32_t cpu_milli, uint32_t read_kib_s,
+                                    uint32_t write_kib_s, uint32_t memory_growth_mib);
 
 static void utc_now(char *out, size_t size) {
     SYSTEMTIME t;
