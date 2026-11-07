@@ -104,6 +104,13 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_control_fanout_v1.json > /tmp/q28-control-fanout-auto.json
           python3 -c 'import json; a=json.load(open("/tmp/q28-control-fanout.json")); d=json.load(open("/tmp/q28-control-fanout-auto.json")); assert d["engine_result"]==a and d["selected_backend"]=="factor_product" and d["qpu_hardware_jobs"]==0; assert a["qubits"]==128 and a["shots"]==1 and a["product_preserving_two_wire_gates"]==254 and len(a["factors"])==128 and a["peak_logical_state_bytes"]==4096 and a["projective_wire_splits"]==0 and a["qpu_hardware_jobs"]==0; assert abs(a["inspected_basis_probability"]-1.0)<1e-10; print("Q28_EXACT_CONTROL_CLI_PASS qubits=128 instructions=512 no_merge_CX_CZ=254 state_bytes=4096 qpu_jobs=0")'
 
+      - name: Execute bounded high-shot counts example and independent real CLI
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example factorized_counts_65536
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run < aura-quantum-sim/fixtures/factorized_counts_hadamard_v1.json > /tmp/q28-counts-65536.json
+          python3 -c 'import json; d=json.load(open("/tmp/q28-counts-65536.json")); assert d["schema"]=="aura.quantum.factorized-counts-result/1" and d["shots"]==65536 and d["counts_only"] is True and d["retained_shot_records"]==0 and d["qpu_hardware_jobs"]==0 and sum(d["histogram"].values())==65536 and len(d["histogram"])==2 and "results" not in d and "trace" not in d; print("Q28_COUNTS_REAL_CLI_PASS shots=65536 bins=2 retained=0 qpu=0")'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -160,6 +167,12 @@ jobs:
           set -euo pipefail
           test -x aura-quantum-sim/target/release/aura-quantum-factorized-run
           python aura-quantum-sim/tools/check_qiskit_exact_product_controls.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c014-exact-controls-qiskit.json
+
+      - name: Independently check 98304 Born-rule samples against pinned Qiskit
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run
+          python aura-quantum-sim/tools/check_qiskit_counts.py aura-quantum-sim/target/release/aura-quantum-counts-run aura-quantum-sim/fixtures ci-artifacts/q28/c015-counts-born.json
 
       - name: Upload reproducible parity evidence
         if: always()

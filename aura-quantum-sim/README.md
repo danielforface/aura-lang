@@ -625,3 +625,44 @@ that actual entangling operations remain joined.
 This is a pure **CPU simulation optimization**, not a
 general MPS exactness theorem, formal equivalence proof,
 QPU execution or an integrated Aura IR/QIR interface.
+
+
+## C-015 — high-shot histogram CPU sampling (bounded Counts v1)
+
+`aura-quantum-counts-run` offers **up to 65,536 seeded shots** while
+retaining **zero per-shot trace records**. It is a *separate strict*
+`aura.quantum.factorized-counts-request/1` →
+`aura.quantum.factorized-counts-result/1` protocol.
+The existing detailed `factorized-request/1` API, its full ordered
+trace and 1,024-shot limit are unchanged. Internally both APIs
+share one Rust execution kernel and the same SplitMix64 seed stream;
+Counts does not restart the RNG between chunks.
+
+Counts returns a sorted histogram (high classical bit first, `?`
+means never written), actual aggregate projective split/deferral and
+non-entangling-gate counters, and `retained_shot_records=0`.
+Explicit caps: 65,536 shots, 4,096 distinct outcomes, 128 global
+qubits but at most 10 per connected factor, 64 classical bits,
+512 instructions, 16 MiB input memory budget, 256 KiB request,
+16 MiB result, and 268,435,456 conservative CPU units computed as
+shots × max(1,instructions) × 1,024. An eligible circuit can still
+be rejected by CPU work admission. Each distinct histogram bin
+consumes a 128-byte + classical-bit-count *logical* budget
+allowance; this is not a process RSS guarantee. A failed
+histogram/bin/resource admission yields structured JSON on stderr,
+exit code 2 and **no partial stdout success**. No QPU, QIR,
+remote hardware or classical false success.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_counts_65536
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run < aura-quantum-sim/fixtures/factorized_counts_hadamard_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run < aura-quantum-sim/fixtures/factorized_counts_bell_v1.json
+```
+
+Tests cover exact histogram and seeded diagnostic parity against
+the old detailed API at 1–1,024 shots, 65,536 real samples,
+unwritten bits, classical controls/reset, strictly invalid
+branches/flags/oversized histograms, plus independently pinned Qiskit
+Born probabilities on 65,536 H and 32,768 Bell shots (98,304 total,
+six-sigma acceptance). This is empirical distribution confidence,
+not proof of RNG independence or hardware quantum behavior.
