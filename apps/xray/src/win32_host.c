@@ -21,7 +21,7 @@
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.3.0-xr03"
+#define XR_VERSION "0.4.0-xr04"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -194,6 +194,11 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, XRAnaly
             fputs(",\"process_name\":", out);
             json_string(out, utf8);
         }
+        /* Snapshot-parent PID is a hint; never claim parent identity without
+         * verifying its own creation FILETIME. Thread count is instantaneous. */
+        fprintf(out, ",\"parent_pid\":%lu,\"thread_count\":%lu",
+                (unsigned long)entry.th32ParentProcessID,
+                (unsigned long)entry.cntThreads);
 
         fputs(",\"process_create_filetime\":", out);
         if (have_creation) fprintf(out, "%llu", (unsigned long long)create_ticks);
@@ -228,6 +233,17 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, XRAnaly
         else fputs("null", out);
         fputs(",\"cpu_total_ms\":", out);
         if (have_cpu) fprintf(out, "%llu", (unsigned long long)(cpu_ticks/10000u));
+        else fputs("null", out);
+        /* XR-04 exact counter provenance. Required for version 0.4 capture,
+         * absent in legacy XR-02/03 recordings; no schema/2 break. */
+        fputs(",\"cpu_total_100ns\":", out);
+        if (have_cpu) fprintf(out, "%llu", (unsigned long long)cpu_ticks);
+        else fputs("null", out);
+        fputs(",\"cumulative_io_read_bytes\":", out);
+        if (have_io) fprintf(out, "%llu", (unsigned long long)read_bytes);
+        else fputs("null", out);
+        fputs(",\"cumulative_io_write_bytes\":", out);
+        if (have_io) fprintf(out, "%llu", (unsigned long long)write_bytes);
         else fputs("null", out);
         fputs(",\"delta_quality\":", out);
         json_string(out, metrics.quality);
@@ -333,7 +349,8 @@ static void usage(FILE *out) {
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-03: Aura-scored evidence reconstruction, replay, multidimensional history and compare.\n"
+          "XR-04: exact 64-bit CPU/IO evidence, parent-PID hints and thread counts.\n"
+          "Reconstructs source deltas when raw counters are available; legacy /2 remains readable.\n"
           "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
           "Optional offline workbench; process names are opt-in only.\n"
           "Limitations: no ETW, no automatic fixes, no causal/root-cause proof.\n", out);

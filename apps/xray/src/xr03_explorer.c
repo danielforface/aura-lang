@@ -34,7 +34,16 @@ typedef struct {
     int64_t delta_kib;
     char name[160], delta_quality[28];
     unsigned char has_score,has_ws;
+    uint32_t parent_pid,thread_count;
+    unsigned char has_topology,rate_reverified;
 } XR3Event;
+/* Exact-raw counters are added starting in XR-04 captures. Legacy /2
+ * recordings remain replayable, but MUST be labeled score-only audited. */
+typedef struct {
+    uint32_t pid;
+    uint64_t creation,ws_kib,read_bytes,write_bytes,cpu_ticks;
+    unsigned char has_id,has_ws,has_io,has_cpu;
+} XR3Raw;
 typedef struct {
     char sha[48], version[36], privacy[48];
     uint32_t seconds, samples;
@@ -43,6 +52,8 @@ typedef struct {
     unsigned counts[31],valid[31],peak[31],quality_missing[31];
     XR3Event *events;
     unsigned kept, truncated, actual_samples;
+    uint64_t source_rate_verified;
+    unsigned raw_precision;
 } XR3Run;
 
 static void xr3_error(char *dst,size_t cap,const char *msg,unsigned line){
@@ -154,6 +165,9 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
     if(!run->events){fclose(f);xr3_error(error,cap,"cannot allocate bounded history",0);return 0;}
     unsigned stage=0,line_no=0,active=0,observed=0,vectors=0,peaks=0;
     uint64_t recorded=0,computed=0,readable=0,actual_readable=0;
+    XR3Raw *raw_prev=NULL,*raw_curr=NULL;
+    unsigned raw_prev_count=0;
+    uint64_t prior_ms=0;
     char line[XR3_MAX_LINE];
     int good=1;
     while(fgets(line,sizeof line,f)){
@@ -176,6 +190,15 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                !copystr(run->privacy,sizeof run->privacy,field(&obj,"privacy"))){
                 xr3_error(error,cap,"invalid capture start or unsupported schema",line_no);good=0;break;
             }
+            run->raw_precision=(strncmp(run->version,"0.4.",4)==0);
+            if(run->raw_precision){
+                raw_prev=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
+                raw_curr=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
+                if(!raw_prev||!raw_curr){
+                    xr3_error(error,cap,"exact-counter history allocation failed",line_no);
+                    good=0;break;
+                }
+            }
             stage=1;
         }else if(strcmp(type,"sample_start")==0){
             uint32_t s=0;uint64_t ms=0;
@@ -189,10 +212,60 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
             uint32_t sample=0,pid=0,score=0,cpu=0,read=0,write=0,ws=0;
             uint64_t creation=0;int64_t delta=0;
             const char *dq=field(&obj,"delta_quality");
+            (void)u64(&obj,"process_create_filetime",&creation);
+            XR3Raw *next_raw=NULL;
+            unsigned rate_reverified=0;
+            if(run->raw_precision){
+                if(!raw_curr){
+                    xr3_error(error,cap,"raw counter tracker unavailable",line_no);good=0;break;
+                }
+                next_raw=&raw_curr[observed];
+            }
             if(stage!=1||!active||!get32(&obj,"sample",&sample)||sample!=active||
                !get32(&obj,"pid",&pid)||!dq||strlen(dq)>=28||
                observed>=4096){
                 xr3_error(error,cap,"invalid process/sample association or capacity",line_no);good=0;break;
+            }
+            if(next_raw){
+                next_raw->pid=pid;
+                next_raw->creation=creation;
+                next_raw->has_id=(unsigned char)(creation!=0);
+                uint64_t coarse=0;
+                next_raw->has_ws=(unsigned char)u64(&obj,"working_set_kib",&next_raw->ws_kib);
+                next_raw->has_cpu=(unsigned char)u64(&obj,"cpu_total_100ns",&next_raw->cpu_ticks);
+                if(next_raw->has_cpu){
+                    if(!u64(&obj,"cpu_total_ms",&coarse)||
+                        coarse!=next_raw->cpu_ticks/10000u){
+                        xr3_error(error,cap,"exact CPU counter conflicts with coarse CPU",line_no);
+                        good=0;break;
+                    }
+                }else if(field(&obj,"cpu_total_ms")&&
+                         strcmp(field(&obj,"cpu_total_ms"),"null")!=0){
+                    xr3_error(error,cap,"exact CPU counter missing",line_no);good=0;break;
+                }
+                next_raw->has_io=(unsigned char)
+                    (u64(&obj,"cumulative_io_read_bytes",&next_raw->read_bytes) &&
+                     u64(&obj,"cumulative_io_write_bytes",&next_raw->write_bytes));
+                if(next_raw->has_io){
+                    if(!u64(&obj,"cumulative_io_read_kib",&coarse)||
+                       coarse!=next_raw->read_bytes/1024u ||
+                       !u64(&obj,"cumulative_io_write_kib",&coarse)||
+                       coarse!=next_raw->write_bytes/1024u){
+                        xr3_error(error,cap,"exact I/O counters conflict with coarse I/O",line_no);
+                        good=0;break;
+                    }
+                }else if((field(&obj,"cumulative_io_read_kib")&&
+                          strcmp(field(&obj,"cumulative_io_read_kib"),"null")!=0)||
+                         (field(&obj,"cumulative_io_write_kib")&&
+                          strcmp(field(&obj,"cumulative_io_write_kib"),"null")!=0)){
+                    xr3_error(error,cap,"exact I/O counters missing",line_no);good=0;break;
+                }
+                uint32_t topology_field=0;
+                if(!get32(&obj,"parent_pid",&topology_field)||
+                   !get32(&obj,"thread_count",&topology_field)){
+                    xr3_error(error,cap,"topology sample fields missing",line_no);
+                    good=0;break;
+                }
             }
             observed++;recorded++;
             const char *rawscore=field(&obj,"activity_score");
@@ -207,6 +280,43 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                    !i64(&obj,"memory_delta_kib",&delta)||
                    !u64(&obj,"process_create_filetime",&creation)){
                     xr3_error(error,cap,"scored observation missing comparable evidence",line_no);good=0;break;
+                }
+                if(run->raw_precision){
+                    if(!next_raw || !next_raw->has_id || !next_raw->has_ws ||
+                       !next_raw->has_cpu || !next_raw->has_io ||
+                       active<=1 || run->time_ms[active]<=prior_ms){
+                        xr3_error(error,cap,"complete vector missing raw comparability",line_no);
+                        good=0;break;
+                    }
+                    const XR3Raw *p=NULL;
+                    for(unsigned j=0;j<raw_prev_count;j++){
+                        if(raw_prev[j].pid==pid){p=&raw_prev[j];break;}
+                    }
+                    if(!p||!p->has_id||!p->has_ws||!p->has_cpu||!p->has_io||
+                       p->creation!=creation ||
+                       next_raw->cpu_ticks<p->cpu_ticks||
+                       next_raw->read_bytes<p->read_bytes||
+                       next_raw->write_bytes<p->write_bytes){
+                        xr3_error(error,cap,"counter reset or identity mismatch in scored vector",line_no);
+                        good=0;break;
+                    }
+                    uint64_t interval=run->time_ms[active]-prior_ms;
+                    uint64_t d_cpu=(next_raw->cpu_ticks-p->cpu_ticks)/10000u;
+                    uint64_t d_r=(next_raw->read_bytes-p->read_bytes)/1024u;
+                    uint64_t d_w=(next_raw->write_bytes-p->write_bytes)/1024u;
+                    uint32_t reported_interval=0;
+                    if(interval>4294967u||d_cpu>4294967u||d_r>4294967u||d_w>4294967u||
+                       !get32(&obj,"interval_ms",&reported_interval)||
+                       reported_interval!=interval ||
+                       (uint32_t)(d_cpu*1000u/interval)!=cpu ||
+                       (uint32_t)(d_r*1000u/interval)!=read ||
+                       (uint32_t)(d_w*1000u/interval)!=write ||
+                       (int64_t)next_raw->ws_kib-(int64_t)p->ws_kib!=delta){
+                        xr3_error(error,cap,"exact raw CPU/IO/memory rate mismatch",line_no);
+                        good=0;break;
+                    }
+                    rate_reverified=1;
+                    ++run->source_rate_verified;
                 }
                 uint64_t growth=delta>0?(uint64_t)delta/1024u:0;
                 if(growth>16384u)growth=16384u;
@@ -233,6 +343,13 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                 event->score=score;event->cpu=cpu;event->read=read;event->write=write;
                 event->delta_kib=delta;
                 event->creation=creation;
+                event->rate_reverified=(unsigned char)rate_reverified;
+                uint32_t parent=0,threads=0;
+                if(get32(&obj,"parent_pid",&parent) &&
+                   get32(&obj,"thread_count",&threads)){
+                    event->has_topology=1;event->parent_pid=parent;
+                    event->thread_count=threads;
+                }
                 (void)copystr(event->delta_quality,sizeof event->delta_quality,dq);
                 uint64_t workspace=0;
                 if(u64(&obj,"working_set_kib",&workspace)){
@@ -264,6 +381,10 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                 xr3_error(error,cap,"sample count/score aggregate mismatch",line_no);good=0;break;
             }
             run->counts[active]=observed;run->valid[active]=vectors;run->peak[active]=peaks;
+            if(run->raw_precision){
+                XR3Raw *tmp=raw_prev;raw_prev=raw_curr;raw_curr=tmp;
+                raw_prev_count=observed;prior_ms=run->time_ms[active];
+            }
             active=0;
         }else if(strcmp(type,"capture_end")==0){
             uint32_t samples=0;
@@ -292,6 +413,7 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
     }
     if(ferror(f)){xr3_error(error,cap,"read error",line_no);good=0;}
     fclose(f);
+    free(raw_prev);free(raw_curr);
     if(stage!=2){if(good)xr3_error(error,cap,"capture_end missing or incomplete",line_no);good=0;}
     if(good) {
         /* Validate the previously parsed sample/record summaries; explicit is better
@@ -324,13 +446,15 @@ static void emitrun(FILE *f,const XR3Run *r){
     fprintf(f,"{\"seconds\":%u,\"elapsed\":%llu,\"records\":%llu,"
               "\"derived\":%llu,\"denied\":%llu,\"failed\":%llu,"
               "\"errors\":%llu,\"unknown\":%llu,\"reuse\":%llu,"
-              "\"reset\":%llu,\"capacity\":%llu,\"truncated\":%u,\"build\":",
+              "\"reset\":%llu,\"capacity\":%llu,\"truncated\":%u,"
+              "\"rawPrecision\":%u,\"rateVerified\":%llu,\"build\":",
               r->seconds,(unsigned long long)r->elapsed_ms,
               (unsigned long long)r->records,(unsigned long long)r->derived,
               (unsigned long long)r->denied,(unsigned long long)r->open_failed,
               (unsigned long long)r->errors,(unsigned long long)r->unknown,
               (unsigned long long)r->reuse,(unsigned long long)r->reset,
-              (unsigned long long)r->capacity,r->truncated);
+              (unsigned long long)r->capacity,r->truncated,r->raw_precision,
+              (unsigned long long)r->source_rate_verified);
     jsonquote(f,r->sha);
     fputs(",\"samples\":[",f);
     for(unsigned i=1;i<=r->samples;i++){
@@ -352,6 +476,9 @@ static void emitrun(FILE *f,const XR3Run *r){
                 e->has_ws?(int)e->ws_mib:-1,
                 e->c_impact,e->i_impact,e->m_impact);
         jsonquote(f,e->name);fputc(',',f);jsonquote(f,e->delta_quality);
+        fprintf(f,",%d,%d,%u",e->has_topology?(int)e->parent_pid:-1,
+                e->has_topology?(int)e->thread_count:-1,
+                (unsigned)e->rate_reverified);
         fputc(']',f);
     }
     fputs("]}",f);
@@ -414,6 +541,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<button data-tab=\"episodes\">02 / Event evidence</button>"
           "<button data-tab=\"heatmap\">03 / Process matrix</button>"
           "<button data-tab=\"integrity\">04 / Quality &amp; provenance</button>"
+          "<button data-tab=\"topology\">05 / Process topology</button>"
           "</div><div class=\"grid\"><main>"
           "<section class=\"panel\" id=\"timeline\"><div class=\"row\"><h2>Multidimensional system timeline</h2>"
           "<select id=\"metric\"><option value=\"cpu\">Sum CPU · millicores</option>"
@@ -440,7 +568,14 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"statgrid\" id=\"integrityStats\"></div><p class=\"small\">An absent process in a sample is not proof of an exit. "
           "CPU millicores are per logical core, I/O transfer counters can include non-disk activity, and positive working-set growth "
           "is not proof of a leak. Score is heuristic; no malware, bottleneck or causal diagnosis is asserted.</p>"
-          "</section></main><aside><div class=\"panel\"><div class=\"k\">FOCUSED EVIDENCE</div><h2 id=\"focusTitle\">Select an observation</h2>"
+          "</section><section class=\"panel\" id=\"topology\"><h2>Process family and thread context</h2>"
+          "<p class=\"small\">Parent PID values are OS snapshot hints, NOT verified parent identities. "
+          "Thread counts are instantaneous, and a PID alone can be recycled. "
+          "Select a row to inspect its actual observation.</p>"
+          "<div class=\"scroll\"><table><thead><tr><th>PID / name</th><th>Parent PID hint</th>"
+          "<th>Threads</th><th>Sample</th><th>Score</th><th>Raw counter integrity</th>"
+          "</tr></thead><tbody id=\"topoRows\"></tbody></table></div></section>"
+          "</main><aside><div class=\"panel\"><div class=\"k\">FOCUSED EVIDENCE</div><h2 id=\"focusTitle\">Select an observation</h2>"
           "<div id=\"focusBody\" class=\"small\">Click an event row, matrix cell or a point on the timeline.</div>"
           "<div class=\"line\"></div><div class=\"k\">INVESTIGATION PRINCIPLE</div>"
           "<p class=\"small\">Follow process identity + sample time. Separate OBSERVED raw counters, COMPUTED Aura terms and UNKNOWN values. "
@@ -467,14 +602,18 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "function initStats(){const d=$('stats');const s=candidate.samples;d.replaceChildren("
           "tile('Capture window',(candidate.elapsed/1000).toFixed(3)+'s','Requested '+candidate.seconds+' seconds'),"
           "tile('Process observations',n(candidate.records),'Across '+candidate.samples.length+' samples'),"
-          "tile('Valid temporal vectors',n(candidate.derived),'Validated with Aura'),"
+          "tile('Valid temporal vectors',n(candidate.derived),'Score validated with Aura'),"
+          "tile('Exact source rates',candidate.rawPrecision?n(candidate.rateVerified):'legacy',"
+          "candidate.rawPrecision?'Recomputed from raw Windows counters':'Score consistency only; raw counters unavailable'),"
           "tile('Process open failures',n(candidate.failed),'Denied '+candidate.denied),"
           "tile('Truncated UI rows',n(candidate.truncated),'All input rows verified'));"
           "$('comparisonLegend').hidden=!baseline;$('runSelect').options[1].disabled=!baseline;"
           "for(const s of candidate.samples){const o=document.createElement('option');o.value=s[0];o.textContent='Sample '+s[0];$('sampleSelect').append(o);}"
           "const i=$('integrityStats');i.replaceChildren(tile('Unknown identities',n(candidate.unknown)),"
           "tile('Counter resets',n(candidate.reset)),tile('PID replacements',n(candidate.reuse)),"
-          "tile('Tracked capacity misses',n(candidate.capacity)),tile('Recorded errors',n(candidate.errors)));"
+          "tile('Tracked capacity misses',n(candidate.capacity)),tile('Recorded errors',n(candidate.errors)),"
+          "tile('Exact raw vectors',candidate.rawPrecision?n(candidate.rateVerified):'N/A',"
+          "candidate.rawPrecision?'CPU/IO/memory independently recomputed':'Old XR-02/XR-03 source precision insufficient'));"
           "const c=$('compareCards');if(!baseline){c.textContent='No baseline supplied. Use --compare BASELINE CANDIDATE --report OUTPUT.';return;}"
           "function metric(s,i){return s.samples.reduce((a,v)=>a+v[i],0)}"
           "const fields=[['Observation count',candidate.records,baseline.records],"
@@ -520,6 +659,11 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "'Evidence quality: '+e[13],"
           "'COMPUTED FROM OS OBSERVATIONS — not a diagnosis'];"
           "for(const line of lines){const d=document.createElement('div');d.className='alert';d.textContent=line;c.append(d);}"
+          "if(e[14]>=0){const line=document.createElement('div');line.className='alert';"
+          "line.textContent='Parent PID hint: '+e[14]+' · Threads: '+e[15];c.append(line);}"
+          "const validity=document.createElement('div');validity.className='small';"
+          "validity.textContent=e[16]?'Exact raw counters revalidated':"
+          "'Legacy/partial observation: exact CPU and I/O reconstruction unavailable';c.append(validity);"
           "const history=r.events.filter(x=>x[1]===e[1]&&x[2]===e[2]);"
           "const h=document.createElement('div');h.className='small';h.textContent='Same-identity history: '+history.map(x=>'S'+x[0]+':'+(x[3]<0?'?':x[3])).join(' · ');c.append(h);}"
           "function heat(){const root=$('matrix');root.replaceChildren();const r=sets[active]||candidate;"
@@ -535,13 +679,24 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "cell.style.background=z<0?'#1a2331':z===0?'#1c4550':'hsl('+Math.max(3,185-Math.min(160,z))+' 72% '+(23+Math.min(38,z/12))+'%)';"
           "cell.title='PID '+leader[1]+' / sample '+s+' / score '+(z<0?'unknown':z);"
           "if(e)cell.addEventListener('click',()=>inspect(e,r));grid.append(cell);}}root.append(grid);}"
-          "function tab(name){for(const t of ['timeline','episodes','heatmap','integrity'])$(t).classList.toggle('hidden',t!==name);"
+          "function topology(){const r=sets[active]||candidate;const rows=$('topoRows');rows.replaceChildren();"
+          "const e=r.events.filter(x=>x[0]===r.seconds&&x[14]>=0)"
+          ".sort((a,b)=>b[15]-a[15]||a[1]-b[1]);"
+          "for(const v of e.slice(0,350)){const tr=document.createElement('tr');"
+          "const values=[v[12]||'PID '+v[1],v[14],v[15],v[0],v[3]<0?'unknown':v[3],"
+          "v[16]?'exact counter audit':'score/legacy'];"
+          "for(const x of values){const td=document.createElement('td');td.textContent=x;tr.append(td);}"
+          "tr.addEventListener('click',()=>inspect(v,r));rows.append(tr);}"
+          "if(!e.length){const tr=document.createElement('tr');const td=document.createElement('td');"
+          "td.colSpan=6;td.textContent='Topology unavailable in legacy capture. New XR-04 recordings include parent/thread hints.';"
+          "tr.append(td);rows.append(tr);}}"
+          "function tab(name){for(const t of ['timeline','episodes','heatmap','integrity','topology'])$(t).classList.toggle('hidden',t!==name);"
           "for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===name);"
-          "if(name==='heatmap')heat();}"
+          "if(name==='heatmap')heat();if(name==='topology')topology();}"
           "document.querySelectorAll('[data-tab]').forEach(x=>x.addEventListener('click',()=>tab(x.dataset.tab)));"
           "$('metric').addEventListener('change',draw);$('filter').addEventListener('input',renderEvents);"
           "$('sampleSelect').addEventListener('change',renderEvents);"
-          "$('runSelect').addEventListener('change',()=>{active=Number($('runSelect').value)||0;renderEvents();heat();});"
+          "$('runSelect').addEventListener('change',()=>{active=Number($('runSelect').value)||0;renderEvents();heat();topology();});"
           "initStats();draw();renderEvents();tab('timeline');"
           "</script></body></html>",out);
     int passed=!ferror(out);

@@ -1,6 +1,6 @@
 # AURA X-RAY XR-03 — multidimensional offline evidence workbench
 
-**Version 0.3.0-xr03 · Windows x64 · unsigned experimental · local only**
+**Version 0.4.0-xr04 · Windows x64 · unsigned experimental · local only**
 
 XR-03 evolves the Windows process analyzer into an **importable, comparable, self-contained investigation system**. It is a real Windows EXE built with the repository's Aura C backend. Nine application-domain functions (normalization, rate calculations, activity scoring and CPU/IO/memory impact) are authored in Aura Lang and generated directly from apps/xray/src/analysis.aura. Win32 API collection, 64-bit identity checks and bounded storage are handled in C, not falsely described as fully Aura. The OS adapter does not modify process state.
 
@@ -57,3 +57,25 @@ Until exact SHA CI and artifact upload pass, no XR-03 executable is qualified. E
 **Not included:** native Lumina GUI, background service, ETW/eBPF, root-cause proofs, auto-remediation, formal backend proof or cross-host workload normalization. This is an interactive offline evidence workbench generated locally by an Aura-powered Windows executable.
 
 Product ownership is limited to apps/xray/ and its scoped Windows workflow; other agents' Core, Lumina and Quantum production paths remain untouched. Maintainer tracking: Draft PR #113 and Issue #112.
+
+## XR-04 — exact evidence and process topology (2026-11-07)
+
+User hardware verified the previous product with 2,123 process records, 1,901 complete rate vectors, ten full samples over 10.015 seconds, and no reported collector errors. XR-02 Replay had 2,195 records, 1,966 vectors and 10.016 seconds. Independent Chromium tests of Live/Replay/Compare HTML found working interactions and no JS exceptions or external requests. These results do not demonstrate better overall performance between different workload snapshots.
+
+**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.4.0-xr04. Parent PID is a **hint**, not an independently verified ancestral identity.
+
+**Import/replay evidence:** In XR-04 captures the offline importer rechecks every complete process score against the original CPU/IO raw counters, exact monotonic inter-sample clock intervals, identity and working-set deltas. Old XR-02/XR-03 captures lack those counters and continue to open with an explicitly marked **legacy score-only validation**. This consistency check is NOT a signature and cannot prove that adversarially rewritten captures are authentic. Data loss, counter rollback and unsupported input are not quietly turned into zero.
+
+**Workbench:** Adds a process-topology tab displaying parent PID hints, thread counts and same-time evidence, plus counts of source-rate vectors successfully validated from exact counters. Replay now preserves the baseline creation identity as recorded even when score is unavailable.
+
+**Windows commands:**
+
+    .\AuraXRay.exe --self-test
+    .\AuraXRay.exe --replay capture-xr02.jsonl --report legacy-replay.html
+    .\AuraXRay.exe --replay capture-xr03.jsonl --report legacy-xr03.html
+    .\AuraXRay.exe --capture --seconds 10 --out xr04-actual.jsonl --report xr04-actual.html
+    .\AuraXRay.exe --compare capture-xr03.jsonl xr04-actual.jsonl --report xr04-compared.html
+
+Output paths must not exist; no overwrites. Names are redacted by default.
+
+**Limits:** No ETW, kernel service, verified process ancestry, device-specific disk throughput, automatic remediation, root-cause proof, native Lumina shell/GUI or formal backend proof. The Windows boundary and data ingestion remain in C; nine domain functions are genuinely Aura-compiled.
