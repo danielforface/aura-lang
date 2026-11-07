@@ -15,12 +15,21 @@
 //! This is standalone simulation, not QIR/Aura syntax or a QPU job.
 use crate::circuit::{Instruction, ShotRecord, TraceEntry, TraceKind};
 use crate::{Complex, Gate, SeededRng, SimError, Statevector, ENGINE_VERSION, NORM_TOLERANCE};
+use std::collections::BTreeMap;
 use std::mem::size_of;
 
 pub const MAX_FACTOR_QUBITS: usize = 10;
 pub const MAX_FACTOR_GLOBAL_QUBITS: usize = 128;
 pub const MAX_FACTOR_INSTRUCTIONS: usize = 512;
 pub const MAX_FACTOR_SHOTS: usize = 1024;
+/// The trace-less measurement counts API is separate from the 1024-shot
+/// detailed-records API, with a conservative finite global CPU work cap.
+pub const MAX_FACTOR_COUNT_SHOTS:usize=65_536;
+pub const MAX_FACTOR_COUNT_BINS:usize=4_096;
+pub const MAX_FACTOR_COUNT_WORK_UNITS:usize=268_435_456;
+/// Only a logical accounting allowance, not a guarantee of allocator RSS.
+pub const FACTOR_COUNT_BIN_LOGICAL_OVERHEAD:usize=128;
+pub const FACTORIZED_COUNTS_RESULT_SCHEMA:&str="aura.quantum.factorized-counts-result/1";
 pub const MAX_FACTOR_WORK_UNITS: usize = 128 * 1024 * 1024;
 pub const FACTORIZED_PROFILE: &str = "local-disconnected-factor-statevector-f64-untruncated/1";
 pub const FACTORIZED_RESULT_SCHEMA: &str = "aura.quantum.factorized-result/1";
@@ -35,6 +44,7 @@ pub enum FactorError {
     TooManyInstructions,
     ZeroShots,
     TooManyShots,
+    HistogramBinLimit { max_bins:usize },
     TooManyClassicalBits,
     InvalidClassicalBit { bit: usize, bits: usize },
     ReadBeforeWrite { bit: usize, instruction: usize },
@@ -473,6 +483,26 @@ pub struct FactorBatch {
     /// Sum of real CX/CZ calls provably executed without factor joins.
     pub product_preserving_two_wire_gates:usize,
 }
+/// Aggregated scientific CPU sampling result; unlike FactorBatch it stores
+/// no per-shot trace, register or final state. Sample ordering still consumes
+/// one global deterministic SeededRng across all shots.
+#[derive(Debug,Clone)]
+pub struct FactorCounts {
+    pub metadata:FactorMetadata,
+    /// Histogram keys are reverse-register order with '?' for never-written
+    /// bits, identical to the detailed factorized JSON v1 convention.
+    pub histogram:BTreeMap<String,usize>,
+    pub max_histogram_bins:usize,
+    /// Logical accounting charge for the distinct histogram entries,
+    /// separate from peak temporary quantum state bytes and allocator RSS.
+    pub logical_histogram_reserved_bytes:usize,
+    pub peak_logical_state_bytes:usize,
+    pub projective_wire_splits:usize,
+    pub projective_split_deferred:usize,
+    pub product_preserving_two_wire_gates:usize,
+    /// Always zero; this API does not retain records or traces.
+    pub retained_shot_records:usize,
+}
 #[derive(Debug,Clone)]
 pub struct FactorCircuit {
     qubits:usize,
@@ -551,6 +581,49 @@ impl FactorCircuit {
         }
         Ok((traces,budget-output))
     }
+    /// Shared execution kernel for detailed shots and bounded histogram
+    /// sampling. Suppressing trace creation NEVER changes RNG draws,
+    /// measurement collapse, reset behavior or classical feed-forward.
+    fn run_one(
+        &self, rng:&mut SeededRng, state_budget:usize,
+        with_trace:bool, trace_cap:usize,
+    )->Result<(FactorState,Vec<Option<bool>>,Vec<TraceEntry>),FactorError> {
+        let mut state=FactorState::zero(self.qubits,state_budget)?;
+        let mut bits=vec![None;self.classical_bits];
+        let mut trace=Vec::new();
+        if with_trace {
+            trace.try_reserve_exact(trace_cap)
+                .map_err(|_|FactorError::AllocationFailed)?;
+        }
+        for (instruction,op) in self.instructions.iter().enumerate(){
+            match op {
+                Instruction::Gate(g)=>state.apply(g.clone())?,
+                Instruction::Measure{qubit,into_bit}=>{
+                    let value=state.measure(*qubit,rng)?;
+                    bits[*into_bit]=Some(value);
+                    if with_trace {
+                        trace.push(TraceEntry{instruction,qubit:*qubit,
+                            kind:TraceKind::Measure{into_bit:*into_bit,value}});
+                    }
+                }
+                Instruction::Reset{qubit}=>{
+                    let previous_value=state.measure(*qubit,rng)?;
+                    if previous_value {state.apply(Gate::X(*qubit))?;}
+                    if with_trace {
+                        trace.push(TraceEntry{instruction,qubit:*qubit,
+                            kind:TraceKind::Reset{previous_value}});
+                    }
+                }
+                Instruction::If{bit,equals,gate}=>{
+                    let value=bits[*bit].ok_or(FactorError::ReadBeforeWrite{
+                        bit:*bit,instruction,
+                    })?;
+                    if value==*equals {state.apply(gate.clone())?;}
+                }
+            }
+        }
+        Ok((state,bits,trace))
+    }
     pub fn execute_shots(&self,shots:usize,seed:u64,budget:usize)
         ->Result<FactorBatch,FactorError>
     {
@@ -565,34 +638,8 @@ impl FactorCircuit {
         let mut total_deferred=0usize;
         let mut total_product_gates=0usize;
         for _ in 0..shots {
-            let mut state=FactorState::zero(self.qubits,state_budget)?;
-            let mut bits=vec![None;self.classical_bits];
-            let mut trace=Vec::new();
-            trace.try_reserve_exact(trace_cap)
-                .map_err(|_|FactorError::AllocationFailed)?;
-            for (instruction,op) in self.instructions.iter().enumerate(){
-                match op {
-                    Instruction::Gate(g)=>state.apply(g.clone())?,
-                    Instruction::Measure{qubit,into_bit}=>{
-                        let value=state.measure(*qubit,&mut rng)?;
-                        bits[*into_bit]=Some(value);
-                        trace.push(TraceEntry{instruction,qubit:*qubit,
-                            kind:TraceKind::Measure{into_bit:*into_bit,value}});
-                    }
-                    Instruction::Reset{qubit}=>{
-                        let previous_value=state.measure(*qubit,&mut rng)?;
-                        if previous_value {state.apply(Gate::X(*qubit))?;}
-                        trace.push(TraceEntry{instruction,qubit:*qubit,
-                            kind:TraceKind::Reset{previous_value}});
-                    }
-                    Instruction::If{bit,equals,gate}=>{
-                        let value=bits[*bit].ok_or(FactorError::ReadBeforeWrite{
-                            bit:*bit,instruction,
-                        })?;
-                        if value==*equals {state.apply(gate.clone())?;}
-                    }
-                }
-            }
+            let (state,bits,trace)=
+                self.run_one(&mut rng,state_budget,true,trace_cap)?;
             peak=peak.max(state.peak_logical_bytes());
             total_splits=total_splits.checked_add(state.projective_wire_splits())
                 .ok_or(FactorError::ArithmeticOverflow)?;
@@ -612,6 +659,92 @@ impl FactorCircuit {
             projective_wire_splits:total_splits,
             projective_split_deferred:total_deferred,
             product_preserving_two_wire_gates:total_product_gates,
+        })
+    }
+    /// Up to 65,536 seeded observations, without storing shot records.
+    ///
+    /// Admission includes strict instruction/branch validation even if an
+    /// If condition will never be taken. CPU work is conservatively charged
+    /// at a 2^10 local state dimension for *each* operation and shot.
+    /// A bounded histogram grows only after each completed shot, with its
+    /// logical memory charge removed from the next shot's state budget.
+    /// A failed run returns Err; no partial histogram is ever published.
+    pub fn execute_counts(
+        &self,shots:usize,seed:u64,budget:usize,
+    )->Result<FactorCounts,FactorError> {
+        if shots==0 {return Err(FactorError::ZeroShots);}
+        if shots>MAX_FACTOR_COUNT_SHOTS {return Err(FactorError::TooManyShots);}
+        let work=shots.checked_mul(self.instructions.len().max(1))
+            .and_then(|v|v.checked_mul(1usize<<MAX_FACTOR_QUBITS))
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if work>MAX_FACTOR_COUNT_WORK_UNITS {return Err(FactorError::WorkLimit);}
+        // Reuse all existing graph, resource, branch, and read-before-write
+        // preflight (including unreachable conditional gates). One-shot
+        // detailed output is a conservative fixed preflight allowance only.
+        self.preflight(1,budget)?;
+        let min_state=self.qubits.checked_mul(2*size_of::<Complex>())
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let bytes_per_bin=self.classical_bits
+            .checked_add(FACTOR_COUNT_BIN_LOGICAL_OVERHEAD)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+
+        let mut rng=SeededRng::new(seed);
+        let mut histogram=BTreeMap::<String,usize>::new();
+        let mut hist_charge=0usize;
+        let mut peak=0usize;
+        let mut splits=0usize;
+        let mut deferred=0usize;
+        let mut product_gates=0usize;
+        for _ in 0..shots {
+            // The histogram survives; no prior shot's quantum state or
+            // trace does. Existing factor joins enforce this state budget.
+            let state_budget=budget.checked_sub(hist_charge)
+                .ok_or(FactorError::ArithmeticOverflow)?;
+            let (state,bits,_)=self.run_one(&mut rng,state_budget,false,0)?;
+            peak=peak.max(state.peak_logical_bytes());
+            splits=splits.checked_add(state.projective_wire_splits())
+                .ok_or(FactorError::ArithmeticOverflow)?;
+            deferred=deferred.checked_add(state.projective_split_deferred())
+                .ok_or(FactorError::ArithmeticOverflow)?;
+            product_gates=product_gates
+                .checked_add(state.product_preserving_two_wire_gates())
+                .ok_or(FactorError::ArithmeticOverflow)?;
+            // Release temporary old quantum factor before adding a new
+            // histogram entry, so peak counts are not double-counted.
+            drop(state);
+            let key:String=bits.iter().rev().map(|bit|match bit {
+                Some(true)=>'1',Some(false)=>'0',None=>'?'
+            }).collect();
+            if !histogram.contains_key(&key) {
+                if histogram.len()>=MAX_FACTOR_COUNT_BINS {
+                    return Err(FactorError::HistogramBinLimit{
+                        max_bins:MAX_FACTOR_COUNT_BINS,
+                    });
+                }
+                let charge=hist_charge.checked_add(bytes_per_bin)
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                let required=charge.checked_add(min_state)
+                    .ok_or(FactorError::ArithmeticOverflow)?;
+                if required>budget {
+                    return Err(FactorError::BudgetExceeded{
+                        required_bytes:required,budget_bytes:budget,
+                    });
+                }
+                hist_charge=charge;
+            }
+            let entry=histogram.entry(key).or_insert(0);
+            *entry=entry.checked_add(1).ok_or(FactorError::ArithmeticOverflow)?;
+        }
+        let mut metadata=FactorMetadata::new(seed,shots);
+        metadata.schema=FACTORIZED_COUNTS_RESULT_SCHEMA;
+        Ok(FactorCounts{
+            metadata,histogram,max_histogram_bins:MAX_FACTOR_COUNT_BINS,
+            logical_histogram_reserved_bytes:hist_charge,
+            peak_logical_state_bytes:peak,
+            projective_wire_splits:splits,
+            projective_split_deferred:deferred,
+            product_preserving_two_wire_gates:product_gates,
+            retained_shot_records:0,
         })
     }
 }
