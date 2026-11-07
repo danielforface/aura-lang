@@ -56,6 +56,103 @@ pub(crate) fn submit_state(node:&UiNode)->SubmitState<'_>{
     }
 }
 
+/// A cancellation is only a callback request to the host, never a network
+/// abort performed by Lumina. The host supplies a strictly increasing request
+/// revision on the one busy submitter in the named form.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) enum CancelDecision {
+    Dispatch { form:String, revision:u64 },
+    Reject,
+}
+#[derive(Default)]
+pub(crate) struct CancelPlan {
+    pub(crate) decisions:HashMap<u64,CancelDecision>,
+    pub(crate) blocked:HashSet<u64>,
+    /// A host request was already sent for the current (or older) epoch.
+    pub(crate) requested:HashSet<u64>,
+}
+fn request_revision(node:&UiNode)->Option<u64>{
+    let raw=prop(node,"form_request_revision")?;
+    if raw.is_empty() || raw.len()>20 || !raw.bytes().all(|c|c.is_ascii_digit()){
+        return None;
+    }
+    let value=raw.parse::<u64>().ok().filter(|v|*v>0)?;
+    (value.to_string()==raw).then_some(value)
+}
+/// Single-pass read-only form cancel resolver. If a cancel callback collides
+/// with any visible Button callback, block ALL uses of that identity. An
+/// earlier cancel for the same or newer request revision must never repeat.
+/// Retaining the maximum seen revision also prevents ABA after ready/error.
+pub(crate) fn cancel_plan(root:&UiNode,plan:&LayoutNode,
+    last_cancelled:&HashMap<String,u64>)->CancelPlan {
+    #[derive(Clone)]
+    struct Submit {revision:Option<u64>}
+    let mut submitters:HashMap<String,Vec<Submit>>=HashMap::new();
+    let mut callbacks:HashMap<u64,usize>=HashMap::new();
+    let mut cancellers:Vec<(Option<u64>,Option<String>,bool)>=Vec::new();
+    fn scan(node:&UiNode,plan:&LayoutNode,
+        submits:&mut HashMap<String,Vec<Submit>>,
+        callbacks:&mut HashMap<u64,usize>,
+        cancels:&mut Vec<(Option<u64>,Option<String>,bool)>){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="Button"{
+            let id=callback(node,"on_click");
+            if let Some(id)=id{*callbacks.entry(id).or_default()+=1;}
+            if let Some(form)=prop(node,"form_submit"){
+                let revision=(matches!(submit_state(node),SubmitState::Busy)
+                    && prop(node,"disabled")!=Some("true")
+                    && matches!(prop(node,"control"),None|Some("button")))
+                    .then(||request_revision(node)).flatten();
+                submits.entry(form.to_owned()).or_default().push(Submit{revision});
+            }
+            if let Some(form)=prop(node,"form_cancel"){
+                let valid=valid_name(form)
+                    && prop(node,"form_submit").is_none()
+                    && prop(node,"form_status").is_none()
+                    && prop(node,"form_error").is_none()
+                    && prop(node,"form_request_revision").is_none()
+                    && matches!(prop(node,"control"),None|Some("button"))
+                    && prop(node,"disabled")!=Some("true");
+                cancels.push((id,Some(form.to_owned()),valid));
+            }
+        }
+        for (child,prepared) in node.children.iter().zip(&plan.children){
+            if let Some(prepared)=prepared{
+                scan(child,prepared,submits,callbacks,cancels);
+            }
+        }
+    }
+    scan(root,plan,&mut submitters,&mut callbacks,&mut cancellers);
+    let mut result=CancelPlan::default();
+    for (id,form,valid) in cancellers {
+        let Some(id)=id else{continue;};
+        let mut requested=false;
+        let selected=form.as_deref()
+            .filter(|f|valid && callbacks.get(&id)==Some(&1))
+            .and_then(|f|{
+                let items=submitters.get(f)?;
+                if items.len()!=1{return None;}
+                let revision=items[0].revision?;
+                if last_cancelled.get(f).is_some_and(|previous|revision<=*previous){
+                    requested=true;
+                    return None;
+                }
+                if last_cancelled.len()>=32 && !last_cancelled.contains_key(f){
+                    return None;
+                }
+                Some(CancelDecision::Dispatch{
+                    form:f.to_owned(),revision,
+                })
+            }).unwrap_or(CancelDecision::Reject);
+        if selected==CancelDecision::Reject{
+            result.blocked.insert(id);
+        }
+        if requested{result.requested.insert(id);}
+        result.decisions.insert(id,selected);
+    }
+    result
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(crate) enum SubmitAction {
     Normal,
@@ -299,6 +396,121 @@ mod tests{
             HitTarget::TextInput{on_change,..}=>Some(on_change),
             _=>None,
         }).collect()
+    }
+    #[test]
+    fn form_cancel_emits_once_per_host_generation_and_never_replays_stale_epoch(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("form_submit","signup"),
+                ("form_status","busy"),("form_request_revision","14"),
+                ("on_click","cb:100")],vec![]),
+            n("Button",&[("x","20"),("y","90"),("form_cancel","signup"),
+                ("on_click","cb:101")],vec![]),
+        ]);
+        let p=plan(&root);
+        let mut history=HashMap::new();
+        let initial=cancel_plan(&root,&p,&history);
+        assert_eq!(initial.decisions.get(&101),Some(&CancelDecision::Dispatch{
+            form:"signup".to_string(),revision:14,
+        }));
+        assert!(initial.blocked.is_empty());
+        // A real click is the only writer of this state. Validation is pure.
+        assert!(history.is_empty());
+        history.insert("signup".to_string(),14);
+        let repeating=cancel_plan(&root,&p,&history);
+        assert!(repeating.blocked.contains(&101));
+        assert!(repeating.requested.contains(&101));
+        assert_eq!(repeating.decisions.get(&101),Some(&CancelDecision::Reject));
+        root.children[0].set_prop("form_status","ready");
+        let ready=cancel_plan(&root,&p,&history);
+        assert!(ready.blocked.contains(&101),"cancel cannot target a completed request");
+        assert!(ready.requested.is_empty(),"ready is completed, not awaiting cancellation");
+        root.children[0].set_prop("form_status","busy");
+        let aba=cancel_plan(&root,&p,&history);
+        assert!(aba.blocked.contains(&101),"host may not recycle a cancelled revision");
+        root.children[0].set_prop("form_request_revision","15");
+        assert_eq!(cancel_plan(&root,&p,&history).decisions.get(&101),
+            Some(&CancelDecision::Dispatch{form:"signup".to_string(),revision:15}));
+    }
+    #[test]
+    fn cancellation_rejects_unknown_form_status_revision_and_callback_alias(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("form_submit","signup"),
+                ("form_status","busy"),("form_request_revision","1"),
+                ("on_click","cb:100")],vec![]),
+            n("Button",&[("x","20"),("y","90"),("form_cancel","signup"),
+                ("on_click","cb:101")],vec![]),
+            n("Button",&[("x","20"),("y","160"),("on_click","cb:102")],vec![]),
+        ]);
+        let p=plan(&root);
+        for bad in ["0","01","-1","1.0","999999999999999999999999"]{
+            root.children[0].set_prop("form_request_revision",bad);
+            assert!(cancel_plan(&root,&p,&HashMap::new()).blocked.contains(&101),
+                "bad request generation must fail closed: {bad}");
+        }
+        root.children[0].set_prop("form_request_revision","2");
+        root.children[1].set_prop("on_click","cb:102");
+        let collision=cancel_plan(&root,&p,&HashMap::new());
+        assert!(collision.blocked.contains(&102),
+            "shared cancel and ordinary Button identity is ambiguous");
+        root.children[1].set_prop("on_click","cb:101");
+        root.children[1].set_prop("form_cancel"," other");
+        assert!(cancel_plan(&root,&p,&HashMap::new()).blocked.contains(&101));
+        root.children[1].set_prop("form_cancel","signup");
+        root.children[1].set_prop("form_submit","signup");
+        assert!(cancel_plan(&root,&p,&HashMap::new()).blocked.contains(&101),
+            "a single Button cannot be both submitter and canceller");
+    }
+    #[test]
+    fn cancellation_rejects_multiple_submitters_and_foreign_busy_forms(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("form_submit","one"),
+                ("form_status","busy"),("form_request_revision","2"),
+                ("on_click","cb:10")],vec![]),
+            n("Button",&[("x","20"),("y","90"),("form_submit","two"),
+                ("form_status","busy"),("form_request_revision","3"),
+                ("on_click","cb:20")],vec![]),
+            n("Button",&[("x","20"),("y","160"),("form_cancel","one"),
+                ("on_click","cb:11")],vec![]),
+            n("Button",&[("x","20"),("y","230"),("form_cancel","two"),
+                ("on_click","cb:21")],vec![]),
+        ]);
+        let p=plan(&root);
+        let good=cancel_plan(&root,&p,&HashMap::new());
+        assert!(!good.blocked.contains(&11));
+        assert!(!good.blocked.contains(&21));
+        root.children[0].set_prop("form_status","error");
+        root.children[0].set_prop("form_error","Request finished");
+        let separate=cancel_plan(&root,&p,&HashMap::new());
+        assert!(separate.blocked.contains(&11));
+        assert!(!separate.blocked.contains(&21));
+        root.children.push(n("Button",&[("x","300"),("y","20"),
+            ("form_submit","two"),("form_status","busy"),
+            ("form_request_revision","3"),("on_click","cb:22")],vec![]));
+        let p=plan(&root);
+        let double=cancel_plan(&root,&p,&HashMap::new());
+        assert!(double.blocked.contains(&21),
+            "two submitters for same form are unresolvable request identities");
+    }
+    #[test]
+    fn cancellation_history_has_bounded_memory_and_does_not_mutate_ui_tree(){
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("form_submit","signup"),
+                ("form_status","busy"),("form_request_revision","9"),
+                ("on_click","cb:90")],vec![]),
+            n("Button",&[("x","20"),("y","90"),("form_cancel","signup"),
+                ("on_click","cb:91")],vec![]),
+        ]);
+        let before=root.clone();
+        let p=plan(&root);
+        let mut history:HashMap<String,u64>=(0..32).map(|i|
+            (format!("older-{i}"),1)).collect();
+        let rejected=cancel_plan(&root,&p,&history);
+        assert!(rejected.blocked.contains(&91));
+        history.insert("signup".to_string(),2);
+        assert!(!cancel_plan(&root,&p,&history).blocked.contains(&91),
+            "an existing tracked form may advance even when cache is otherwise full");
+        assert_eq!(root.children[0].props,before.children[0].props);
+        assert_eq!(root.children[1].props,before.children[1].props);
     }
     #[test]
     fn controlled_form_status_is_atomic_bounded_and_safe_to_retry(){

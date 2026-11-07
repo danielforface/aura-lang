@@ -498,3 +498,99 @@ fn native_x11_required_radio_then_form_busy_failure_and_retry_keyboard(){
         "independent Button remains keyboard-accessible after form recovery");
     eprintln!("LUMINA_FORM_ASYNC_KEYBOARD_X11 required_group_gates=true first_invalid_radio_focus=true host_checked_authority=true busy_revokes_focus=true failure_no_auto_retry=true explicit_retry=true bidi_error_fail_closed=true repair_no_focus_steal=true unrelated_button=true");
 }
+
+
+/// XTest keyboard-only cancel request: the cancel button gets focus only when
+/// the host reports one busy submission with a fresh canonical revision.
+#[test]
+fn native_x11_cancel_request_tab_enter_once_bounded_generations_and_focus(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","235"),("height","48"),
+            ("form_submit","signup"),("form_status","busy"),
+            ("form_request_revision","12"),("on_click","cb:100")],vec![]),
+        node("Button",&[("x","20"),("y","90"),("width","235"),("height","48"),
+            ("form_cancel","signup"),("on_click","cb:200"),
+            ("label","Cancel")],vec![]),
+        node("Button",&[("x","20"),("y","170"),("width","235"),("height","48"),
+            ("on_click","cb:300"),("label","Independent")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,380));
+    frames(&plugin,&root,&mut ctx,3);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("native X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![200],
+        "Tab skips busy Submit and activates cancel control");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "same cancellation cannot be reissued while key remains focused");
+    assert!(button_key(&plugin,&root,&mut ctx,"space").is_empty(),
+        "a second activation method cannot replay the same host generation");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300],
+        "from revoked focus Tab skips blocked cancel and visits next Button");
+    root.children[0].set_prop("form_status","ready");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "ready form without any fields cannot submit; cancel stays ineligible");
+    root.children[0].set_prop("form_status","busy");
+    root.children[0].set_prop("form_request_revision","13");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![200],
+        "higher host request generation grants a new cancellation");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
+    root.children[0].set_prop("form_request_revision","012");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300],
+        "malformed revision removes cancel from keyboard focus order");
+    eprintln!("LUMINA_CANCEL_KEYBOARD_X11 busy_skip_submit=true tab_cancel=true once_per_revision=true enter_space_no_replay=true revokes_stale_focus=true ordinary_button=true ready_blocks_cancel=true new_host_revision_rearms=true noncanonical_generation_fail_closed=true");
+}
+
+
+/// Cancellation is a host request, NOT a local edit-session reset. Real X11
+/// typing and Ctrl+Z must still operate on exactly the retained local draft.
+#[test]
+fn native_x11_form_cancel_preserves_edit_session_and_undo_history(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let root=node("App",&[("bg","#101820")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","220"),("height","48"),
+            ("on_change","cb:401"),("form","signup"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","95"),("width","220"),("height","50"),
+            ("form_submit","signup"),("form_status","busy"),
+            ("form_request_revision","1"),("on_click","cb:100")],vec![]),
+        node("Button",&[("x","20"),("y","170"),("width","220"),("height","50"),
+            ("form_cancel","signup"),("on_click","cb:200")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,350));
+    frames(&plugin,&root,&mut ctx,3);
+    let id=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=id.lines().next().expect("Native X11 editor");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"x",false),401,"Ax"),
+        "native first local edit must emit a full committed draft");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![200]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
+    // Cancel focus is revoked; the next Tab reacquires TextInput (not busy
+    // Submit and not the already requested cancel).
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"y",false),401,"Axy"),
+        "cancel must not revert or overwrite the retained EditSession");
+    xdo(&["keydown","Control_L"]);
+    button_frames(&plugin,&root,&mut ctx,3);
+    let undone=press(&plugin,&root,&mut ctx,"z",false);
+    xdo(&["keyup","Control_L"]);
+    button_frames(&plugin,&root,&mut ctx,3);
+    assert!(has(&undone,401,"Ax"),
+        "Ctrl+Z after cancel must undo only the latest local text edit, not reset session: {undone:?}");
+    eprintln!("LUMINA_CANCEL_EDITOR_X11 cancel_callback_once=true draft_persisted_after_focus_revoke=true undo_history_retained=true busy_submit_skipped=true");
+}

@@ -396,3 +396,69 @@ fn real_x11_required_radio_form_busy_error_retry_and_native_pixels(){
         "valid authoritative ready after failed request restores Submit");
     eprintln!("LUMINA_RADIO_ASYNC_FORM_X11 group_required_blocks=true radio_error_pixel=true host_selected_authority=true busy_no_double_send=true underlay_block=true remote_error_visual=true explicit_retry_only=true malformed_error_fail_closed=true independent_button=true");
 }
+
+
+/// Genuine XTest: a cancel button is actionable only for a *live* host
+/// submission generation and cannot duplicate cancellation or click through.
+/// The callback requests cancellation; Lumina does NOT cancel a network task.
+#[test]
+fn real_x11_form_cancel_once_per_busy_generation_underlay_and_host_recovery(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","230"),("height","50"),
+            ("form_submit","signup"),("form_status","busy"),
+            ("form_request_revision","7"),
+            ("on_click","cb:100"),("label","Submit")],vec![]),
+        node("Button",&[("x","20"),("y","110"),("width","235"),("height","55"),
+            ("on_click","cb:999"),("label","Underlay")],vec![]),
+        node("Button",&[("x","30"),("y","115"),("width","210"),("height","45"),
+            ("form_cancel","signup"),("on_click","cb:200"),
+            ("label","Cancel request")],vec![]),
+        node("Button",&[("x","330"),("y","115"),("width","180"),("height","50"),
+            ("on_click","cb:300"),("label","Independent")],vec![]),
+    ]);
+    for _ in 0..5{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,380));
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let wins=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=wins.lines().next().expect("actual Native X11 form window");
+    // Submit itself is disabled by host busy, before cancel.
+    assert!(click(&plugin,&tree,&mut ctx,id,85,45).is_empty());
+    let available_pixel=plugin.diagnostic_capture_pixel(31.0,135.0)
+        .expect("cancel native border pixel");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,80,135),vec![200],
+        "first physical click requests cancellation exactly once");
+    let requested_pixel=plugin.diagnostic_capture_pixel(31.0,135.0).unwrap();
+    assert!(available_pixel.r>requested_pixel.r.saturating_add(35),
+        "cancel button should visually disable while host request pending: {available_pixel:?} -> {requested_pixel:?}");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty(),
+        "a second click for unchanged host revision must be blocked");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,365,140),vec![300],
+        "an unrelated Button remains live during cancellation");
+
+    tree.children[0].set_prop("form_status","ready");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty(),
+        "cancel after host completion is not a valid request");
+    tree.children[0].set_prop("form_status","busy");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty(),
+        "ABA: reused previously cancelled revision must not unlock cancel");
+    tree.children[0].set_prop("form_request_revision","8");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,80,135),vec![200],
+        "new strictly greater busy generation allows one new request");
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty());
+    tree.children[0].set_prop("form_request_revision","08");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty(),
+        "noncanonical request revision is invalid");
+    tree.children[0].set_prop("form_request_revision","9");
+    tree.children[2].set_prop("form_cancel","foreign");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,80,135).is_empty(),
+        "a cancel control cannot target a different form");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,365,140),vec![300]);
+    eprintln!("LUMINA_CANCEL_MOUSE_X11 busy_submit_blocked=true single_cancel_per_generation=true cancel_disabled_pixel=true no_underlay_leak=true unrelated_button=true ready_blocks=true aba_revision_guard=true higher_revision_rearms=true malformed_revision_blocks=true foreign_form_blocks=true");
+}

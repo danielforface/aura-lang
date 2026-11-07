@@ -337,6 +337,9 @@ struct LuminaWindow {
     /// Forms whose last native submit attempt failed. Field errors are
     /// always recomputed against current authoritative EditSession drafts.
     attempted_forms: std::collections::HashSet<String>,
+    /// Monotonic host request generations for which the native user already
+    /// emitted a cancellation request. Bounded, never cleared by a re-render.
+    cancelled_requests: HashMap<String,u64>,
     /// First eligible, explicitly opted TextInput can get initial focus only
     /// once per window; later user blur/Tab/click must never be overridden.
     autofocus_decided: bool,
@@ -1330,6 +1333,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     focused_input: None,
                     focused_button: None,
                     attempted_forms: std::collections::HashSet::new(),
+                    cancelled_requests: HashMap::new(),
                     autofocus_decided: false,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
@@ -1458,13 +1462,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 0.0, 0.0, viewport.width, viewport.height,
             ));
             let invalid_radio_groups=layout::invalid_radio_groups(tree,&planned_layout);
+            let cancel_pre=forms::cancel_plan(tree,&planned_layout,&win.cancelled_requests);
             let mut focus_order = layout::focus_order(tree, &planned_layout);
             let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
             focus_order.retain(|entry|match entry {
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
             });
-            let keyboard_order=layout::keyboard_focus_order(tree,&planned_layout,&focus_order);
+            let keyboard_order=layout::keyboard_focus_order_with_blocked(
+                tree,&planned_layout,&focus_order,&cancel_pre.blocked);
             reconcile_input_sessions(win,&focus_order,&revisions);
             // No callback from a removed, clipped, disabled or ambiguous button.
             if win.focused_button.is_some_and(|id|!keyboard_order.iter()
@@ -1495,7 +1501,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let composing_before_pointer=win.focused_input.as_ref()
                 .is_some_and(|fi|fi.session.composing());
             let click_cb = if clicked && !candidate_click_consumed {
-                match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
+                match layout::hit_test_with_blocked(tree, &planned_layout,
+                    mouse.x, mouse.y,&cancel_pre.blocked) {
                     Some(layout::HitTarget::Button(id)) => {
                         switch_input(win,None);
                         win.focused_button=keyboard_order.iter().find_map(|candidate|match candidate {
@@ -1944,6 +1951,26 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 && win.focused_input.is_none(){win.focused_button}else{None};
             let mut validated_click=click_cb.or(radio_action).or(keyboard_click);
             if let Some(id)=validated_click{
+                if let Some(decision)=cancel_pre.decisions.get(&id){
+                    match decision {
+                        forms::CancelDecision::Dispatch{form,revision}=>{
+                            if win.cancelled_requests.len()<32 ||
+                                win.cancelled_requests.contains_key(form){
+                                win.cancelled_requests.insert(form.clone(),*revision);
+                                // The old focus identity cannot be used to
+                                // reissue the same cancel on held Enter/Space.
+                                win.focused_button=None;
+                            }else{
+                                validated_click=None;
+                                win.focused_button=None;
+                            }
+                        },
+                        forms::CancelDecision::Reject=>{
+                            validated_click=None;
+                            win.focused_button=None;
+                        },
+                    }
+                }else{
                 match forms::submit_action(tree,&planned_layout,id){
                     forms::SubmitAction::Normal=>{},
                     forms::SubmitAction::Reject=>validated_click=None,
@@ -1982,7 +2009,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                     }
                 }
+                }
             }
+            let cancel_draw=forms::cancel_plan(tree,&planned_layout,
+                &win.cancelled_requests);
             let mut form_errors=forms::RenderErrors::default();
             let attempted:Vec<_>=win.attempted_forms.iter().cloned().collect();
             for form in attempted{
@@ -2009,7 +2039,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, win.focused_button,
-                    &invalid_radio_groups, &form_errors, &win.textures,
+                    &invalid_radio_groups, &form_errors, &cancel_draw, &win.textures,
                     &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
@@ -2201,6 +2231,7 @@ fn render_children(
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2210,8 +2241,8 @@ fn render_children(
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
             render_node(d, child, prepared, now, sdf, click_anim, focused_input,
-                focused_button, invalid_radio_groups, form_errors, textures,
-                input_sessions, text_views, fonts, shaped);
+                focused_button, invalid_radio_groups, form_errors, cancel_plan,
+                textures, input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2228,6 +2259,7 @@ fn render_node(
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2241,7 +2273,7 @@ fn render_node(
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
             focused_input, focused_button, invalid_radio_groups,
-            form_errors, textures, input_sessions, text_views, fonts, shaped, false);
+            form_errors, cancel_plan, textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2250,12 +2282,12 @@ fn render_node(
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
                 focused_input,focused_button,invalid_radio_groups,form_errors,
-                textures,input_sessions,text_views,fonts,shaped,true);
+                cancel_plan,textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
     render_children(d, node, layout, now, sdf, click_anim, focused_input,
-        focused_button, invalid_radio_groups, form_errors, textures,
-        input_sessions, text_views, fonts, shaped);
+        focused_button, invalid_radio_groups, form_errors, cancel_plan,
+        textures, input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2270,6 +2302,7 @@ fn paint_node<D: RaylibDraw>(
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2554,7 +2587,12 @@ fn paint_node<D: RaylibDraw>(
             let rect = bounds;
             let control = layout::button_control(node);
             let submit_state=forms::submit_state(node);
-            let disabled = prop_string(node, "disabled") == Some("true")
+            let cancel_cb=parse_callback_id(prop_string(node,"on_click"));
+            let cancel_blocked=cancel_cb
+                .is_some_and(|id|cancel_plan.blocked.contains(&id))
+                || (prop_string(node,"form_cancel").is_some() && cancel_cb.is_none());
+            let disabled = cancel_blocked ||
+                prop_string(node, "disabled") == Some("true")
                 || control == layout::ButtonControl::Invalid
                 || !submit_state.actionable()
                 || (matches!(control,layout::ButtonControl::Radio(_))
@@ -2697,10 +2735,14 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
-            let label=if matches!(submit_state,forms::SubmitState::Busy){
+            let label=if cancel_cb.is_some_and(|id|cancel_plan.requested.contains(&id)){
+                "Cancel requested"
+            }else if matches!(submit_state,forms::SubmitState::Busy){
                 "Submitting..."
             }else if matches!(submit_state,forms::SubmitState::Invalid){
                 "Invalid form state"
+            }else if prop_string(node,"form_cancel").is_some() && cancel_blocked{
+                "Cancel unavailable"
             }else{prop_string(node,"label").unwrap_or("Button")};
             let ts = 20;
             // Simple centering with a rough width estimate.

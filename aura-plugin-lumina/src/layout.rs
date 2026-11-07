@@ -344,8 +344,17 @@ pub(crate) fn button_control(node:&UiNode)->ButtonControl {
     }
 }
 fn button_actionable(node:&UiNode)->bool {
+    let cancel_well_formed=prop(node,"form_cancel").is_none_or(|form|
+        crate::forms::valid_name(form)
+            && prop(node,"form_submit").is_none()
+            && prop(node,"form_status").is_none()
+            && prop(node,"form_error").is_none()
+            && prop(node,"form_request_revision").is_none()
+            && matches!(button_control(node),ButtonControl::Push)
+            && callback(node,"on_click").is_some());
     prop(node,"disabled")!=Some("true")
         && button_control(node)!=ButtonControl::Invalid
+        && cancel_well_formed
         && crate::forms::submit_state(node).actionable()
 }
 /// Conflicting selected options or callback IDs revoke the *entire* visible
@@ -406,11 +415,12 @@ enum PointerHit {
     Action(HitTarget),
 }
 fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32,
-    invalid:&std::collections::HashSet<String>) -> PointerHit {
+    invalid:&std::collections::HashSet<String>,
+    blocked:&std::collections::HashSet<u64>) -> PointerHit {
     if !layout.clip.contains(x, y) { return PointerHit::Miss; }
     for (child, planned) in node.children.iter().zip(layout.children.iter()).rev() {
         if let Some(planned) = planned {
-            match hit_test_inner(child, planned, x, y, invalid) {
+            match hit_test_inner(child, planned, x, y, invalid,blocked) {
                 PointerHit::Miss => {},
                 resolved => return resolved,
             }
@@ -418,7 +428,9 @@ fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32,
     }
     if !layout.bounds.contains(x, y) { return PointerHit::Miss; }
     match node.kind.as_str() {
-        "Button" if !button_actionable_in(node,invalid) => PointerHit::Blocked,
+        "Button" if !button_actionable_in(node,invalid)
+            || callback(node,"on_click").is_some_and(|id|blocked.contains(&id))
+            => PointerHit::Blocked,
         "Button" => callback(node, "on_click")
             .map(|id| PointerHit::Action(HitTarget::Button(id)))
             .unwrap_or(PointerHit::Miss),
@@ -437,8 +449,12 @@ fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32,
 /// Pure clip-aware, reversed-paint-order pointer resolution. The public
 /// result reports only trusted enabled targets; blocked clicks stay unhandled.
 pub(crate) fn hit_test(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Option<HitTarget> {
+    hit_test_with_blocked(node,layout,x,y,&std::collections::HashSet::new())
+}
+pub(crate) fn hit_test_with_blocked(node:&UiNode,layout:&LayoutNode,
+    x:f32,y:f32,blocked:&std::collections::HashSet<u64>)->Option<HitTarget>{
     let invalid=invalid_radio_groups(node,layout);
-    match hit_test_inner(node, layout, x, y, &invalid) {
+    match hit_test_inner(node, layout, x, y, &invalid,blocked) {
         PointerHit::Action(target) => Some(target),
         PointerHit::Blocked | PointerHit::Miss => None,
     }
@@ -521,6 +537,13 @@ fn focus_key(hit:&HitTarget)->FocusKey {
 pub(crate) fn keyboard_focus_order(
     root:&UiNode,plan:&LayoutNode,eligible_inputs:&[HitTarget]
 )->Vec<HitTarget>{
+    keyboard_focus_order_with_blocked(root,plan,eligible_inputs,
+        &std::collections::HashSet::new())
+}
+pub(crate) fn keyboard_focus_order_with_blocked(
+    root:&UiNode,plan:&LayoutNode,eligible_inputs:&[HitTarget],
+    blocked:&std::collections::HashSet<u64>
+)->Vec<HitTarget>{
     let valid_inputs:std::collections::HashSet<u64>=eligible_inputs.iter()
         .filter_map(|x|match x{
             HitTarget::TextInput{on_change,..}=>Some(*on_change),
@@ -528,13 +551,14 @@ pub(crate) fn keyboard_focus_order(
         }).collect();
     let invalid=invalid_radio_groups(root,plan);
     fn collect(node:&UiNode,plan:&LayoutNode,allowed:&std::collections::HashSet<u64>,
-        invalid:&std::collections::HashSet<String>,output:&mut Vec<HitTarget>){
+        invalid:&std::collections::HashSet<String>,
+        blocked:&std::collections::HashSet<u64>,output:&mut Vec<HitTarget>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if prop(node,"disabled")!=Some("true"){
             match node.kind.as_str(){
                 "Button" if button_actionable_in(node,invalid)=>{
                     if let Some(id)=callback(node,"on_click"){
-                        output.push(HitTarget::Button(id));
+                        if !blocked.contains(&id){output.push(HitTarget::Button(id));}
                     }
                 },
                 "TextInput"=>{
@@ -552,11 +576,11 @@ pub(crate) fn keyboard_focus_order(
             }
         }
         for (child,prepared) in node.children.iter().zip(&plan.children){
-            if let Some(prepared)=prepared{collect(child,prepared,allowed,invalid,output);}
+            if let Some(prepared)=prepared{collect(child,prepared,allowed,invalid,blocked,output);}
         }
     }
     let mut output=Vec::new();
-    collect(root,plan,&valid_inputs,&invalid,&mut output);
+    collect(root,plan,&valid_inputs,&invalid,blocked,&mut output);
     let mut multiplicity=std::collections::HashMap::<u64,usize>::new();
     for item in &output{
         if let HitTarget::Button(id)=item{
@@ -622,6 +646,52 @@ pub(crate) fn radio_arrow_target(root:&UiNode,plan:&LayoutNode,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_form_cancel_is_pointer_occluder_not_click_through(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","200"),
+                ("height","55"),("on_click","cb:10")],vec![]),
+            n("Button",&[("x","25"),("y","25"),("width","195"),
+                ("height","50"),("form_cancel"," bad"),("on_click","cb:20")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,400.0,250.0));
+        assert_eq!(hit_test(&root,&plan,65.0,45.0),None);
+        assert_eq!(keyboard_focus_order(&root,&plan,&[]),vec![HitTarget::Button(10)]);
+        root.children[1].set_prop("form_cancel","form");
+        root.children[1].set_prop("on_click","not-callback");
+        assert_eq!(hit_test(&root,&plan,65.0,45.0),None);
+        root.children[1].set_prop("on_click","cb:20");
+        root.children[1].set_prop("form_status","busy");
+        assert_eq!(hit_test(&root,&plan,65.0,45.0),None);
+        root.children[1].props.retain(|(key,_)|key!="form_status");
+        assert_eq!(hit_test(&root,&plan,65.0,45.0),Some(HitTarget::Button(20)));
+    }
+
+    #[test]
+    fn cancelled_form_button_is_blocked_for_pointer_underlay_and_keyboard(){
+        let root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","220"),
+                ("height","50"),("on_click","cb:10")],vec![]),
+            n("Button",&[("x","30"),("y","25"),("width","190"),
+                ("height","45"),("form_cancel","checkout"),("on_click","cb:11")],vec![]),
+            n("Button",&[("x","20"),("y","100"),("on_click","cb:20")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,450.0,240.0));
+        let mut blocked=std::collections::HashSet::new();
+        blocked.insert(11);
+        assert_eq!(hit_test_with_blocked(&root,&plan,60.0,45.0,&blocked),None,
+            "blocked cancel cannot leak to underlying ordinary Button");
+        assert_eq!(hit_test_with_blocked(&root,&plan,35.0,120.0,&blocked),
+            Some(HitTarget::Button(20)));
+        assert_eq!(keyboard_focus_order_with_blocked(&root,&plan,&[],&blocked),
+            vec![HitTarget::Button(10),HitTarget::Button(20)]);
+        blocked.clear();
+        assert_eq!(hit_test_with_blocked(&root,&plan,60.0,45.0,&blocked),
+            Some(HitTarget::Button(11)));
+        assert_eq!(keyboard_focus_order_with_blocked(&root,&plan,&[],&blocked),
+            vec![HitTarget::Button(10),HitTarget::Button(11),HitTarget::Button(20)]);
+    }
 
     #[test]
     fn busy_form_button_blocks_underlay_pointer_and_exits_keyboard_order(){
