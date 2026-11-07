@@ -141,7 +141,7 @@ mod tests{
     use crate::layout::{self,Bounds};
     fn n(kind:&str,fields:&[(&str,&str)],children:Vec<UiNode>)->UiNode{
         let mut out=UiNode::new(kind);
-        for (k,v) in fields{out.set_prop(k,v);}
+        for &(k,v) in fields{out.set_prop(k,v);}
         out.children=children;out
     }
     fn field(fields:&[(&str,&str)])->UiNode{
@@ -151,7 +151,7 @@ mod tests{
             ("draft_key","registration.email"),
             ("value_revision","1"),("form","registration"),
         ],vec![]);
-        for (k,v) in fields{node.set_prop(k,v);}
+        for &(k,v) in fields{node.set_prop(k,v);}
         node
     }
     #[test]
