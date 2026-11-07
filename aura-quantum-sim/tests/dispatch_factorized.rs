@@ -16,7 +16,7 @@ fn run(x:&Value)->Value {
     ).unwrap()).unwrap()
 }
 #[test]
-fn 128_nonclifford_bell_pairs_use_factor_product_auto_and_preserve_original_result(){
+fn factor_128_nonclifford_bell_pairs_auto_and_original_result_match(){
     let raw=include_bytes!("../fixtures/factorized_128_bell_t_v1.json");
     let request=to_auto(raw);
     let output=run(&request);

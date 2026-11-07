@@ -73,12 +73,20 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_bell_forced_v1.json > /tmp/q28-symbolic-bell.json
           python3 -c 'import json; a=json.load(open("/tmp/q28-symbolic-hth.json")); b=json.load(open("/tmp/q28-symbolic-bell.json")); p=a["basis_joint_weights"]; assert (p[0]["numerator"]["rational"],p[0]["numerator"]["radical"],p[0]["denominator_power_of_two"])==("2","1",2); assert (p[1]["numerator"]["rational"],p[1]["numerator"]["radical"],p[1]["denominator_power_of_two"])==("2","-1",2); assert b["classical_register"]==[True,False] and b["final_joint_mass"]["denominator_power_of_two"]==1; assert a["sampling"]=="none;forced-outcomes-only" and a["qpu_hardware_jobs"]==0; print("Q28_SYMBOLIC_CLI_REAL_CALLER_PASS exact_HTH=2pmroot2_over4 Bell_branch=1_over2")'
 
-      - name: Validate all four dispatch routes against existing engine CLIs
+      - name: Validate all five dispatch routes against existing engine CLIs
         run: |
           set -euo pipefail
           cargo run --manifest-path aura-quantum-sim/Cargo.toml --example dispatch_four_profiles
           cargo build --manifest-path aura-quantum-sim/Cargo.toml --bins
           python3 aura-quantum-sim/tools/check_dispatch_equivalence.py aura-quantum-sim/target/debug aura-quantum-sim/fixtures
+
+      - name: Run 128-qubit non-Clifford factorized application and real offline CLI
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_128_bell_t
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_128_bell_t_v1.json > /tmp/q28-factor128.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_factorized_128_v1.json > /tmp/q28-routed-factor128.json
+          python3 -c 'import json, math; a=json.load(open("/tmp/q28-factor128.json")); b=json.load(open("/tmp/q28-routed-factor128.json")); assert a==b["engine_result"]; assert b["selected_backend"]=="factor_product" and b["qpu_hardware_jobs"]==0; assert a["qubits"]==128 and len(a["factors"])==64 and a["peak_logical_state_bytes"]<8192; assert a["truncation_error_bound"]==0.0 and a["truncation"]=="none;factor-width-hard-limit"; assert abs(a["inspected_basis_probability"]-2**-64)<1e-25; print("Q28_FACTOR_REAL_128_PASS qubits=128 factors=64 truncation=none 128Q_phase_T=yes")'
 
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
@@ -120,6 +128,11 @@ jobs:
           set -euo pipefail
           cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run
           python aura-quantum-sim/tools/check_qiskit_symbolic.py aura-quantum-sim/target/release/aura-quantum-symbolic-run ci-artifacts/q28/c010-symbolic-qiskit.json
+      - name: Independently compare complex amplitudes of factor-product simulator to Qiskit
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-factorized-run
+          python aura-quantum-sim/tools/check_qiskit_factorized.py aura-quantum-sim/target/release/aura-quantum-factorized-run ci-artifacts/q28/c012-factorized-qiskit.json
       - name: Upload reproducible parity evidence
         if: always()
         uses: actions/upload-artifact@v4

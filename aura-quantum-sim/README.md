@@ -409,3 +409,73 @@ Or pipe each fixtures/dispatch_*_v1.json to cargo run --quiet --manifest-path au
 
 Tests: tests/dispatch_json.rs checks real CLI, all four modes, seed replay, nested result parity, invalid fields, fail-closed edge cases and no QPU use. The tools/check_dispatch_equivalence.py script invokes the actual dispatcher AND selected old engine binaries on 100 deterministic positive cases, comparing complete JSON results, and exercises 17 negative cases. No QIR, Aura source syntax, hardware, GPU or formal theorem claim. Independent existing Qiskit oracles and CPU scaling checks stay enabled. Limits remain those of the selected engine; envelope <=128 qubits, <=64 classical bits, <=512 instructions, <=256 KiB request, <=16 MiB response.
 
+
+
+## C-012 / Q28-008 — Untruncated disconnected-factor quantum simulator
+
+`aura-quantum-factorized-run` is a **new real CPU simulator** for a
+global *pure* state that factors into multiple small complex vectors.
+It is NOT a generic MPS/SVD network, a state-of-the-art tensor
+compression algorithm, an approximate rank-truncation scheme or
+support for arbitrary globally entangled 128-qubit states. It uses
+the existing validated Statevector gate engine *inside each factor*.
+Cross-factor CNOT/CZ atomically join factors; a SWAP between
+disconnected components exchanges their wire labels without
+needlessly merging them. Any attempted merge beyond **10 qubits
+in one factor** fails closed with no truncation.
+
+The supported pure gate set is H/X/Y/Z/S/T/CX/CZ/SWAP, including
+non-Clifford T; seeded computational Z measurement, observed
+reset and classical feedforward are also supported. Up to **128
+total qubits** may be represented if no connected factor exceeds
+10. Example: 64 independent Bell pairs with T gates on each
+pair have 128 total qubits but only 64 components of two qubits:
+their **logical stored amplitudes occupy 4,096 bytes**, not
+(2^{128}) complex entries. Temporary factor joins and shot
+output budgets are separately checked; actual process RSS,
+memory allocator overhead and input bytes are excluded from this
+logical estimate.
+
+The numerical arithmetic inside each factor remains **IEEE-754
+complex f64**, with the old `NORM_TOLERANCE`. Tensor
+**truncation error is exactly zero** because no truncation is
+performed; this is *not* a guarantee of zero floating-point
+rounding error. No dense-state approximation or implicit
+conditioning happens when a merge exceeds the explicit width.
+Post-measurement factors are conservatively left joined; there is
+no automatic Schmidt splitting or dynamic regrouping.
+
+Run real apps and JSON:
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example factorized_128_bell_t
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-factorized-run < aura-quantum-sim/fixtures/factorized_128_bell_t_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-auto-run < aura-quantum-sim/fixtures/dispatch_factorized_128_v1.json
+```
+
+The additive strict `aura.quantum.factorized-request/1` →
+`aura.quantum.factorized-result/1` API supports one-shot
+`inspect_factors`, optional `inspect_basis` (128-bit Boolean
+vector) and complete complex amplitude inspection at **≤8 wires**.
+For sampled execution all inspections require exactly one shot,
+never turning measurements into forced symbolic postselection.
+Limits: ≤128 wires, ≤10 per factor, ≤512 instructions,
+≤1024 shots, ≤64 classical bits, ≤256 KiB request,
+≤16 MiB output, plus an explicit CPU-work admission limit.
+All invalid hardware flags, unknown gates and unsupported
+noise are rejected, and every result states QPU jobs = 0.
+
+The pre-existing unified `aura-quantum-auto-run` now includes an
+**additive fifth engine** (`selected_backend=factor_product`)
+when an admitted sampled *non-Clifford* circuit exceeds the
+ordinary pure Statevector 12-qubit width, or when explicit
+`mode=factorized` or factor inspection is requested. It does
+not silently downgrade to numerical approximations or retry
+another backend when the factor-width limit is exceeded.
+Previous four direct JSON request schemas are unchanged.
+Verification uses full dense 1–8-wire Rust statevector phase
+comparison, adaptive seed/trace equality, high-width Bell/T,
+strict negative controls and external Qiskit full complex
+amplitude parity (separately logged; not a formal proof).
