@@ -278,6 +278,11 @@ pub fn execute_noisy_json_bytes(raw: &[u8]) -> Result<String, NoisyProtocolError
     }
     let request: Request = serde_json::from_slice(raw)
         .map_err(|err| NoisyProtocolError::InvalidJson(err.to_string()))?;
+    // Re-check the version on the fully decoded strict object. The lightweight
+    // probe only provides stable schema routing before decoding v1 operations.
+    if request.schema != NOISY_REQUEST_SCHEMA {
+        return Err(NoisyProtocolError::UnsupportedSchema);
+    }
     if !(1..=MAX_NOISY_QUBITS).contains(&request.qubits) {
         return Err(NoisyProtocolError::ProfileLimit("qubits"));
     }
