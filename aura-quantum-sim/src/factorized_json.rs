@@ -67,7 +67,7 @@ struct Request {
 }
 #[derive(Debug,Deserialize)]
 #[serde(tag="op",rename_all="snake_case",deny_unknown_fields)]
-enum Operation {
+pub(crate) enum Operation {
     Gate {gate:GateSpec},
     Measure {qubit:usize,into_bit:usize},
     Reset {qubit:usize},
@@ -75,7 +75,7 @@ enum Operation {
 }
 #[derive(Debug,Deserialize)]
 #[serde(tag="kind",rename_all="snake_case",deny_unknown_fields)]
-enum GateSpec {
+pub(crate) enum GateSpec {
     H{target:usize},X{target:usize},Y{target:usize},
     Z{target:usize},S{target:usize},T{target:usize},
     Cx{control:usize,target:usize},
@@ -83,7 +83,7 @@ enum GateSpec {
     Swap{a:usize,b:usize},
 }
 impl GateSpec {
-    fn gate(&self)->Gate {
+    pub(crate) fn gate(&self)->Gate {
         match self {
             Self::H{target}=>Gate::H(*target),
             Self::X{target}=>Gate::X(*target),
