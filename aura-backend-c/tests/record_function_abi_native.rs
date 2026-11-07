@@ -1169,3 +1169,214 @@ cell render_f32(sensor: f32, other: f32) ->:
         }
     }
 }
+
+
+#[test]
+fn record_constant_i64_min_and_f64_bits_survive_ir_and_native_abi() {
+    // Q03-001: the public typed IR can hold full-width signed constants
+    // and all f64 bit patterns as nominal Record fields. C tokenization of
+    // -9223372036854775808LL is invalid under Clang -Werror; Rust's decimal
+    // f64 Display is not a lossless generated-C constant representation for
+    // negative zero, extreme subnormals, infinity or NaN payloads.
+    // Original and optimized IR must agree with the independent IR Oracle
+    // and a fully linked strict-Clang executable at O0/O2.
+    let signed: [i64; 16] = [
+        i64::MIN, i64::MAX, -1, 0, 1, 7, -7, 1024, -1024,
+        0x0123_4567_89ab_cdef, -0x0123_4567_89ab_cdef,
+        i64::MIN + 1, i64::MAX - 1, i32::MAX as i64,
+        i32::MIN as i64, 9_007_199_254_740_991,
+    ];
+    let float_bits: [u64; 16] = [
+        0x0000_0000_0000_0000, 0x8000_0000_0000_0000,
+        0x0000_0000_0000_0001, 0x8000_0000_0000_0001,
+        0x000f_ffff_ffff_ffff, 0x0010_0000_0000_0000,
+        0x3fb9_9999_9999_999a, 0xbfb9_9999_9999_999a,
+        0x3ff0_0000_0000_0000, 0x4009_21fb_5444_2d18,
+        0x7fef_ffff_ffff_ffff, 0xffef_ffff_ffff_ffff,
+        0x7ff0_0000_0000_0000, 0xfff0_0000_0000_0000,
+        0x7ff8_0000_0000_0031, 0xfff8_0000_0000_0065,
+    ];
+    let span: aura_ast::Span = (0, 0).into();
+    let mut original = aura_ir::ModuleIR::new();
+    original.record_layouts.insert("Envelope".into(), vec![
+        ("signed".into(), Type::I64),
+        ("exact".into(), Type::F64),
+    ]);
+
+    for (index, (&integer, &bits)) in signed.iter().zip(float_bits.iter()).enumerate() {
+        for (suffix, field, result_ty) in [
+            ("signed", "signed", Type::I64),
+            ("float", "exact", Type::F64),
+        ] {
+            let name = format!("{suffix}_constant_{index}");
+            let insts = vec![
+                aura_ir::Inst {
+                    span, dest: Some(aura_ir::ValueId(0)),
+                    kind: InstKind::BindStrand {
+                        name: "signed_value".into(),
+                        expr: aura_ir::RValue::ConstI64(integer),
+                    },
+                },
+                aura_ir::Inst {
+                    span, dest: Some(aura_ir::ValueId(1)),
+                    kind: InstKind::BindStrand {
+                        name: "exact_value".into(),
+                        expr: aura_ir::RValue::ConstF64(f64::from_bits(bits)),
+                    },
+                },
+                aura_ir::Inst {
+                    span, dest: Some(aura_ir::ValueId(2)),
+                    kind: InstKind::ConstructRecord {
+                        record_name: "Envelope".into(),
+                        fields: vec![
+                            ("signed".into(), aura_ir::ValueId(0)),
+                            ("exact".into(), aura_ir::ValueId(1)),
+                        ],
+                    },
+                },
+                aura_ir::Inst {
+                    span, dest: Some(aura_ir::ValueId(3)),
+                    kind: InstKind::GetField {
+                        base: aura_ir::ValueId(2),
+                        field_name: field.into(),
+                    },
+                },
+            ];
+            original.functions.insert(name.clone(), aura_ir::FunctionIR {
+                name, span, params: vec![], ret: result_ty,
+                entry: aura_ir::BlockId(0),
+                blocks: vec![aura_ir::BasicBlock {
+                    id: aura_ir::BlockId(0), span,
+                    hint: aura_ir::ExecutionHint::Sequential, insts,
+                    term: aura_ir::Terminator::Return(Some(aura_ir::ValueId(3))),
+                }],
+            });
+        }
+    }
+
+    // The generated native runtime function must not collide with a
+    // legitimate user Cell of the same name.
+    let collision_name = "aura_f64_from_bits".to_string();
+    original.functions.insert(collision_name.clone(), aura_ir::FunctionIR {
+        name: collision_name, span, params: vec![], ret: Type::I64,
+        entry: aura_ir::BlockId(0),
+        blocks: vec![aura_ir::BasicBlock {
+            id: aura_ir::BlockId(0), span,
+            hint: aura_ir::ExecutionHint::Sequential,
+            insts: vec![aura_ir::Inst {
+                span, dest: Some(aura_ir::ValueId(0)),
+                kind: InstKind::BindStrand {
+                    name: "answer".into(),
+                    expr: aura_ir::RValue::ConstI64(7),
+                },
+            }],
+            term: aura_ir::Terminator::Return(Some(aura_ir::ValueId(0))),
+        }],
+    });
+    validate_module(&original).expect("exact-constant Record IR structurally valid");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized constant Record IR valid");
+
+    let mut driver = String::from(concat!(
+        "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+    ));
+    for index in 0..signed.len() {
+        driver.push_str(&format!(
+            "int64_t signed_constant_{index}(void);\ndouble float_constant_{index}(void);\n"
+        ));
+    }
+    // Runtime helper is reserved and maps the user Cell to an injective
+    // encoded symbol. A standalone driver can call the renamed Cell to
+    // check it survived rather than merely searching generated text.
+    driver.push_str("int64_t aura_cell_617572615f6636345f66726f6d5f62697473(void);\n");
+    driver.push_str("int main(void) {\n");
+    driver.push_str("  if (aura_cell_617572615f6636345f66726f6d5f62697473()!=7) return 7;\n");
+    for index in 0..signed.len() {
+        driver.push_str(&format!(
+            "  printf(\"i:%lld\\n\", (long long)signed_constant_{index}());\n"
+        ));
+        driver.push_str(&format!(
+            "  double f{index} = float_constant_{index}();\n"
+        ));
+        driver.push_str(&format!(
+            "  uint64_t bits{index}; memcpy(&bits{index}, &f{index}, sizeof(bits{index}));\n"
+        ));
+        driver.push_str(&format!(
+            "  printf(\"f:%016llx\\n\", (unsigned long long)bits{index});\n"
+        ));
+    }
+    driver.push_str("  return 0;\n}\n");
+    let expected: Vec<u8> = signed.iter().zip(float_bits.iter())
+        .flat_map(|(integer, bits)| format!("i:{integer}\nf:{bits:016x}\n").into_bytes())
+        .collect();
+
+    for (label, ir) in [("source_ir", &original), ("optimized_ir", &optimized)] {
+        for (index, (&integer, &bits)) in signed.iter().zip(float_bits.iter()).enumerate() {
+            let oracle_integer = run_oracle_entry(
+                ir, &format!("signed_constant_{index}"),
+                &[], OracleConfig::default(),
+            ).expect("typed IR Oracle executes signed Record constant");
+            assert!(oracle_integer.ok && oracle_integer.stderr.is_empty());
+            assert_eq!(oracle_integer.return_value, Some(OracleValue::I64(integer)));
+            let oracle_float = run_oracle_entry(
+                ir, &format!("float_constant_{index}"),
+                &[], OracleConfig::default(),
+            ).expect("typed IR Oracle executes f64 Record constant");
+            assert!(oracle_float.ok && oracle_float.stderr.is_empty());
+            match oracle_float.return_value {
+                Some(OracleValue::F64(value)) => assert_eq!(
+                    value.to_bits(), bits,
+                    "{label}/{index}: Oracle altered IEEE-754 bits"
+                ),
+                other => panic!("{label}/{index}: wrong Oracle f64 Record return: {other:?}"),
+            }
+        }
+        let c = emit_module(ir, None).expect("signed-min and exact float const emit C");
+        assert!(c.module_c.contains("INT64_MIN"),
+            "{label}: do not tokenize signed min as overflowing decimal LL");
+        assert!(c.module_c.contains("aura_f64_from_bits(UINT64_C(0x8000000000000000))"),
+            "{label}: native float initializers must preserve -0 bits");
+        assert!(c.module_c.contains("aura_cell_617572615f6636345f66726f6d5f62697473"),
+            "{label}: named user Cell collided with runtime helper");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &c.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), &driver).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("typed_constants_{label}_{}", &opt[1..]));
+            let cc = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror",
+                       "-fsanitize=undefined", "-fno-sanitize-recover=all",
+                       opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang UBSan available in Native CI");
+            assert!(cc.status.success(),
+                "{label}/{opt}: typed Record constants did not compile: {}\n{}",
+                String::from_utf8_lossy(&cc.stderr), c.module_c);
+            let run = Command::new(&exe).output()
+                .expect("linked typed Record constants C binary executes");
+            assert!(run.status.success(),
+                "{label}/{opt}: native constant Record runtime failed: {}",
+                String::from_utf8_lossy(&run.stderr));
+            assert_eq!(run.stdout, expected,
+                "{label}/{opt}: i64 extrema or f64 payload bits changed in ABI");
+        }
+    }
+
+    // Type-forged IR can still be structurally valid (SSA is not a
+    // type-checker); never quietly store a Float into an I64 Record field.
+    let mut forged = original.clone();
+    let func = forged.functions.get_mut("signed_constant_0").unwrap();
+    if let InstKind::BindStrand { expr, .. } = &mut func.blocks[0].insts[0].kind {
+        *expr = aura_ir::RValue::ConstF64(1.0);
+    } else {
+        panic!("test fixture lost its first SSA BindStrand");
+    }
+    validate_module(&forged).expect("forgery is structurally valid SSA");
+    let err = emit_module(&forged, None).err()
+        .expect("native Record ABI must fail closed on constant type forgery");
+    assert!(err.message.contains("type mismatch"),
+        "wrong Record ABI error for forged field: {err}");
+}

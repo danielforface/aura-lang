@@ -219,6 +219,29 @@ static inline const char* aura_unicode_char_tail(uint32_t scalar, char tail[4]) 
 "#);
 
 
+    // Reconstruct an exact IEEE-754 binary64 from the source IR's bit
+    // pattern. A decimal C literal is not a lossless code-generation ABI
+    // for signed zero, NaN payloads, or the subnormal edge under -Werror
+    // (-Wliteral-range). Use the ordinary C aliasing guarantee for
+    // unsigned char to copy every byte, without platform headers or
+    // implementation-specific builtins.
+    out.push_str(r#"
+static inline double aura_f64_from_bits(uint64_t bits) {
+  _Static_assert(sizeof(double) == sizeof(uint64_t),
+                 "Aura f64 requires a 64-bit native double");
+#if defined(__DBL_MANT_DIG__) && defined(__DBL_MAX_EXP__)
+  _Static_assert(__DBL_MANT_DIG__ == 53 && __DBL_MAX_EXP__ == 1024,
+                 "Aura f64 requires IEEE-754 binary64");
+#endif
+  double value;
+  unsigned char* dst = (unsigned char*)&value;
+  const unsigned char* src = (const unsigned char*)&bits;
+  for (size_t i = 0; i < sizeof(value); ++i) dst[i] = src[i];
+  return value;
+}
+
+"#);
+
     // f64 interpolation must agree with AVM's Rust Display, not printf("%f")
     // (six decimals, loss of precision and massive-number truncation).
     // The shortest round-trippable decimal is expanded to fixed notation,
@@ -611,6 +634,7 @@ impl CNameMap {
             "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
             "aura_unicode_scalar_checked", "aura_unicode_char_lead",
             "aura_unicode_char_tail", "aura_f64_display",
+            "aura_f64_from_bits",
             "aura_i32_from_wrapped_bits", "aura_i64_from_wrapped_bits",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
@@ -670,6 +694,7 @@ impl CNameMap {
             "uint_least64_t", "imaxabs", "imaxdiv", "strtoimax",
             "strtoumax", "wcstoimax", "wcstoumax", "imaxdiv_t",
             "INT8_MAX", "INT16_MAX", "INT32_MAX", "INT64_MAX",
+            "INT64_MIN",
             "UINT8_MAX", "UINT16_MAX", "UINT32_MAX", "UINT64_MAX",
         ].into_iter().map(str::to_owned).collect();
         let reserved_extern_symbols = used.clone();
@@ -2326,11 +2351,25 @@ fn emit_rvalue_decl(dest: ValueId, _name: &str, rv: &RValue) -> (CType, String) 
         ),
         RValue::ConstI64(n) => (
             CType::I64,
-            format!("const int64_t {var} = {n}LL;"),
+            // Spelling -9223372036854775808LL makes the positive token
+            // exceed signed long long before unary minus is applied;
+            // strict Clang rejects it. INT64_MIN is representable and
+            // defined by the already-included <stdint.h>.
+            if *n == i64::MIN {
+                format!("const int64_t {var} = INT64_MIN;")
+            } else {
+                format!("const int64_t {var} = {n}LL;")
+            },
         ),
         RValue::ConstF64(f) => (
             CType::F64,
-            format!("const double {var} = {f};"),
+            // Preserve the actual SSA f64 bit pattern, including -0,
+            // subnormal minima, infinities and quiet NaN payloads.
+            // Decimals can be rejected, rounded or canonicalized by C.
+            format!(
+                "const double {var} = aura_f64_from_bits(UINT64_C(0x{:016x}));",
+                f.to_bits()
+            ),
         ),
         RValue::ConstChar(c) => (
             CType::Char,
