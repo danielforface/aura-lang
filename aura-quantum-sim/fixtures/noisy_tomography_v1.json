@@ -1,0 +1,34 @@
+{
+  "schema": "aura.quantum.noisy-request/1",
+  "qubits": 1,
+  "classical_bits": 0,
+  "seed": 101,
+  "shots": 1,
+  "max_memory_bytes": 16777216,
+  "inspect_final_density": true,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "amplitude_damping",
+        "qubit": 0,
+        "gamma": 0.36
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "phase_flip",
+        "qubit": 0,
+        "probability": 0.25
+      }
+    }
+  ]
+}
