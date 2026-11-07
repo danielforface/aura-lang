@@ -235,11 +235,18 @@ impl StabilizerTableau {
         match gate {
             Gate::H(q) => self.hadamard(q),
             Gate::S(q) => self.phase(q),
-            Gate::X(q) => for row in &mut self.rows { row.sign ^= row.z(q); },
-            Gate::Y(q) => for row in &mut self.rows {
-                row.sign ^= row.x(q) ^ row.z(q);
+            Gate::X(q) => for row in &mut self.rows {
+                let flip = row.z(q);
+                row.sign ^= flip;
             },
-            Gate::Z(q) => for row in &mut self.rows { row.sign ^= row.x(q); },
+            Gate::Y(q) => for row in &mut self.rows {
+                let flip = row.x(q) ^ row.z(q);
+                row.sign ^= flip;
+            },
+            Gate::Z(q) => for row in &mut self.rows {
+                let flip = row.x(q);
+                row.sign ^= flip;
+            },
             Gate::Cnot { control, target } => self.controlled_not(control, target),
             Gate::Cz { control, target } => {
                 self.hadamard(target);
@@ -294,7 +301,7 @@ impl StabilizerTableau {
     {
         self.valid_qubit(q)?;
         if self.random_pivot(q).is_some() { Ok(0.5) }
-        else { Ok(f64::from(self.deterministic_outcome(q) == outcome)) }
+        else { Ok(if self.deterministic_outcome(q) == outcome { 1.0 } else { 0.0 }) }
     }
 
     /// Force a projective Z branch. Impossible selections leave state intact.
