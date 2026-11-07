@@ -15,3 +15,9 @@
 
 ## Controlled failure disposition
 A failing synthetic integration test is not automatically a production defect of either agent. Reproduce failure, pin exact log, assign owner of contract or lockfile, and leave both productive owned branches untouched until the cause and minimal fix are agreed.
+
+## X-004 integration harness correction — no B source regression proven
+
+The first synthetic job [#42417302205](https://github.com/danielforface/aura-lang/actions/runs/42417302205) incorrectly enabled `raylib,lumina-diagnostics` for the **full library test suite**. It invoked the specifically isolated `ibus_native::tests::p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative`, which explicitly requires `LUMINA_IBUS_ENGINE=hangul`, `LUMINA_IBUS_P37_RUST_ACK_FENCE=1` and its real Hangul helper. The X harness had not set up that isolated diagnostic context. Log observed **164 passing standard units, one `NotPresent` diagnostic fixture failure**. B's production-facing CI runs broad units using `raylib --lib` and the P37 diagnostic separately under authenticated real Hangul; this synthetic workflow must preserve the same test topology.
+
+Changed only the **X-owned integration CI invocation** to `--features raylib --lib` for broad units; real X11 mouse/forms/Tab tests still run with `raylib,lumina-diagnostics` as their dedicated test binaries. No A/B production change, source tree or Cargo.lock modification. The initial synthetic test cannot count as a cross-lane product bug; only the new exact-head CI establishes compatibility.

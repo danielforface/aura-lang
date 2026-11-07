@@ -57,8 +57,8 @@ jobs:
             fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul \
             fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
       - uses: Swatinem/rust-cache@v2
-      - name: Native Raylib and IBus protocol unit tests under virtual display
-        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib
+      - name: Native Raylib standard unit suite (diagnostics separate)
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --lib
       - name: Actual X11 XTest mouse, forms and pixel event regression
         run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
       - name: Actual X11 Tab, keyboard, focus and controlled form regression
