@@ -29,7 +29,7 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
     let batch=circuit.execute_shots(1024,0xc009,DEFAULT_MEMORY_BUDGET)?;
     let ones=batch.records.iter().filter(|s|s.bits[0]==Some(true)).count();
     if batch.records.iter().any(|s|s.bits[1]!=Some(false))||
-        ones<400||ones>624 {
+        !(400..=624).contains(&ones) {
         return Err("seeded adaptive Clifford Bell acceptance failed".into());
     }
     println!(

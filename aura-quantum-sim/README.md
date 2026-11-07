@@ -284,3 +284,51 @@ Source API: `src/noisy_circuit.rs`; JSON adapter `src/noisy_json.rs`;
 real binary `src/bin/aura-quantum-noisy-run.rs`; acceptance
 `tests/noisy_circuit.rs` and `tests/noisy_json.rs`;
 external oracle `tools/check_qiskit_noisy.py`.
+
+
+## Clifford stabilizer tableau backend — AURA-Q28-006
+
+The additive `aura_quantum_sim::stabilizer` module implements a
+**separate binary symplectic signed-Pauli 2n-row tableau**, not a
+statevector wrapper. Stabilizer states and Clifford operations use
+integer bit operations. H/X/Y/Z/S/CX/CZ/SWAP, ideal projective Z
+measurement, observed reset, classical conditional gates, explicit
+postselection and repeatable seeded shot batches are supported. T
+and non-Clifford operations, Kraus noise/mixed-state dynamics, arbitrary
+unitary rotations, hardware jobs and equivalence proofs are **not**.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example stabilizer_ghz
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_feedback_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml \
+  --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_inspection_v1.json
+```
+
+
+The standalone *new* JSON schema `aura.quantum.stabilizer-request/1`
+returns `aura.quantum.stabilizer-result/1`, with exact
+signed Pauli generators (q[n-1]..q0), classical bit histograms,
+measurement/reset traces and simulated-only provenance.
+`inspect_probabilities=true` returns a complete ordered
+basis-probability array only for **one shot and at most six qubits**;
+no imaginary exponential-speed claim. The Rust tableau supports up to
+256 qubits, whereas this CLI admits at most 128, 1,024 shots,
+512 operations, 64 classical bits, 256 KiB input, 16 MiB logical budget
+and encoded output, and 8,388,608 operation×shot×qubit work units.
+The logical estimate covers the 2n rows plus one scratch row and declared
+shot results, **not** allocator padding/OS RSS, user-provided circuit
+storage, caller clones, or CPU-time proof. Runtime is polynomial in n
+for supported Clifford operations, but not constant-time.
+
+Scientific boundaries: a 96-qubit GHZ **single Tableau** is tested
+without materializing 2^96 complex amplitudes, and small widths are
+tested against the independently implemented statevector engine.
+Additional Qiskit 2.6.1 / NumPy 2.3.4 parity compares full basis Born
+probabilities for 48 deterministic 1..6-qubit Clifford circuits
+(1,008 basis values), including mutated negative controls. This
+does **not** certify arbitrary adaptive stabilizer traces formally;
+separate exact seed-by-seed measurements are tested in Rust.
+The existing pure/noisy JSON v1 schemas are **unchanged** and no
+Q22/Q23/Q27 consumer may treat the new schema as a frozen IR without
+a reviewed producer/consumer contract.

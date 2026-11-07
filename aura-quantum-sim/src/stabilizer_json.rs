@@ -280,9 +280,12 @@ pub fn execute_stabilizer_json(raw:&[u8])->Result<String,StabilizerProtocolError
         )
     } else {
         let batch=circuit.execute_shots(request.shots,request.seed,request.max_memory_bytes)?;
-        // A deterministic allocation-size expression, not physical RSS.
-        let single=circuit.execute_once(request.seed,request.max_memory_bytes)?;
+        // Compute size directly from one tableau, not by secretly running
+        // the input circuit a second time (which can be costly).
+        let tableau=crate::stabilizer::StabilizerTableau::zero(
+            request.qubits,request.max_memory_bytes,
+        )?;
         encode(&request,&batch.metadata,&batch.records,
-               single.final_tableau.logical_bytes(),None,None)
+               tableau.logical_bytes(),None,None)
     }
 }
