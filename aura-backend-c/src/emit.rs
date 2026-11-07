@@ -353,6 +353,13 @@ fn record_field_ctype(ty: &Type) -> Option<CType> {
         Type::I64 => Some(CType::I64),
         Type::F32 => Some(CType::F32),
         Type::F64 => Some(CType::F64),
+        // A concrete owned Aura String is represented at the existing
+        // public C boundary as a non-owning const char*. By-value Records
+        // preserve that pointer exactly, including String fields nested
+        // inside other qualified Records. Any interpolated String still
+        // requiring capture materialization must be rejected at the
+        // ConstructRecord/SetField write boundary below.
+        Type::String => Some(CType::CString),
         _ => None,
     }
 }
@@ -1585,6 +1592,19 @@ fn emit_function(
                             ) });
                         }
                         let cname = match expected {
+                            RecordFieldCType::Scalar(CType::CString)
+                                if string_literals.get(value)
+                                    .is_some_and(StringSnapshot::has_substitutions) =>
+                            {
+                                // Local String snapshots are not materialized
+                                // in this C ABI. A Record holding the raw
+                                // template would print a different value from
+                                // AVM and could escape through a return/Cell.
+                                return Err(CBackendError { message: format!(
+                                    "unqualified interpolated String Record field '{}' in '{}': captured String cannot escape as raw C pointer",
+                                    field, record_name
+                                ) });
+                            }
                             RecordFieldCType::Scalar(ty) => match values.get(value) {
                                 Some((actual, cname)) => qualified_record_scalar_value(
                                     *ty, *actual, *value, cname, &known_u32_constants,
@@ -1671,6 +1691,15 @@ fn emit_function(
                             "unqualified C Record '{}' unknown SetField '{}'", record, field_name,
                         ) })?;
                     let rhs = match expected {
+                        RecordFieldCType::Scalar(CType::CString)
+                            if string_literals.get(value)
+                                .is_some_and(StringSnapshot::has_substitutions) =>
+                        {
+                            return Err(CBackendError { message: format!(
+                                "unqualified interpolated String Record SetField '{}.{}': captured String cannot escape as raw C pointer",
+                                record, field_name
+                            ) });
+                        }
                         RecordFieldCType::Scalar(ty) => match values.get(value) {
                             Some((actual, name)) => qualified_record_scalar_value(
                                 *ty, *actual, *value, name, &known_u32_constants,

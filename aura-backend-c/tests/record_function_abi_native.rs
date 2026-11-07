@@ -633,3 +633,116 @@ cell render_float(p: Point, sample: f64, twin: f64) ->:
         }
     }
 }
+
+
+#[test]
+fn record_string_fields_support_construct_get_set_copy_call_nested_and_return() {
+    // Q03-001 product behavior: a typed Record can carry a real String
+    // without losing its public pointer ABI. Verify a value originally
+    // created from a caller String survives by-value Cell calls, aliasing,
+    // functional SetField, nested Record projection, a String-return Cell
+    // and source print I/O. Original Record must stay unchanged.
+    let source=r#"
+type Tagged = record { title: String, code: u32 }
+type Bundle = record { item: Tagged, active: bool }
+cell rename_tagged(original: Tagged, replacement: String) -> Tagged:
+    val mut copy: Tagged = original
+    copy.title = replacement
+    yield copy
+cell title_of(item: Tagged) -> String:
+    yield item.title
+cell demo(original: String, replacement: String) ->:
+    val old: Tagged = Tagged { title: original, code: 7 }
+    val renamed: Tagged = rename_tagged(old, replacement)
+    val wrapper: Bundle = Bundle { item: renamed, active: true }
+    io.println(old.title)
+    io.println(renamed.title)
+    io.println(title_of(old))
+    io.println(title_of(renamed))
+    io.println(wrapper.item.title)
+    yield old.code + wrapper.item.code
+"#;
+    let ast=aura_parse::parse_source(source).expect("Record String source parses");
+    Checker::new().check_program(&ast).expect("Record String nominal fields typecheck");
+    let original=lower_program(&ast).expect("source Record String lowers to typed SSA");
+    validate_module(&original).expect("source Record String IR structurally valid");
+    let mut optimized=original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized Record String IR structurally valid");
+
+    for (label,ir) in [("source",&original),("optimized",&optimized)] {
+        let c=emit_module(ir,None).expect("qualified String fields emit native Record C");
+        assert!(c.module_c.contains("const char* aura_f_7469746c65;"),
+            "{label}: Record field 'title' must retain const char* C ABI: {}",c.module_c);
+        let tmp=Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"),&c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"),&c.module_c).unwrap();
+        fs::write(tmp.0.join("stdlib.c"),
+            "#include <stdio.h>\nvoid aura_io_println(const char* text){puts(text);}\n").unwrap();
+        fs::write(tmp.0.join("driver.c"),concat!(
+            "#include <stdint.h>\n#include <stdbool.h>\n",
+            "typedef struct { const char* aura_f_7469746c65; uint32_t aura_f_636f6465; } aura_record_546167676564;\n",
+            "typedef struct { aura_record_546167676564 aura_f_6974656d; bool aura_f_616374697665; } aura_record_42756e646c65;\n",
+            "uint32_t demo(const char*,const char*);\n",
+            "int main(void){return demo(\"origin\",\"changed\")==14u?0:1;}\n"
+        )).unwrap();
+        for opt in ["-O0","-O2"] {
+            let exe=tmp.0.join(format!("record_string_{label}_{}",&opt[1..]));
+            let build=Command::new("clang")
+                .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("stdlib.c")).arg(tmp.0.join("driver.c"))
+                .arg("-o").arg(&exe).output().expect("Clang in Native CI");
+            assert!(build.status.success(),
+                "{label}/{opt}: generated Record String C did not compile: {}\n{}",
+                String::from_utf8_lossy(&build.stderr), c.module_c);
+            let run=Command::new(&exe).output().expect("Record String native executable");
+            assert!(run.status.success(),
+                "{label}/{opt}: Record String by-value return mismatch: {}",
+                String::from_utf8_lossy(&run.stderr));
+            assert_eq!(String::from_utf8_lossy(&run.stdout),
+                "origin\nchanged\norigin\nchanged\nchanged\n",
+                "{label}/{opt}: Record String getters, functional SetField or nested projection lost value");
+        }
+    }
+}
+
+#[test]
+fn record_string_fields_reject_unevaluated_interpolation_in_construct_and_set() {
+    // A frozen String snapshot containing actual interpolation slots is
+    // NOT represented by the raw const char* template. Accepting it in a
+    // Record would let the template escape as braces and diverge from AVM.
+    // Both creation and functional mutation must fail closed *before* C
+    // artifacts can link. Plain Strings without unresolved capture ARE
+    // supported by the preceding end-to-end test.
+    for (case,source) in [
+        ("ConstructRecord",r#"
+type Tagged = record { title: String, code: u32 }
+cell invalid_construct(n: u32) ->:
+    val t: Tagged = Tagged { title: "value={n}", code: 7 }
+    yield t.code
+"#),
+        ("SetField",r#"
+type Tagged = record { title: String, code: u32 }
+cell invalid_set(previous: Tagged, n: u32) ->:
+    val mut next: Tagged = previous
+    next.title = "value={n}"
+    yield next.code
+"#),
+    ] {
+        let ast=aura_parse::parse_source(source).expect("String capture Record source parses");
+        Checker::new().check_program(&ast).expect("capture inside Record is valid Aura");
+        let original=lower_program(&ast).expect("source Record capture lowers");
+        validate_module(&original).expect("source capture IR valid");
+        let mut optimized=original.clone();
+        aura_ir::optimize_module(&mut optimized);
+        validate_module(&optimized).expect("optimized capture IR valid");
+        for (label,ir) in [("source",&original),("optimized",&optimized)] {
+            let err=emit_module(ir,None).err()
+                .expect("unmaterialized interpolated String must not enter a C Record");
+            assert!(err.message.contains("unqualified interpolated String Record")
+                && err.message.contains("title"),
+                "{case}/{label}: wrong String capture Record ABI diagnostic: {err}");
+        }
+    }
+}
