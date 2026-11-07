@@ -253,3 +253,71 @@ fn real_x11_radio_group_exclusivity_conflict_recovery_and_gpu_state() {
     assert_eq!(click(&plugin,&tree,&mut ctx,id,65,50),vec![21]);
     eprintln!("LUMINA_RADIO_GROUP_MOUSE_X11 host_checked_pixels=true no_optimistic_toggle=true duplicate_selected_fail_closed=true underlay_block=true independent_groups=true malformed_group_block=true repair=true disable_reenable=true");
 }
+
+
+/// Real X11 form submission is gated by native Unicode-aware field rules.
+/// Every on_click is observed via Nexus feedback; invalid submits never leak.
+#[test]
+fn real_x11_form_submit_required_min_graphemes_error_border_and_first_focus(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let tree=node("App",&[("bg","#101820")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","230"),("height","46"),
+            ("radius","0"),("form","register"),("required","true"),
+            ("on_change","cb:501"),("value","")],vec![]),
+        node("TextInput",&[("x","20"),("y","95"),("width","230"),("height","46"),
+            ("radius","0"),("form","register"),("min_graphemes","2"),
+            ("on_change","cb:502"),("value","x")],vec![]),
+        node("Button",&[("x","20"),("y","175"),("width","220"),("height","50"),
+            ("form_submit","register"),("on_click","cb:590"),("label","Save")],vec![]),
+        node("TextInput",&[("x","310"),("y","95"),("width","180"),("height","46"),
+            ("form","other"),("required","true"),
+            ("on_change","cb:601"),("value","")],vec![]),
+        node("Button",&[("x","310"),("y","175"),("width","180"),("height","50"),
+            ("on_click","cb:690"),("label","Independent")],vec![]),
+    ]);
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let id=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=id.lines().next().expect("native form X11 window");
+    let before=plugin.diagnostic_capture_pixel(21.0,43.0).unwrap();
+    assert!(click(&plugin,&tree,&mut ctx,id,100,195).is_empty(),
+        "invalid required/min-graphemes must block callback 590");
+    let red=plugin.diagnostic_capture_pixel(21.0,43.0).unwrap();
+    assert!(red.r>before.r.saturating_add(75),
+        "error must visibly mark first native TextInput border: before={before:?}, after={red:?}");
+
+    // Invalid submit must have focused first required field; type without
+    // manually clicking it. The committed EditSession, not stale host echo,
+    // must be considered for the following submit.
+    xdotool(&["keydown","a"]);
+    let mut first=Vec::new();
+    for _ in 0..6{
+        render(&plugin,&tree,&mut ctx);
+        first.extend(ctx.get::<UiRuntimeFeedback>().unwrap().text_input_events.clone());
+    }
+    xdotool(&["keyup","a"]);
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(first.iter().any(|e|e.callback_id==501 && e.text=="a"),
+        "first invalid field gets keyboard focus after blocked submit: {first:?}");
+    assert!(click(&plugin,&tree,&mut ctx,id,100,195).is_empty(),
+        "second short field must still block submit after first local repair");
+    xdotool(&["keydown","z"]);
+    let mut second=Vec::new();
+    for _ in 0..6{
+        render(&plugin,&tree,&mut ctx);
+        second.extend(ctx.get::<UiRuntimeFeedback>().unwrap().text_input_events.clone());
+    }
+    xdotool(&["keyup","z"]);
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(second.iter().any(|e|e.callback_id==502 && e.text=="xz"),
+        "next invalid field receives focus and retained host value: {second:?}");
+    let clear=plugin.diagnostic_capture_pixel(21.0,43.0).unwrap();
+    assert_eq!(clear,before,"successful local correction removes red error on subsequent frame");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,100,195),vec![590],
+        "all corrected current-session values permit original callback once");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,340,195),vec![690],
+        "independent ordinary button remains functional");
+    eprintln!("LUMINA_FORM_SUBMIT_X11 required_blocks=true min_graphemes_blocks=true first_invalid_focus=true committed_draft_authority=true error_border=true error_clears=true valid_callback_once=true independent_button=true");
+}

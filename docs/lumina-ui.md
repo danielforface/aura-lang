@@ -205,6 +205,16 @@ Native Raylib keyboard workflow (Linux/X11 tested):
 Children:
 - Ignored
 
+### Opt-in native form submission and field validation (Linux/X11)
+
+Existing Aura-recognized `TextInput` and `Button` constructors support a scoped, host-controlled form submission workflow **without** a new `Form`/`FormSubmit` Core builtin or a Nexus ABI/schema change.
+
+- A text field opts in with `form: "registration"` and an existing, unique `on_change` callback. Optional `required: true` requires non-whitespace text. Optional `min_graphemes: 2` and `max_graphemes: 40` constrain length in Unicode **extended grapheme clusters** (not UTF-8 bytes or code points); bounds must be ASCII decimal integers 0–4096 with min no larger than max. The form ID is 1–128 UTF-8 bytes, with no leading/trailing whitespace or control characters.
+- A plain `Button(form_submit: "registration", on_click: ...)` becomes a guarded Submit. Clicking it, or activating it with Enter/Space while focused, first validates all associated `TextInput` fields using the **currently committed** native `EditSession` drafts (including unacknowledged local edits) rather than stale host echo props. A valid submission emits the **existing** `UiRuntimeFeedback.clicked_callback_id` exactly once; the app owns the actual state persistence, submission/network call and any success/failure response.
+- When validation fails, Lumina **does not emit** the submit callback. It outlines invalid fields in red, shows a small inline `Required`, `Too short`, `Too long`, `Invalid rule` or `Unavailable` hint for sufficiently wide fields, and transfers focus to the **first eligible invalid TextInput in source order**. Re-rendering after a correction updates/clears field error styling without synthesizing a submit. No IBus preedit/projection is treated as committed text; a submit attempted during in-progress composition is not accepted.
+- Invalid or missing constraints, bad/duplicated field callback IDs, disabled, clipped/offscreen or otherwise unqualified associated TextInputs, empty forms, and malformed `form_submit` values **fail closed**. Unfocusable failures block submission but are not force-focused. One submit callback shared across multiple visible Buttons is ambiguous and rejected; a normal Button without `form_submit` keeps its original behavior.
+- Validation is scoped to fields explicitly belonging to the named form, evaluated in the current render tree; unrelated forms, ordinary Buttons and the existing per-field `TextInput(on_submit: ...)` path remain independent. Field rule errors never print private field values and do not modify host props or Undo history.
+- Native UI only: this is **not** an Aura compiler/type-checker validation contract, Z3 proof, full form model, HTML/browser form, async validation, date/password policy, screen-reader announcement, WCAG compliance or cross-platform release. Native focus and error hints are visual and keyboard-driven but not semantic OS accessibility APIs.
 ### `TextInput` (MVP)
 
 Single-line text input with click-to-focus and basic typing.

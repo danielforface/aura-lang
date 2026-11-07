@@ -353,3 +353,72 @@ fn native_x11_radio_arrows_group_bounds_host_authority_and_invalid_revoke() {
     assert!(has(&press(&plugin,&root,&mut ctx,"z",false),10,"Aqz"));
     eprintln!("LUMINA_RADIO_ARROW_X11 four_directions=true wraps_skips_disabled=true host_checked_authority=true separate_group=true nonradio_no_arrow=true conflict_revokes_focus=true repair_no_autofocus=true");
 }
+
+
+/// Native Tab/Enter-only opt-in form. Invalid submissions must send no app
+/// click, focus the first correctable input, and preserve live EditSession text.
+#[test]
+fn native_x11_form_keyboard_submit_validation_and_host_rule_recovery(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","230"),("height","45"),
+            ("form","registration"),("required","true"),
+            ("on_change","cb:701"),("value","")],vec![]),
+        node("TextInput",&[("x","20"),("y","88"),("width","230"),("height","45"),
+            ("form","registration"),("min_graphemes","2"),
+            ("on_change","cb:702"),("on_submit","cb:703"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","162"),("width","230"),("height","48"),
+            ("form_submit","registration"),("label","Submit"),
+            ("on_click","cb:790")],vec![]),
+        node("Button",&[("x","290"),("y","162"),("width","220"),("height","48"),
+            ("label","Ordinary"),("on_click","cb:791")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,410));
+    frames(&plugin,&root,&mut ctx,3);
+    let id=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=id.lines().next().expect("real native X11 window");
+    xdo(&["windowfocus","--sync",id]);
+
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    let enter_in_input=press(&plugin,&root,&mut ctx,"Return",false);
+    assert!(enter_in_input.iter().any(|e|e.callback_id==703&&e.submitted),
+        "TextInput on_submit remains unchanged and bypasses Button form validation");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "invalid native form keyboard submit must NEVER emit 790");
+    // First field now focused; Enter and Space should remain TextInput text,
+    // and the input's local draft must be used on later submit attempts.
+    assert!(has(&press(&plugin,&root,&mut ctx,"x",false),701,"x"),
+        "blocked submit must transfer focus to first required input");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"b",false),702,"Ab"),
+        "second input should keep the source A and append only one b");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![790],
+        "valid committed drafts permit exactly one host button callback");
+
+    // Malformed host rule revokes submit even when current drafts satisfy
+    // the earlier contract. Native runtime cannot silently ignore it.
+    root.children[1].set_prop("min_graphemes","bogus");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "malformed rule must block app callback, not be treated as absent");
+    // Restore host rule; callback remains gated until a new user activation.
+    root.children[1].set_prop("min_graphemes","2");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "focus now on invalid field, corrected rule must not auto-activate submit");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![790]);
+
+    // Ordinary Button must still function even if any form becomes invalid.
+    root.children[0].set_prop("required","TRUE");
+    assert!(button_frames(&plugin,&root,&mut ctx,2).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![791],
+        "non-form actions must remain independent of form configuration errors");
+    eprintln!("LUMINA_FORM_KEYBOARD_X11 submit_blocked=true first_error_focus=true second_error_repair=true session_draft_valid=true malformed_rule_fail_closed=true no_silent_autosubmit=true ordinary_button=true");
+}

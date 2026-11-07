@@ -7,6 +7,9 @@ mod viewport;
 mod layout;
 
 #[cfg(any(feature = "raylib", test))]
+mod forms;
+
+#[cfg(any(feature = "raylib", test))]
 mod text_input;
 
 #[cfg(any(feature = "raylib", test))]
@@ -331,6 +334,9 @@ struct LuminaWindow {
     focused_input: Option<FocusedTextInput>,
     /// Native Button keyboard focus, exclusive with focused_input.
     focused_button: Option<u64>,
+    /// Forms whose last native submit attempt failed. Field errors are
+    /// always recomputed against current authoritative EditSession drafts.
+    attempted_forms: std::collections::HashSet<String>,
     /// First eligible, explicitly opted TextInput can get initial focus only
     /// once per window; later user blur/Tab/click must never be overridden.
     autofocus_decided: bool,
@@ -1323,6 +1329,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     click_anim: None,
                     focused_input: None,
                     focused_button: None,
+                    attempted_forms: std::collections::HashSet::new(),
                     autofocus_decided: false,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
@@ -1485,6 +1492,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let candidate_click_consumed=candidate_row_clicked.is_some();
             #[cfg(not(target_os="linux"))]
             let candidate_click_consumed=false;
+            let composing_before_pointer=win.focused_input.as_ref()
+                .is_some_and(|fi|fi.session.composing());
             let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
@@ -1919,6 +1928,70 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     tree,&planned_layout,&keyboard_order,id,radio_reverse))
             }else{None};
             if let Some(id)=radio_action{win.focused_button=Some(id);}
+            // Evaluate the current committed draft, not the (possibly stale)
+            // host value prop nor a provisional IBus composition projection.
+            let mut current_values:HashMap<u64,String>=win.input_sessions.iter()
+                .map(|(id,fi)|(*id,fi.session.buffer.clone())).collect();
+            if let Some(fi)=win.focused_input.as_ref(){
+                current_values.insert(fi.on_change,fi.session.buffer.clone());
+            }
+            let eligible_fields:std::collections::HashSet<u64>=focus_order.iter()
+                .filter_map(|item|match item{
+                    layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+                    _=>None,
+                }).collect();
+            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
+                && win.focused_input.is_none(){win.focused_button}else{None};
+            let mut validated_click=click_cb.or(radio_action).or(keyboard_click);
+            if let Some(id)=validated_click{
+                match forms::submit_action(tree,&planned_layout,id){
+                    forms::SubmitAction::Normal=>{},
+                    forms::SubmitAction::Reject=>validated_click=None,
+                    forms::SubmitAction::Validate(form)=>{
+                        if composing_before_pointer{
+                            // A pointer blur may have abandoned native preedit
+                            // already; it must NOT commit the form opportunistically.
+                            validated_click=None;
+                        }else{
+                            let assessment=forms::assess(tree,&planned_layout,&form,
+                                &current_values,&eligible_fields);
+                            if assessment.valid(){
+                                win.attempted_forms.remove(&form);
+                            }else{
+                                validated_click=None;
+                                if win.attempted_forms.len()<32{
+                                    win.attempted_forms.insert(form);
+                                }
+                                if let Some(first)=assessment.first_focusable_error(&eligible_fields){
+                                    if let Some(layout::HitTarget::TextInput{
+                                        on_change,on_submit,value})=focus_order.iter()
+                                        .find(|item|matches!(item,
+                                            layout::HitTarget::TextInput{on_change:id,..}
+                                                if *id==first)).cloned(){
+                                        win.focused_button=None;
+                                        switch_input(win,Some((on_change,on_submit,value,
+                                            revisions.get(&on_change).copied().flatten())));
+                                        win.autofocus_decided=true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut form_errors:HashMap<u64,forms::FieldError>=HashMap::new();
+            let attempted:Vec<_>=win.attempted_forms.iter().cloned().collect();
+            for form in attempted{
+                let assessment=forms::assess(tree,&planned_layout,&form,
+                    &current_values,&eligible_fields);
+                if assessment.valid(){
+                    win.attempted_forms.remove(&form);
+                }else{
+                    for (cb,reason) in assessment.errors{
+                        form_errors.insert(cb,reason);
+                    }
+                }
+            }
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -1929,7 +2002,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, win.focused_button,
-                    &invalid_radio_groups, &win.textures, &win.input_sessions,
+                    &invalid_radio_groups, &form_errors, &win.textures,
+                    &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
                 #[cfg(target_os="linux")]
@@ -1940,9 +2014,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             }
             // Keyboard buttons share the exact same host callback channel
             // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
-            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
-                && win.focused_input.is_none(){win.focused_button}else{None};
-            fb.clicked_callback_id=click_cb.or(radio_action).or(keyboard_click);
+            fb.clicked_callback_id=validated_click;
 
             if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
@@ -2121,6 +2193,7 @@ fn render_children(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &HashMap<u64,forms::FieldError>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2130,7 +2203,7 @@ fn render_children(
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
             render_node(d, child, prepared, now, sdf, click_anim, focused_input,
-                focused_button, invalid_radio_groups, textures,
+                focused_button, invalid_radio_groups, form_errors, textures,
                 input_sessions, text_views, fonts, shaped);
         }
     }
@@ -2147,6 +2220,7 @@ fn render_node(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &HashMap<u64,forms::FieldError>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2160,7 +2234,7 @@ fn render_node(
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
             focused_input, focused_button, invalid_radio_groups,
-            textures, input_sessions, text_views, fonts, shaped, false);
+            form_errors, textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2168,13 +2242,13 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,focused_button,invalid_radio_groups,textures,
-                input_sessions,text_views,fonts,shaped,true);
+                focused_input,focused_button,invalid_radio_groups,form_errors,
+                textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
     render_children(d, node, layout, now, sdf, click_anim, focused_input,
-        focused_button, invalid_radio_groups, textures, input_sessions,
-        text_views, fonts, shaped);
+        focused_button, invalid_radio_groups, form_errors, textures,
+        input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2188,6 +2262,7 @@ fn paint_node<D: RaylibDraw>(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &HashMap<u64,forms::FieldError>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2318,11 +2393,14 @@ fn paint_node<D: RaylibDraw>(
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")).or(Some("#0D1117")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
-            let border = parse_color(prop_string(node, "border").or(Some("#30363D")));
+            let on_change = parse_callback_id(prop_string(node, "on_change"));
+            let field_error = on_change.and_then(|id|form_errors.get(&id)).copied();
+            let border = if field_error.is_some(){
+                Color::new(235,76,89,255)
+            }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
             // The focus decision was already made by pure hit testing.
-            let on_change = parse_callback_id(prop_string(node, "on_change"));
             let is_focused = match (focused_input.as_ref(), on_change) {
                 (Some(fi), Some(cb)) => fi.on_change == cb,
                 _ => false,
@@ -2349,6 +2427,16 @@ fn paint_node<D: RaylibDraw>(
             } else {
                 d.draw_rectangle_rec(rect, bg);
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
+            }
+            if let Some(reason)=field_error {
+                // Compact local hint plus border; never displays private text.
+                if rect.width>=130.0 && rect.height>=28.0 {
+                    let label=reason.label();
+                    let x=(rect.x+rect.width-(label.len() as f32*6.5)-8.0)
+                        .max(rect.x+10.0);
+                    d.draw_text(label,x as i32,(rect.y+3.0) as i32,
+                        11,Color::new(255,125,130,255));
+                }
             }
 
             return;
