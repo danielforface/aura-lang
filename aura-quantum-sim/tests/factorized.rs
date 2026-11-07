@@ -28,7 +28,7 @@ fn random_gate(n:usize,s:&mut u64)->Gate {
     }
 }
 #[test]
-fn 128_qubit_64_independent_bell_pairs_with_t_need_only_4096_live_state_bytes(){
+fn factor_128_qubit_64_independent_bell_pairs_with_t_need_only_4096_live_state_bytes(){
     let mut state=FactorState::zero(128,DEFAULT_MEMORY_BUDGET).unwrap();
     for q in (0..128).step_by(2) {
         state.apply(Gate::H(q)).unwrap();
