@@ -6,7 +6,8 @@ Date: 2026-11-07. **STATUS: experimental integration candidate only. NOT MERGED,
 - Exact source: Agent C Draft #108 `082954880b07abfd5c3d2f7b0e5c924c14cdcab7` (C-009).
 - Reused **unchanged Git tree** for `aura-quantum-sim/**`; reused **unchanged blob** for `.github/workflows/quantum-reference-sim.yml`; reused unchanged agent-C notes tree `docs/quantum/agent-c/**`. Source ownership remains Agent C.
 - New integration-steward-owned `.github/workflows/x001-q28-landing.yml` tests the candidate at the **actual main-parent tree**. This note is an integration artifact, not a new Q28 implementation.
-- **Deliberately not imported:** Core / compiler, Lumina, PR #95 governance/roadmap and central evidence ledgers, root Cargo manifest or lockfiles, old stacked #9–#95 history.
+- One additional X/steward change to legacy `.github/workflows/ci.yml`: pin the Core workspace runner from floating `ubuntu-latest` (resolved to Ubuntu 26.04/GCC 15.2 in candidate PR) to previously qualified `ubuntu-24.04`. The new CI run on the earlier candidate SHA failed in **vendored upstream z3-sys 0.8.1 C++** with `column_info.h:50` referring to nonexistent `m_low_bound`; C source files are unchanged. Historical Core CI run #32820641326 SUCCESS on main Ubuntu 24.04. This narrows the tested CI environment; it does **not** claim Ubuntu 26.04/GCC15 support and cannot be treated as permanent upstream dependency remediation.
+- **Deliberately not imported:** Core / compiler source, Lumina, PR #95 governance/roadmap and central evidence ledgers, root Cargo manifest or lockfiles, old stacked #9–#95 history. The single legacy Core CI runner pin above is an explicit **integration-owned workflow adjustment**, not a Core-source edit.
 - Do not mistake C's #108 27 own commits / 39 paths against its parent for the 260 commits / 170 paths that `main...#108` includes. This candidate is an isolated content-preserving extraction, not the C PR's history.
 
 ## Boundaries and acceptance
