@@ -204,3 +204,83 @@ model to the shared dynamic JSON protocol is **D2** and requires producer/
 consumer coordination and versioned schema acceptance before it occurs.
 Independent Q23/Q37 scientific review and real integration to main remain
 pending. Tests: `tests/density_noise.rs` and `examples/density_noise.rs`.
+
+
+## Noisy dynamic circuits and offline JSON CLI (Agent C, experimental v1)
+
+**BEFORE:** density-matrix Kraus noise was callable only as separate matrix
+operations, and the prior `aura-quantum-run` JSON v1 handled pure-state
+dynamic circuits without noise.
+
+**AFTER:** the additive `noisy_circuit` Rust API executes actual mixtures,
+ideal Z instruments, classical correction gates and conditional noise.
+A completely separate binary, `aura-quantum-noisy-run`, accepts the **new**
+experimental schema `aura.quantum.noisy-request/1` and emits
+`aura.quantum.noisy-result/1`. It **does not change** pure
+`aura.quantum.circuit-request/1` or the preexisting `aura-quantum-run`.
+
+Runnable independent examples:
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example noisy_feedback
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run \
+  < aura-quantum-sim/fixtures/noisy_bell_feedforward_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run \
+  < aura-quantum-sim/fixtures/noisy_tomography_v1.json
+```
+
+Noisy instructions: `{"op":"gate","gate":{"kind":"h","target":0}}`,
+`{"op":"noise","channel":{"kind":"amplitude_damping","qubit":0,"gamma":0.36}}`,
+`{"op":"noise","channel":{"kind":"phase_flip","qubit":0,"probability":0.25}}`,
+`{"op":"measure","qubit":0,"into_bit":0}`,
+`{"op":"reset","qubit":0}` (nonselective CPTP; no random draw),
+`{"op":"reset_observed","qubit":0}` (sampled instrument + conditional X;
+internal prior outcome **exposed**), and
+`{"op":"if","bit":0,"equals":true,"action":{"kind":"noise","channel":{...}}}`
+(with `action.kind=gate` for feedback unitaries). Invalid, unknowable
+classical bits and even invalid **unreachable** branches are rejected before
+execution. `Reset` and `ResetObserved` are explicitly different operations
+in this profile; neither is silently treated as ordinary pure-state gate.
+
+Result fields: seed, engine, profile, density_profile, norm_tolerance,
+`evidence_class="simulation"`, `qpu_hardware_jobs=0`, per-shot
+nullable classical bit arrays, ordered reset/measurement event traces and
+`histogram` keyed by classical bit strings **MSB-first**, where `?`
+denotes an unwritten classical bit. `inspect_final_density=true` is
+supported **only for one shot and at most four qubits**; it includes complete
+row-major complex pairs `[re,im]`, Born diagonal, trace and purity from
+the **actual final mixed state after conditional instruments**, not just a
+state-label or approximate visual mock.
+
+Offline admission: maximum 256 KiB request, six qubits, 32 classical bits,
+1024 shots, 192 operations, 4,194,304 matrix-work units
+(`shots * operations * 4^qubits`, treating zero operations as one),
+16 MiB logical budget and serialized output. The underlying density
+matrix itself supports up to 8 qubits; the CLI intentionally uses a stricter
+six-qubit budget. This guard is not a physical RSS or CPU time deadline;
+full interpreter/compiler validation and per-target resource proof remain
+separate responsibilities.
+
+Ideal channels: amplitude damping `gamma` and phase flip `p`, both
+finite [0,1] local parameters; **not calibrated noise levels**. Conditional
+measurement on mixed states uses postselected density matrices, not a
+fabricated pure trajectory. Because storage uses f64, extreme tiny physical
+weights may underflow to zero, and numeric positive-semidefiniteness is
+checked only by experimental fixtures, not independently certified under
+arbitrary sequences. `Trace(\u03c1)`, Hermiticity and diagonal sanity
+are required by the engine; full mathematical positivity is not formally
+proven.
+
+**Scientific evidence:** a separate independent Qiskit 2.6.1 /
+NumPy 2.3.4 Python 3.11 harness compares 24 deterministic 1–3 qubit
+noisy circuits, native Kraus operators, Qiskit `DensityMatrix.evolve`,
+and Qiskit's nonselective reset against the Rust **full complex density
+matrix** (not merely probabilities). No QPU, cloud or hardware credentials.
+Independent Q23/Q37 scientific review, producer-consumer approval for
+future Quantum IR / language integration, and global Governance Issue #100
+remain distinct **NOT YET QUALIFIED** gates.
+
+Source API: `src/noisy_circuit.rs`; JSON adapter `src/noisy_json.rs`;
+real binary `src/bin/aura-quantum-noisy-run.rs`; acceptance
+`tests/noisy_circuit.rs` and `tests/noisy_json.rs`;
+external oracle `tools/check_qiskit_noisy.py`.

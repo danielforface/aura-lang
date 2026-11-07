@@ -49,6 +49,14 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run < aura-quantum-sim/fixtures/bell_feedforward_v1.json > /tmp/aura-quantum-json-result.json
           python3 -c 'import json; d=json.load(open("/tmp/aura-quantum-json-result.json")); assert d["status"]=="simulated" and d["qpu_hardware_jobs"]==0 and len(d["results"])==128 and all(len(x["trace"])==2 for x in d["results"]); print("Q28_JSON_CLI REAL_CALLER_PASS schema="+d["schema"]+" shots="+str(d["shots"]))'
 
+      - name: Execute noisy JSON Bell feedback and full density tomography
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example noisy_feedback
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run < aura-quantum-sim/fixtures/noisy_bell_feedforward_v1.json > /tmp/q28-noisy.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run < aura-quantum-sim/fixtures/noisy_tomography_v1.json > /tmp/q28-noisy-density.json
+          python3 -c 'import json; b=json.load(open("/tmp/q28-noisy.json")); d=json.load(open("/tmp/q28-noisy-density.json")); assert b["schema"]=="aura.quantum.noisy-result/1" and b["shots"]==256 and sum(b["histogram"].values())==256 and all(x["bits"][1] is False for x in b["results"]); assert d["evidence_class"]=="simulation" and d["qpu_hardware_jobs"]==0 and abs(d["final_density"]["purity"]-0.6448)<1e-11 and len(d["final_density"]["row_major_complex_pairs"])==4; print("Q28_NOISY_CLI_SMOKE_PASS shots=256 tomography=4 density_purity="+str(d["final_density"]["purity"]))'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -74,6 +82,11 @@ jobs:
           mkdir -p ci-artifacts/q28
           cargo run --release --quiet --manifest-path aura-quantum-sim/Cargo.toml --example export_qiskit_vectors > ci-artifacts/q28/c004-rust-vectors.csv
           python aura-quantum-sim/tools/check_qiskit_parity.py ci-artifacts/q28/c004-rust-vectors.csv ci-artifacts/q28/c004-qiskit-report.json
+      - name: Compare 24 noisy final density matrices against independent Qiskit Kraus
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run
+          python aura-quantum-sim/tools/check_qiskit_noisy.py aura-quantum-sim/target/release/aura-quantum-noisy-run ci-artifacts/q28/c008-noisy-qiskit-report.json
       - name: Upload reproducible parity evidence
         if: always()
         uses: actions/upload-artifact@v4

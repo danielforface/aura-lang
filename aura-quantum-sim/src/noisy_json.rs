@@ -57,6 +57,11 @@ impl From<NoisyCircuitError> for NoisyProtocolError {
 }
 
 #[derive(Debug, Deserialize)]
+struct SchemaProbe {
+    schema: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
     schema: String,
@@ -101,37 +106,12 @@ enum GateSpec {
     Cz { control: usize, target: usize },
     Swap { a: usize, b: usize },
 }
-impl GateSpec {
-    fn gate(self) -> Gate {
-        match self {
-            Self::H { target } => Gate::H(target),
-            Self::X { target } => Gate::X(target),
-            Self::Y { target } => Gate::Y(target),
-            Self::Z { target } => Gate::Z(target),
-            Self::S { target } => Gate::S(target),
-            Self::T { target } => Gate::T(target),
-            Self::Cx { control, target } => Gate::Cnot { control, target },
-            Self::Cz { control, target } => Gate::Cz { control, target },
-            Self::Swap { a, b } => Gate::Swap { a, b },
-        }
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ChannelSpec {
     PhaseFlip { qubit: usize, probability: f64 },
     AmplitudeDamping { qubit: usize, gamma: f64 },
-}
-impl ChannelSpec {
-    fn channel(self) -> NoiseChannel {
-        match self {
-            Self::PhaseFlip { qubit, probability } =>
-                NoiseChannel::PhaseFlip { qubit, probability },
-            Self::AmplitudeDamping { qubit, gamma } =>
-                NoiseChannel::AmplitudeDamping { qubit, gamma },
-        }
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -291,11 +271,13 @@ pub fn execute_noisy_json_bytes(raw: &[u8]) -> Result<String, NoisyProtocolError
     if raw.len() > MAX_NOISY_REQUEST_BYTES {
         return Err(NoisyProtocolError::InputTooLarge);
     }
-    let request: Request = serde_json::from_slice(raw)
+    let probe: SchemaProbe = serde_json::from_slice(raw)
         .map_err(|err| NoisyProtocolError::InvalidJson(err.to_string()))?;
-    if request.schema != NOISY_REQUEST_SCHEMA {
+    if probe.schema != NOISY_REQUEST_SCHEMA {
         return Err(NoisyProtocolError::UnsupportedSchema);
     }
+    let request: Request = serde_json::from_slice(raw)
+        .map_err(|err| NoisyProtocolError::InvalidJson(err.to_string()))?;
     if !(1..=MAX_NOISY_QUBITS).contains(&request.qubits) {
         return Err(NoisyProtocolError::ProfileLimit("qubits"));
     }

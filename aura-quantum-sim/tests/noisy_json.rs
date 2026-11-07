@@ -155,7 +155,7 @@ fn conditional_noise_is_supported_and_affects_correct_branch() {
         let branch=output["results"][0]["bits"][0].as_bool().unwrap();
         seen[branch as usize]=true;
         let probs=output["final_density"]["basis_probabilities"].as_array().unwrap();
-        let one=(probs[2].as_f64().unwrap()+probs[3].as_f64().unwrap());
+        let one=probs[2].as_f64().unwrap()+probs[3].as_f64().unwrap();
         if branch { assert!(one.abs()<1e-12); }
         else { assert!((one-0.5).abs()<1e-12); }
     }
