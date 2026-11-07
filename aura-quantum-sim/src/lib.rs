@@ -16,6 +16,7 @@ pub mod symbolic;
 pub mod symbolic_json;
 pub mod dispatch_json;
 pub mod factorized;
+pub mod factorized_json;
 
 use std::mem::size_of;
 
