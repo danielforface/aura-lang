@@ -346,3 +346,30 @@ Use a new ID (EV-022 onward), with `task-id | source commit | OS/arch/compiler/f
 
 
 - **EV-171 (2026-10-28; GitHub PR metadata / plan integrity only, not software qualification):** [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58) opened as an independent documentation/governance proposal stacked on Q03 source branch underlying [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57). GitHub PR changed-file list showed 12 files, including proposed V2, progress/handoff/evidence, index, protocol, public/legacy roadmap, README/Lumina docs and governance script; `MASTER_ROADMAP_V1.md`, release ledger and all compiler sources absent from diff. Static validation via connected GitHub reads: all 88 original V1 acceptance rows retained verbatim in V2, 102 additional unique Q12–Q18 task IDs, 19 gate tracker rows and all Q12–Q18 NOT_STARTED. Draft pending review; CI not yet observed; no dynamic tests, compiler changes, proof claims, merges or releases. Current Q03-001 work continues separately.
+
+
+## Planning-only evidence — 2026-11-05 Quantum V3 strategic decision
+
+- **Authorization:** maintainer explicitly selected entry into quantum programming; requested substantive updates to all relevant future roadmap/documentation. This authorizes documentation planning, NOT merge, release, QPU cost, private credentials or new proof claims.
+- **Input:** exact proposed V2 snapshot `2d300a7b61316bb722ca6570f18bae6f9374d0ff` on Draft #58. Master V1/V2 historical immutable contents preserved.
+- **Static plan claim (must be checked by CI):** 190 inherited Q00–Q18 rows unchanged; 284 new unique Q19–Q38 rows; total 474; 20 new R16–R35 trains, statuses all NOT_STARTED, 0 quantum runtime/proof acceptance executions.
+- **Sources reviewed for planning:** official OpenQASM 3.1 repository, QIR Alliance Base Profile, Guppy linear type specification, MQT QCEC equivalence, Qiskit Target model. External documentation is not evidence that Aura supports these technologies.
+- **What is not verified:** no quantum unit test, no simulated Bell/GHZ result, no quantum equivalence proof, no native hardware, no paid job, no Quantum LSP/Sentinel feature, no production release. Governance checker CI and GitHub PR checks must be observed after final docs-inclusive SHA before calling the plan review-ready.
+- **Protected:** Agent A Q03, Agent B Lumina, frozen V1/V2, `main`, release ledger and other implementation code untouched.
+
+
+## 2026-11-06 — Evidence checkpoint: navigational process, not code qualification
+
+- **Method:** GitHub API PR metadata, changed file lists and select diffs for PR #57, #99, #103, #106, #108; Issue #51/#59 bodies; CI job conclusions; public claims policy and qualification/governance source.
+- **Observed:** 78 PRs (70 open/8 merged) and 73 listed branches. PR #57 47 paths/278 commits includes production AST/IR/C and tests; #103 has only diagnostic C helper macro and native callback tests; #106 has diagnostic-only Rust ACK counters under feature flag and tests. #99 has real Rust simulator; #108 external Qiskit parity and benchmark scaffolding. No QPU evidence and no proof of normal-production post-R lost key.
+- **CI distinction:** native RED #42213904423 followed by newer PR #42214100867 4/4 success (different SHA); #42195826388 and #42214329430 successful exact observed B/C heads. User-facing product completeness not inferred from green CI. Remote E0599 is a known test-only missing method, not an IBus semantic regression.
+- **Process correction:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md) requires feature slice/bug closure or consequential research exception and bans deliberately compile-broken default remote CI. Large mother ledgers now integration-owned; updated only together on meaningful checkpoint. Review/merge requires explicit maintainer authorization; all existing branches and frozen Master plans unchanged.
+- **Status:** POLICY/DOC REVIEW, NOT production feature proof. Additional product implementation remains for owner agents. Detailed source links in [audit](WORKFLOW_AUDIT_2026-11-06.md).
+
+
+## 2026-11-06 — Multi-agent shared ancestry and integration-contract evidence (policy only)
+
+- **API observations:** Draft #106 `7b45b025cfc68239901dcdb4bca22a363862f47d</BT>, 5 own PR commits/9 paths, 6/6 Push/PR success (live at observation); compare main...B had **542 ahead, 0 behind**, merge-base `e8f1c35a4a56adbde983dce38bba59a8c4eee105</BT> and 171 aggregate changed paths. A...B diverged 336/188; relative to V3 #95, B diverged 327 ahead/4 behind (as of observed parent). Same three docs PROGRESS, HANDOFF, EVIDENCE overlap among A/B/plan #95; B/C production paths did not directly overlap in per-PR changed file sets.
+- **Interpretation:** GitHub parent-based mergeability and a successful 6/6 do not attest main-safe integration, and inherited 542 commits cannot be assigned to the native Autofocus feature. No bulk merge is authorized. [Cross-Agent Protocol](CROSS_AGENT_COORDINATION_V1.md) demands a dependency DAG and reviewed inclusion/exclusion with synthetic target tests.
+- **Implementation:** [AGENTS](../../AGENTS.md), [Phase Lifecycle](PHASE_LIFECYCLE_V1.md), [Universal Continue Prompt](CONTINUE_AGENT_PROMPT.md), [Ownership Registry](AGENT_OWNERSHIP.json) and one lightweight structural CI check added to plan branch. Three lane orders and central navigation updated. No production source code or shared agent branches changed.
+- **Boundary:** AGENTS.md is only effective when read by the agent or installed into its workspace; historical branches do not automatically inherit it. All counts and head SHAs are time-scoped snapshots. Q28 branch-level IN_PROGRESS, all actual release and main-merge claims unchanged.

@@ -1,5 +1,21 @@
 # Aura
 
+> **2026-11-07 integration leadership:** a fourth continuing **Agent X** is chartered as the architecture/integration director for independent A/B/C lanes. [Charter](docs/qualification/agents/AGENT_X_INTEGRATION_DIRECTOR.md), [startup prompt](docs/qualification/AGENT_X_CONTINUE_PROMPT.md) and [standing Issue #110](https://github.com/danielforface/aura-lang/issues/110). X supports good existing work, corrects only evidence-backed harmful deviations, orchestrates PR/contract/CI integration, and cannot merge/release without maintainer approval. The role runs on explicit user-triggered pulses, not in the background.
+
+
+> **2026-11-06 — Agent coordination & every-phase re-entry:** Read [AGENTS.md](AGENTS.md), [Cross-Agent Protocol](docs/qualification/CROSS_AGENT_COORDINATION_V1.md), [Phase Lifecycle](docs/qualification/PHASE_LIFECYCLE_V1.md) and [Universal “ממשיכים” Prompt](docs/qualification/CONTINUE_AGENT_PROMPT.md) at the start of **EVERY phase**, before shared writes and at handoff. Shared PR ancestry, contracts and docs can conflict even when production source paths do not. On Draft #106, 542 commits ahead of main reflect stacked history, NOT 542 Autofocus commits; its native Autofocus is already implemented in the unmerged branch. Feature-PR mergeability against a parent does not certify main integration.
+
+
+> **2026-11-06 production-first execution correction:** [Delivery policy](docs/qualification/DELIVERY_OPERATING_POLICY_V1.md) now measures functional source-to-runtime delivery rather than diagnostic pulse counts, prohibits fake missing-symbol CI RED, restricts new stacked Drafts and moves shared-document updates to integration milestones. Existing historical plans/soundness claims are unchanged; [audit](docs/qualification/WORKFLOW_AUDIT_2026-11-06.md) and [agent orders](docs/qualification/INTEGRATION_AND_CI_PLAYBOOK.md) detail evidence and next actions. Agent C has actual unmerged Q28 reference-simulator code in [Draft #99](https://github.com/danielforface/aura-lang/pull/99), advanced by [Draft #108](https://github.com/danielforface/aura-lang/pull/108); do not misstate that as zero development or a certified release.
+
+
+## Aura Quantum — strategic full-stack extension (2026-11-05)
+
+The maintainer has **decided to enter quantum computing**. This is a future product mandate, not an existing implementation or qualification result. The [proposed Master Roadmap V3](docs/qualification/MASTER_ROADMAP_V3.md) **preserves the 190 inherited Q00–Q18 tasks** from the V2 proposal and adds **284 measurable quantum acceptance tasks across Q19–Q38 and R16–R35**. The [Quantum documentation program](docs/quantum/README.md) includes scientific semantics, linear qubit ownership, Quantum IR, checker-integrated optimization, OpenQASM/QIR, local simulation, hardware targets, QPU jobs, noise/QEC/pulse research, Sentinel Quantum Studio, security and independent external qualification.
+
+**Current status:** planning only, all quantum gates NOT_STARTED. No quantum code, simulator, QIR exporter, real QPU submission or proof has been implemented or certified by this documentation change. V1 and V2 remain unchanged; V2 and V3 technical scope are still Draft review. This does not divert Agent A Q03/PR #57 or Agent B Lumina, authorize merges, paid device execution or broaden existing release claims.
+
+
 **A proof-driven systems programming language and developer platform.**
 
 Aura brings program verification into the normal edit → build → run loop. The repository contains the language frontend, semantic core, Aura IR, verification engine, development VM, native-oriented backends, package tooling, language server, Sentinel desktop IDE, SDK, standard library, plugins, Lumina UI runtime, FFI tooling, examples, release tooling, and Android build support.

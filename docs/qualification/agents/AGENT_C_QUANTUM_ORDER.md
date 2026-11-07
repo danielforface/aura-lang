@@ -1,0 +1,19 @@
+# Agent C — Immediate delivery order (Aura Quantum Q28)
+**Status:** continuation of actual implementation, not a new research-only cycle. **Owner:** Agent C, [Draft #99](https://github.com/danielforface/aura-lang/pull/99) → [#102](https://github.com/danielforface/aura-lang/pull/102) → [#105](https://github.com/danielforface/aura-lang/pull/105) → [#108](https://github.com/danielforface/aura-lang/pull/108). Existing Q28 Rust source is REAL, although not merged and not proof-qualified as a quantum computing platform.
+
+1. Read [Production-first policy](../DELIVERY_OPERATING_POLICY_V1.md). Fetch live branch/CI; see `aura-quantum-sim/src/lib.rs`, real Rust test suites and current Qiskit parity results. Do not restart from Phase C-001 or pretend Q28 NOT_STARTED merely because V3 planning baseline is older.
+2. Preserve exclusively `aura-quantum-sim/` and owned `docs/quantum/agent-c/`; **no shared Root Cargo.lock/Workspace**, no Core/Compiler/Sentinel edits without interface RFC and ownership transfer. No QPU spend.
+3. Current C-004 Qiskit external parity and finite scaling metrics are valuable **scientific oracles**, but the next **Delivery Phase must expose or expand an actual callable simulator feature** with a Rust integration use case — e.g. supported reset/mid-circuit measurement and classical feed-forward, a bounded density-matrix/noise operation, or a versioned input/output circuit-execution API. Select ONE based on Q28, existing code, scientific feasibility and actual product dependency; implement tests and a small running example. Do not create more benchmark-only PRs for the same numerical property.
+4. First define observable API BEFORE→AFTER, scientific oracle and invalid-input controls. Under specified profiles distinguish exact amplitudes, seeded sampling, approximate numerical bounds and hardware observation. No fake green/no unimplemented-API E0599 remote RED.
+5. Stay on the current reviewed continuation branch until the feature slice is complete. Work with steward to plan integration of the old 4-deep Draft chain. Do not auto-rebase/merge or open C-005 nested Draft by default.
+6. Run local Rust checks/tests/Clippy and scoped scientific fixtures first, then required exact-SHA CI. Reconcile Q28 task progress at integration milestone; branch evidence is real even though V3 planning docs have older snapshot.
+7. Keep supporting evidence concise and make remaining Q22/Q23/Q24 integration dependencies explicit without rewriting other agent's responsibilities.
+
+**Success:** one new scientifically sound simulator capability *usable by code* and reviewed for integration, not only a longer verification matrix.
+
+
+## Verified next-step correction — dynamic simulator / JSON CLI now implemented (2026-11-06)
+
+Current observed [Draft #108](https://github.com/danielforface/aura-lang/pull/108) `f8a5fbeff04ebb11ff063d46cd60493679bf97d0</BT> **already contains bounded dynamic Rust circuit execution and an offline JSON CLI** with scientific parity. Do NOT start by reimplementing these; select a genuinely missing Q28 capability, core independent contract/interop or bounded scientific correctness fix from LIVE code. Keep existing tests and model assumptions and ensure an actual callable new result. Four-depth Draft chain #99/#102/#105/#108 is D4 integration debt, not an independent clean 1-PR feature. Q28 branch-level IN_PROGRESS does not certify all science or any real QPU.
+
+**Every phase:** read [AGENTS](../../../AGENTS.md), [lifecycle](../PHASE_LIFECYCLE_V1.md), [cross-agent rules](../CROSS_AGENT_COORDINATION_V1.md) and [continue prompt](../CONTINUE_AGENT_PROMPT.md) from current Draft #95. Refresh live #108, check Q22/Q23/Q27 consumer/producer contracts before IR/JSON protocol modifications, open one shared contract Issue if D2 but do not block unrelated Q28 work. Work in owned Quantum paths, no source edits to Core/Lumina or new ancestor Drafts without reviewed integration decision.

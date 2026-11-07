@@ -50,7 +50,7 @@ No gate is CLOSED just because tasks were coded. Each listed acceptance requirem
 - V1 remains byte-identical and V2 preserves every V1 original acceptance row verbatim; after adoption V2 also freezes in place;
 - while V2 exists, the stage tracker must list Q00–Q18, with newly proposed gates NOT_STARTED and no invented CI;
 - frozen master file equals base branch's content, once the base branch contains it;
-- both `PROGRESS.md` and `CONTEXT_HANDOFF.md` changed on any substantive PR once bootstrap merged;
+- central `PROGRESS.md` and `CONTEXT_HANDOFF.md` are optional for individual feature PRs. If either is changed, both are changed together at serialized integration checkpoints. A specific exception requires reviewer approval.
 - all task IDs referenced in status/handoff exist in the master plan (format sanity);
 - minimum metadata and valid gate states.
 
@@ -67,3 +67,45 @@ If head differs from recorded notes, **GitHub is the authority for code and bran
 ## 8. Scope expansion with no implementation diversion
 
 Future development chats MUST see the new eventual Desktop/Web/iOS/Android application-platform goal (Q12–Q18), but MUST continue Q03-001 on Draft PR #57 as the current implementation stream until maintainer direction changes it. A roadmap amendment never authorizes a source rebase/merge, automatic implementation switch, removal of earlier requirements, or all-platform stability claim. Preserve V1, require reviewed supersession for V2, keep PROGRESS/HANDOFF updated together and EVIDENCE_LOG append-only. Core releases and separately qualified UI releases remain distinct; no software evidence exists merely because a document is updated.
+
+
+## 9. Quantum V3 additive mandate and concurrent-agent operations (2026-11-05)
+
+- The maintainer has confirmed Aura WILL enter quantum software engineering. This is an approved **direction**, not automatic acceptance of unreviewed V3 technical task scope, V2 supersession or release.
+- [Master V3](MASTER_ROADMAP_V3.md) is new and additive; exactly 190 inherited requirements from V2 must be preserved byte-for-byte. V1 and V2 remain unchanged. Gate IDs Q19–Q38 and trains R16–R35 are assigned as NOT_STARTED pending actual evidence.
+- Quantum agent claim: GitHub Issue includes stable Q ID, exact allowed/forbidden files, base SHA, owner, reviewers and schema dependencies. Shared immutable contract docs are read by everyone. Active status and evidence go through GitHub PR/Issue comments and an **integration-agent-serialized** central ledger update; agents must NOT independently modify the same large PROGRESS, HANDOFF or EVIDENCE files.
+- No agent may write to Agent A Q03/PR #57, Agent B Lumina/IBus branches, `main`, frozen V1/V2, `Cargo.lock`, shared Core semantics or runtime API absent reviewed interface ownership transfer.
+- Quantum test gates require exact-SHA positive+negative reproducibility, soundness-specific trust manifests, no fabricated proofs, versioned OpenQASM/QIR/target profiles and independent scientific review before broad claims.
+- QPU/provider submissions are NEVER inferred from authorization for source development; physical job spending, private keys and calibration/pulse control require separate explicit permission and cost caps.
+- A no-code planning CI result establishes plan integrity only, not quantum source semantics or device qualification.
+
+
+## 10. Production-first delivery and integration amendment (2026-11-06; supersedes conflicting process steps)
+
+**Authority:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md). This later, maintainer-directed amendment supersedes the old procedural requirement in §§3,4,7,8 to update both mother ledgers for every increment. Those earlier sentences remain as historical context, not current obligations. Quantum and Core program trust clauses are unchanged.
+
+A **Delivery Phase** must deliver accepted source-to-runtime behavior, a real production fix, measurable accepted reliability/performance change or a release-unblocking integration. Diagnostic-only studies and docs-only updates are **not counted as completed production phases** unless explicitly scoped as a standalone scientific/QA/policy deliverable with consequential acceptance. Stop repeating the same investigation after a bounded decision point. Product safety checks remain mandatory; never speculate about IBus causal attribution or quantum proof.
+
+**No remote fake RED:** local test-first is preferred. A deliberately missing method (`rustc E0599`) must not be pushed to ordinary GitHub Actions as semantic RED. Use isolated diagnostic CI only where environment-specific observation is essential and truthful.
+
+**No more Draft pileup:** one active feature PR per agent/vertical slice; no new nested micro-Drafts while ancestors remain unreviewed. Existing Draft history is preserved and reviewed through the integration queue. No automatic merge/rebase/close. Explicit reviewer/maintainer approval is required for integration.
+
+**Central docs:** Code PRs track scoped status in PR/Issue. Integration steward serially updates both PROGRESS and HANDOFF at real milestones, with one synthesized append-only EVIDENCE entry if appropriate. Governance checks allow *neither or both*, not necessarily both on each feature PR. No evidence may be falsified or erased. This reduces write collisions without abandoning handoff discipline.
+
+**Next work:** [Agent A Core](agents/AGENT_A_CORE_ORDER.md), [Agent B Lumina](agents/AGENT_B_LUMINA_ORDER.md), [Agent C Quantum](agents/AGENT_C_QUANTUM_ORDER.md), [Integration and CI](INTEGRATION_AND_CI_PLAYBOOK.md). Roadmap IDs, scientific proof/physical evidence distinctions and release GO/NO-GO remain unchanged.
+
+
+## 11. Every-phase re-anchoring and cross-agent shared-surface safety (2026-11-06)
+
+**Current binding navigation:** [root AGENTS.md](../../AGENTS.md), [PHASE_LIFECYCLE_V1.md](PHASE_LIFECYCLE_V1.md), [CROSS_AGENT_COORDINATION_V1.md](CROSS_AGENT_COORDINATION_V1.md), [AGENT_OWNERSHIP.json](AGENT_OWNERSHIP.json) and [CONTINUE_AGENT_PROMPT.md](CONTINUE_AGENT_PROMPT.md) supersede any earlier assumption that exclusive directory ownership by itself guarantees independent integration. Re-read them at the start of **each** development phase, before shared API/file changes or Push, and at handoff. Existing branches may not contain the new files: fetch read-only from the current Draft #95 branch.
+
+A/B/C have exclusive production-write domains, but can share unmerged ancestry, API/schema/ABI, global Cargo lockfiles, CI resources and three central qualification ledgers. Classify dependency D0–D5 with GitHub exact PR base/head and a separate main comparison. Request producer/consumer ACK only when an actual shared contract changes; do not introduce forms or approval ceremonies for genuinely disjoint work. If two agents need the same file, only one owner writes; the other proposes a reviewed interface adapter/test. No auto merge/force. No PR mergeability against its parent is an approval to land in main.
+
+**Live example:** B [Draft #106](https://github.com/danielforface/aura-lang/pull/106) has genuine `TextInput(autofocus)</BT> functionality, but 542 commits ahead of main in its entire inherited tree; it shares PROGRESS/HANDOFF/EVIDENCE with A and plan #95. C [#108](https://github.com/danielforface/aura-lang/pull/108) already has a dynamic Rust simulator and offline JSON CLI, also in a nested Draft. These facts are snapshots; **must be refreshed** at each phase. The integrator decides reviewable inclusion/exclusion, not the feature author alone.
+
+
+## 12. Standing integration director — Agent X (2026-11-07)
+
+User has appointed a fourth continuous leadership agent to oversee the independent Core, Lumina and Quantum lanes. Follow [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md) and [X continuation prompt](AGENT_X_CONTINUE_PROMPT.md) on **every** X pulse. Unlike a one-off integration audit, X owns the evolving dependency DAG, contract mediation, reviewed integration-readiness testing and serialized central milestones. X does NOT own the code of A/B/C and cannot independently merge, release, force push or impose unsupported refactors.
+
+**Evidence-gated leadership:** default GREEN means specific encouragement, unblock, and no disturbance. AMBER means investigate and hear the agent's rationale. RED means documented material defect/process breach and minimal corrective acceptance. CROSS-LANE mediates dependency and ownership. Recognize JUSTIFIED_VARIANCE; do not invent deviations to demonstrate authority. If all lanes are productive, X advances integration rather than resetting them. [Issue #110](https://github.com/danielforface/aura-lang/issues/110) carries X's standing decisions, [#109](https://github.com/danielforface/aura-lang/issues/109) the integration backlog, and [#59](https://github.com/danielforface/aura-lang/issues/59) ownership claims. Calls from separate chats are not automatically synchronous.

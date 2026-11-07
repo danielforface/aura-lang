@@ -1005,3 +1005,51 @@ Corrected stale header references carried over from initial R0/Q01 branch. Curre
 
 - **Plan review:** [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58), head `plan/lumina-full-platform-qualification-v2`, base `qual/Q03-001-native-record-scalar`. It proposes immutable successor `MASTER_ROADMAP_V2.md`, plus mother docs and governance; original V1 and release ledger untouched. Proposed and NOT merged/approved. Static ID check: 88 original rows retained, 102 new, 19 gates; new platform gates NOT_STARTED. Actual CI/any job success for this documentation PR NOT YET OBSERVED. Docs-only, no runtime work or releases.
 - **Implementation priority unchanged:** Return to [Draft PR #57](https://github.com/danielforface/aura-lang/pull/57) / Q03-001 and latest separate Q03 handoff and live CI. The UI roadmap does not interrupt Record/Native semantics, reorder the existing tasks, authorize merging the stack or imply modern UI capability already exists. The NEXT SAFE ACTION remains to inspect PR #57 and continue its precise test-first scoped acceptance after checking full four-job CI; review PR #58 independently when convenient. Always update progress/handoff together in subsequent changes.
+
+
+## 2026-11-05 — Strategic Quantum entry decision, proposed Master Roadmap V3
+
+**User decision:** Aura WILL enter advanced quantum computing development, with a complete rigorous, staged proof-driven product domain. This is not hypothetical. The developer was instructed to update future roadmap and documentation *now*; preserve actual release truths.
+
+**Documentation implementation:** branch `plan/aura-quantum-full-stack-v3` based on proposed V2 planning branch exact `2d300a7b61316bb722ca6570f18bae6f9374d0ff`. New [Master V3](MASTER_ROADMAP_V3.md) contains all 190 original Q00–Q18 rows unchanged plus **284 new Q19–Q38 acceptance obligations** and 20 R16–R35 release-train entries. Associated `docs/quantum/` charter, semantic trust contract, architecture/interoperability, qualification/negative tests, agent coordination, references, reference programs and RFC govern planning. V1/V2 untouched.
+
+**Authority:** maintainer **committed the strategic direction**, but technical V3 details still Draft/reviewable. Do not treat planning as implementation, CI as a proof, or partner capability as Aura support. Q19–Q38 all NOT_STARTED. QIR/OpenQASM versioned planned interop, classical Z3 is NOT universal quantum checker, simulator samples are NOT exact mathematical proof, nondestructive repeat measurement is allowed by physics, and resource ownership prevents invalid duplication of handles rather than asserting every No-Cloning theorem by compilation.
+
+**Agent coordination:** Current Agent A remains working Q03/PR #57, Agent B remains on its Lumina/IBus Draft chain. New Quantum work claims independent Issues and exclusive file ownership. Central PROGRESS/HANDOFF/EVIDENCE managed serially by integration agent, GitHub issues/PRs are the cross-branch shared truth. No quantum agent ownership implied merely by this documentation.
+
+**Governance:** versioned V3 additive plan; check 474 unique IDs and original 190 verbatim rows, Q00–Q38 status rows, no modification of V1/V2, and no unqualified proof/hardware claim. Continue normal CI for each exact docs-inclusive HEAD. No merge/force/rebase/direct-main or QPU spend authorized.
+
+**Next safe action:** verify actual Draft PR head and CI status of proposed V3, obtain technical plan review, open small independent Q19 and Q27/Q28/Q37 acceptance Issues (test-first / formal specification), coordinate ownership, and continue existing Q03 and Lumina work on their respective exact active branches.
+
+
+## 2026-11-06 — Mandatory new production-first operating policy (supersedes old per-pulse instructions)
+
+**Read first:** [DELIVERY_OPERATING_POLICY_V1.md](DELIVERY_OPERATING_POLICY_V1.md), [WORKFLOW_AUDIT_2026-11-06.md](WORKFLOW_AUDIT_2026-11-06.md), [INTEGRATION_AND_CI_PLAYBOOK.md](INTEGRATION_AND_CI_PLAYBOOK.md). Existing old requirements to append to mother docs every micro-commit, push default remote deliberately broken tests, or open a new stacked Draft for every small diagnostic are superseded. The safety/correctness/release claims policy is **not** weakened.
+
+**Live GitHub discovery (2026-11-06):** 78 PRs inspected (70 open, 8 merged), 73 branch names on first page. Agent A Core Draft #57 (Issue #51 is an Issue, not PR) real C/IR production; Agent B Lumina #103/106 only diagnostic helper scheduling and counters in latest phases, with genuine real upstream Hangul callbacks but no demonstrated standard production lost-commit defect; Agent C Quantum #99 to #108 has real Rust reference simulator and Qiskit parity, still unmerged. Q28 now marked IN_PROGRESS as project branch activity, not full science/release qualification. Last PR106 and PR108 final heads had successful job matrices at observed time. Final #57 HEAD still subject to independent CI check.
+
+**Decision and corrections:** [Agent A](agents/AGENT_A_CORE_ORDER.md): close meaningful production Q03 source→C slice/integration; [Agent B](agents/AGENT_B_LUMINA_ORDER.md): one normal-production test/decision then actual safe fix or new user-visible UI feature; [Agent C](agents/AGENT_C_QUANTUM_ORDER.md): real callable simulator feature beyond repeated oracle-only checkpoints; integration steward manages the existing Draft ancestry and CI waste. Issue #59 remains coordination, not IBus defect. PR or Issue comments carry new instructions across branch boundaries; no automatic synchronization, overwrite, merge or force push.
+
+**Governance change:** `check_governance.py` now allows neither/both shared ledgers in a feature PR. If central ledger changes, update both. V1/V2/V3 freeze and task IDs retained; separate Q28 status from scientific qualification. No Quantum QPU spend/release. See [policy](DELIVERY_OPERATING_POLICY_V1.md) for exact phase, test and merge definitions.
+
+**Next safe action:** ensure process policy CI is green at final #95 docs SHA; send agent owner scoped orders through existing GitHub threads; invite review of integration plan; agents continue independently without a new nested Draft, rechecking their live heads and CI before implementing real product work.
+
+
+## 2026-11-06 — Shared surfaces and mandatory every-phase policy re-entry
+
+User required coordination rules for agents encountering common code, API, ancestry, CI or project documents, and a robust broad “ממשיכים” prompt that **re-reads instructions on every phase**. Added [root AGENTS.md](../../AGENTS.md), [PHASE_LIFECYCLE_V1.md](PHASE_LIFECYCLE_V1.md), [CROSS_AGENT_COORDINATION_V1.md](CROSS_AGENT_COORDINATION_V1.md), [CONTINUE_AGENT_PROMPT.md](CONTINUE_AGENT_PROMPT.md), [AGENT_OWNERSHIP.json](AGENT_OWNERSHIP.json) and structural CI test; linked from the operating policy, root README, qualification index, agent A/B/C orders and quantum workstreams. Re-anchor before change, before CI push, and after results; do not rely on an old chat state or stale branch contents.
+
+**Concrete evidence:** B #106 Autofocus actual real Linux IBus/X11 implementation at observed 7b45b025, 6/6 CI; its 542-ahead-main inherited history makes it D4 even while native production paths do not conflict with A. Relative to V3 #95, B is diverged, 327 ahead/4 behind at prior snapshot; three shared qualification ledgers overlap A/B/#95 and require serialized integration. A #57 Core is diverged from B, with a separate typed/Native subset; C #108 Q28 already includes bounded dynamic simulation/offline JSON CLI. Do not repeat these as future unimplemented work. Pinned figures are historic evidence: re-fetch live heads and branch ancestry before each action.
+
+**Authority:** [Operating Protocol](OPERATING_PROTOCOL.md) and [Production First](DELIVERY_OPERATING_POLICY_V1.md) remain binding; Master V1/V2/V3 frozen and untouched. New per-phase D0–D5 requirements prevent silent consumer ABI changes and cross-agent writes, but independent D0 production continues without more bureaucracy. If a contract changes, one Issue handshake; if a file overlaps, one writer; if history overlaps, target integration DAG and exact merged-tree tests. Updated policy on the V3 Draft branch only; existing A/B/C branches have not been modified, merged or rebased.
+
+**Next safe action:** verify CI on the final new docs+test SHA, notify active owner PRs and #59/#109 with direct policy links. Then integrator reviews #106 dependency graph and main-safe landing plan without merging by default; A/B/C continue real product features under their own current PRs.
+
+
+## 2026-11-07 — Continuous Agent X leadership charter (recurring, not one-shot)
+
+**Maintainer decision:** Create a fourth X agent to lead Architecture, Core, Lumina and Quantum integration through its OWN stream of repeated "ממשיכים" pulses, assess each agent's work and direct the common end-to-end product goal. This role is **supportive by default**: verified productive agents get specific encouragement and protection from unnecessary disruption; unjustified material deviation triggers evidence-based RED correction only after considering plausible rationale. Justified technical variance is permitted.
+
+**Artifacts:** [X charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md), [X first/recurring prompt](AGENT_X_CONTINUE_PROMPT.md), [Issue #110](https://github.com/danielforface/aura-lang/issues/110), root [AGENTS](../../AGENTS.md), [Phase Lifecycle](PHASE_LIFECYCLE_V1.md) and [Integration Playbook](INTEGRATION_AND_CI_PLAYBOOK.md); machine-readable ownership registry and test ensure X is coordination-only, without write entitlement over A/B/C source and without autonomous merge authority. No forced changes to active A/B/C branches. **X has not yet started a separate user-triggered operating pulse.**
+
+**Next safe action:** start Agent X with full X startup prompt, refresh all current PR/Issues/CI (not old snapshot SHAs), produce first dependency DAG and justifiable GREEN/AMBER/RED/CROSS-LANE decisions; post material instructions in actual PR threads and the standing #110 issue. Do not invent deviations or merge without user approval.

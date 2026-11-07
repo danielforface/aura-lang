@@ -37,6 +37,26 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 | Q16 | Android and iOS real apps | NOT_STARTED | V2 proposal only |
 | Q17 | Developer UX and UI ecosystem | NOT_STARTED | V2 proposal only |
 | Q18 | Cross-platform assurance and qualification | NOT_STARTED | V2 proposal only |
+| Q19 | Quantum scientific charter, governance and profiles | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q20 | Linear quantum ownership/effects | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q21 | Quantum language frontend | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q22 | Quantum IR and effects | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q23 | Formal quantum semantics | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q24 | Equivalence and translation validation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q25 | Quantum optimizer and synthesis | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q26 | Target routing and scheduling | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q27 | OpenQASM/QIR interoperability | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q28 | Quantum simulation | IN_PROGRESS | Branch work #99/#108: standalone Rust simulator implemented and Qiskit parity tested; **DRAFT/NOT_MERGED/NOT_RELEASED**; qualification not yet established |
+| Q29 | Hybrid job orchestration | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q30 | Provider/QPU adapters | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q31 | Noise and mitigation | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q32 | QEC and fault tolerance research | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q33 | Pulse and calibration research | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q34 | Quantum libraries and algorithms | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q35 | Sentinel Quantum Studio | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q36 | Quantum SDK and DX | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q37 | Security, performance and CI | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
+| Q38 | External qualification and research ecosystem | NOT_STARTED | Quantum V3 **planning-only**; no code or scientific release evidence |
 
 ## Active Q00 task tracker
 
@@ -780,3 +800,35 @@ This file is an evolving dashboard, **not** the immutable plan. Gate completion 
 ## 2026-10-28 — V2 platform plan submitted for explicit review in Draft PR #58 (EV-171)
 
 - [Draft PR #58](https://github.com/danielforface/aura-lang/pull/58) is OPEN/DRAFT, head `plan/lumina-full-platform-qualification-v2`, base `qual/Q03-001-native-record-scalar` ([active compiler PR #57](https://github.com/danielforface/aura-lang/pull/57)). Actual GitHub changed-file list confirms a 12-file documentation/governance-only diff, new V2 plan and original V1/RELEASE_LEDGER unchanged. Verified statically all 88 old requirement rows are preserved, 102 new distinct tasks and Q00–Q18 tracked with Q12–Q18 NOT_STARTED. CI validation for the new PR is NOT YET OBSERVED, runtime/UI tests NOT RUN. The maintainer has NOT merged/approved V2. **Keep current implementation on Q03-001 / PR #57**; this is future-scope review only.
+
+
+## 2026-11-05 — Aura Quantum strategic mandate / V3 proposal only
+
+- Maintainer explicitly decided Aura WILL enter quantum development. Technical scope is captured in [proposed V3](MASTER_ROADMAP_V3.md), stacked as a docs-only planning branch on the untouched proposed V2 snapshot. V1/V2 accepted tasks are unchanged in place.
+- 20 new gates Q19–Q38, **284 stable new quantum tasks**, 20 future R16–R35 qualification trains. Exact older 190 task rows preserved; total **474**. All new gates **NOT_STARTED** and no Quantum feature marked VERIFIED, RELEASABLE or IMPLEMENTED.
+- New docs `docs/quantum/`: charter, semantics/trust, architecture, qualification, ownership, references, reference programs and RFC. Governance checker extended for Q00–Q38 and frozen V1/V2/V3 protection.
+- **What did NOT happen:** no compiler/Quantum IR/SDK change, no actual quantum simulation, proof, hardware invocation, QPU spend, merge/rebase or interruption of Agent A / Agent B. A documentation-only CI pass cannot establish runtime properties.
+- **Next safe action:** review technical V3 scope and agent ownership, run plan-integrity CI, open bounded Q19 research/contract Issues after reviewed approval; independently continue existing Q03 and Lumina work.
+
+
+## 2026-11-06 — Delivery-governance correction / actual branch progress
+
+**Process incident:** [Audit](WORKFLOW_AUDIT_2026-11-06.md) confirms excessive nested Draft PR debt, mistaken missing-symbol remote RED and repeated mother-ledger edits. [Production-first policy](DELIVERY_OPERATING_POLICY_V1.md) corrects the *process*, without revoking CI, safety or proof obligations. This is a policy-only modification in V3 planning branch, not a production code fix.
+
+**Branch reality:** Core [Draft #57](https://github.com/danielforface/aura-lang/pull/57) has real Record/Native Compiler source changes and is still open, [Issue #51](https://github.com/danielforface/aura-lang/issues/51) open; latest CI must be rechecked at current SHA. B [#106](https://github.com/danielforface/aura-lang/pull/106) is diagnostics on real Hangul events under a **test-only deferral**, no normal helper production-path fix proved; [Issue #59](https://github.com/danielforface/aura-lang/issues/59) is coordination. C [#99](https://github.com/danielforface/aura-lang/pull/99) builds genuine standalone Rust Q28 simulator and C-004 [#108](https://github.com/danielforface/aura-lang/pull/108) provides Qiskit parity/scaling evidence. **Q28 is IN_PROGRESS in a separate Draft branch**, not integrated/qualified; this summary supersedes the older V3 static planning label NOT_STARTED for project activity, but not release/acceptance status.
+
+**Review queue:** [Agent A](agents/AGENT_A_CORE_ORDER.md) prioritizes tested Core behavioral slice + integration; [Agent B](agents/AGENT_B_LUMINA_ORDER.md) chooses production input-loss fix OR closes research honestly and ships UI; [Agent C](agents/AGENT_C_QUANTUM_ORDER.md) ships next usable scientific API feature; [integration plan](INTEGRATION_AND_CI_PLAYBOOK.md) reduces Draft debt and CI waste with reviewer-approved merges. No automatic modifications to active agent branches, main or releases. Normal agent PRs no longer required to edit central ledger docs; integration steward owns milestone updates.
+
+
+## 2026-11-06 — Multi-agent shared-history collision / per-phase execution contract
+
+[Cross-Agent Protocol](CROSS_AGENT_COORDINATION_V1.md), [Phase Lifecycle](PHASE_LIFECYCLE_V1.md), [Universal Continue Prompt](CONTINUE_AGENT_PROMPT.md) and [root AGENTS.md](../../AGENTS.md) provide repeatable Stage0–4 checks for every development phase. Structured ownership map: [AGENT_OWNERSHIP.json](AGENT_OWNERSHIP.json). Existing source ownership unchanged; common code/API/history/CI/docs resources now classified D0–D5. No code-branch merges or source edits were performed in this policy change.
+
+**Observed B:** #106 at `7b45b025cfc68239901dcdb4bca22a363862f47d` implements Autofocus, 6/6 CI, but its history is 542 commits ahead of main; its own PR base...head is a 5-commit/9-file delta. Core A #57 is diverged from B (A...B 336 ahead / 188 behind at observation). Shared docs PROGRESS/HANDOFF/EVIDENCE overlap across A/B/#95; integration steward must resolve status without blind merges. C #108 already has usable bounded dynamic simulator and offline JSON CLI. These snapshots are **not** a main/release qualification or an implicit merge approval.
+
+**Next safe action:** A/B/C each re-anchor on live PRs and obey lane-specific orders at every “ממשיכים”; integration steward produces reviewed ancestry DAG and keep/exclude dispositions for PR #106 vs main and unrelated #76/#89/#95; approve source-code integration only after synthetic target tree tests. No automatic force/rebase/merge and no policy claim based on parent-only mergeability.
+
+
+## 2026-11-07 — Agent X appointed for continuing cross-lane integration leadership
+
+Owner appointed **Agent X**, a recurring user-triggered chief architecture/integration role across A Core (#57), B Lumina (#106) and C Quantum (#108). [Standing charter](agents/AGENT_X_INTEGRATION_DIRECTOR.md), [X startup/continue prompt](AGENT_X_CONTINUE_PROMPT.md), [Issue #110](https://github.com/danielforface/aura-lang/issues/110). X supports GREEN on-track agents and corrects only evidenced, unjustified, material deviation after investigating rationale; shared D0–D5, PR ancestry and integration milestones remain its operational focus. X owns no A/B/C implementation source; integration into main and release still require owner approval. **Status: X CHARTER CREATED, dedicated X development chat/pulse not yet executed.** No code release or integration merge performed by this documentation change.

@@ -1,0 +1,35 @@
+name: Quantum V3 roadmap integrity
+on:
+  push:
+    branches:
+      - plan/aura-quantum-full-stack-v3
+  pull_request:
+    branches:
+      - plan/lumina-full-platform-qualification-v2
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quantum-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout all history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate inherited roadmap, gate IDs, claims and handoff
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE" ]; then
+            python3 tools/qualification/check_governance.py "$PR_BASE"
+          else
+            python3 tools/qualification/check_governance.py
+          fi
+      - name: Independently verify V1/V2/V3 preservation and planned statuses
+        run: python3 tools/qualification/test_quantum_roadmap_v3.py
+      - name: Validate shared-agent ownership and recurring phase instructions
+        run: python3 tools/qualification/test_agent_coordination.py
