@@ -974,3 +974,116 @@ cell arithmetic_return(p: Signed64, delta: i64) ->:
             "{label}: wrong source ABI guard: {err}");
     }
 }
+
+
+#[test]
+fn native_record_string_control_unicode_literal_bytes_match_source() {
+    // Q03-001: lexer-decoded escapes in a String Record field are UTF-8
+    // bytes, not raw control characters in the generated C source. The
+    // original C emitter wrote bare LF/CR into a C quoted string (strict
+    // Clang syntax error), and its raw high Unicode literals were compiler
+    // execution-charset dependent. Test real source -> Checker -> IR ->
+    // native Clang O0/O2, with literal (aura_io_println) and captured
+    // interpolation (printf) consumers together.
+    let source = r#"
+type Document = record { text: String, code: u32 }
+cell print_document(prefix: String) ->:
+    val doc: Document = Document { text: "first\nsecond\t\"quote\"\\slash\r\u{0007}\u{05D0}\u{1F642}:100%", code: 9 }
+    io.println(doc.text)
+    io.println("head={prefix}; newline=\n; tab=\t; slash=\\; percent=100%; utf8=\u{05D0}\u{1F642}; bell=\u{0007}")
+    yield doc.code
+"#;
+    let ast = aura_parse::parse_source(source)
+        .expect("escaped Unicode Record String source parses");
+    Checker::new().check_program(&ast)
+        .expect("Record field and literal/printf String consumers typecheck");
+    let original = lower_program(&ast).expect("real escaped String source lowers");
+    validate_module(&original).expect("escaped String SSA validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized escaped String SSA validates");
+
+    let expected = concat!(
+        "first\nsecond\t\"quote\"\\slash\r\u{0007}\u{05D0}\u{1F642}:100%\n",
+        "head=outer; newline=\n; tab=\t; slash=\\; percent=100%; utf8=\u{05D0}\u{1F642}; bell=\u{0007}\n",
+    );
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let c = emit_module(ir, None).expect("escaped String Record emits native C");
+        // Ensure the C source contains the escaped spelling, never literal
+        // Unicode bytes or an unquoted control LF inside a C string.
+        assert!(!c.module_c.contains("\u{05D0}")
+            && !c.module_c.contains("\u{1F642}"),
+            "{label}: C source must be ASCII-only UTF-8 octal escapes");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &c.module_c).unwrap();
+        fs::write(tmp.0.join("stdlib.c"),
+            "#include <stdio.h>\nvoid aura_io_println(const char* s){puts(s);}\n").unwrap();
+        fs::write(tmp.0.join("driver.c"), concat!(
+            "#include <stdint.h>\n",
+            "uint32_t print_document(const char*);\n",
+            "int main(void){return print_document(\"outer\")==9u?0:1;}\n"
+        )).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("escaped_record_{label}_{}", &opt[1..]));
+            let build = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("stdlib.c")).arg(tmp.0.join("driver.c"))
+                .arg("-o").arg(&exe).output().expect("Clang native CI toolchain");
+            assert!(build.status.success(),
+                "{label}/{opt}: escaped Record String must compile under strict C: {}\n{}",
+                String::from_utf8_lossy(&build.stderr), c.module_c);
+            let result = Command::new(&exe).output().expect("run escaped native String");
+            assert!(result.status.success(),
+                "{label}/{opt}: String Record return ABI failed: {}",
+                String::from_utf8_lossy(&result.stderr));
+            assert_eq!(result.stdout, expected.as_bytes(),
+                "{label}/{opt}: String Record/printf escape bytes differ from Aura-decoded UTF-8");
+        }
+    }
+}
+
+#[test]
+fn native_c_string_embedded_nul_is_rejected_before_record_or_printf_escape() {
+    // Aura String can hold U+0000 but the currently qualified public C
+    // String ABI is a const char* without explicit length. Puts/printf,
+    // Record field reads and Cell returns would truncate at the first NUL.
+    // Do not silently emit "prefix\000suffix" as a valid-looking native
+    // result; both direct and nested captures must fail closed.
+    let cases = [
+        ("literal", r#"
+cell show_nul() ->:
+    io.println("prefix\u{0000}suffix")
+    yield 7
+"#),
+        ("record", r#"
+type RecordWithText = record { text: String, code: u32 }
+cell make_record() ->:
+    val data: RecordWithText = RecordWithText { text: "a\u{0000}b", code: 7 }
+    io.println(data.text)
+    yield data.code
+"#),
+        ("interpolated", r#"
+cell interpolated_nul(n: u32) ->:
+    io.println("before={n}\u{0000}after")
+    yield n
+"#),
+    ];
+    for (case, source) in cases {
+        let ast = aura_parse::parse_source(source).expect("embedded NUL Aura source parses");
+        Checker::new().check_program(&ast).expect("String with NUL is legal in source");
+        let original = lower_program(&ast).expect("NUL String Aura source lowers");
+        validate_module(&original).expect("NUL String IR structurally valid");
+        let mut optimized = original.clone();
+        aura_ir::optimize_module(&mut optimized);
+        validate_module(&optimized).expect("optimized NUL String IR validates");
+        for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+            let err = emit_module(ir, None).err()
+                .expect("embedded NUL cannot be emitted in NUL-terminated C String ABI");
+            assert!(err.message.contains("embedded NUL")
+                && err.message.contains("const char* ABI"),
+                "{case}/{label}: wrong fail-closed native String diagnostic: {err}");
+        }
+    }
+}

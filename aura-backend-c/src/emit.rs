@@ -1771,6 +1771,21 @@ fn emit_function(
                 }
 
                 InstKind::BindStrand { name, expr } => {
+                    // Aura's String contains arbitrary Unicode, including
+                    // U+0000. The currently qualified native String ABI is
+                    // a NUL-terminated const char*: a literal with embedded
+                    // NUL would be silently truncated by libc, Record fields
+                    // and String Cells. Reject it before emitting C until
+                    // an explicit pointer+length String representation is
+                    // qualified across consumers.
+                    if let RValue::ConstString(contents) = expr {
+                        if contents.contains('\0') {
+                            return Err(CBackendError { message: format!(
+                                "unqualified native String embedded NUL in Cell '{}' binding '{}': const char* ABI cannot represent length",
+                                f.name, name,
+                            ) });
+                        }
+                    }
                     if let Some(dest) = inst.dest {
                         // A Record local must preserve its nominal C struct
                         // identity; do not cast/copy it through Tensor ABI.
@@ -2337,19 +2352,13 @@ fn emit_rvalue_decl(dest: ValueId, _name: &str, rv: &RValue) -> (CType, String) 
 }
 
 fn push_c_printf_literal(out: &mut String, text: &str) {
-    for ch in text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '%' => out.push_str("%%"),
-            _ => out.push(ch),
-        }
-    }
+    // Preserve exactly the same UTF-8 and control-byte semantics as a
+    // normal C String literal. Only '%' is special for printf: a literal
+    // percent must never become a format specifier. The octal sequences
+    // emitted by escape_c_string() are fixed width, so a subsequent
+    // decimal or hexadecimal source character cannot extend an escape.
+    out.push_str(&escape_c_string(text).replace('%', "%%"));
 }
-
 
 #[derive(Clone, Debug)]
 enum CapturedStringSlot {
@@ -2814,7 +2823,24 @@ fn map_callee(name: &str) -> String {
 }
 
 fn escape_c_string(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    // Emitted C must be strictly valid even when Aura source uses \n,
+    // \r, \t, \u{...}, literal quotation marks and control characters.
+    // Escape raw UTF-8 bytes (not Unicode code points) to make the
+    // resulting C source encoding-independent and preserve exact bytes.
+    // Exactly three octal digits also prevent C escape greediness.
+    let mut escaped = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'\\' => escaped.push_str("\\\\"),
+            b'"' => escaped.push_str("\\\""),
+            b'\n' => escaped.push_str("\\n"),
+            b'\r' => escaped.push_str("\\r"),
+            b'\t' => escaped.push_str("\\t"),
+            0x20..=0x7E => escaped.push(byte as char),
+            _ => escaped.push_str(&format!("\\{:03o}", byte)),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
