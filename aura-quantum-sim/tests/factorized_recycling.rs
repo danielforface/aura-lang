@@ -93,6 +93,11 @@ fn full_complex_phase_after_every_measured_wire_recycle_matches_dense() {
             // Rejoin the same wire to a formerly entangled factor and
             // compare the complete interference-bearing quantum state again.
             let target=(q+1)%n;
+            // Restore a superposition before the controlled gate:
+            // a projected Z-eigen control would *correctly* act locally
+            // without re-entangling. H makes actual entanglement again.
+            split.apply(Gate::H(q)).unwrap();
+            dense.apply(Gate::H(q)).unwrap();
             let gate=Gate::Cnot{control:q,target};
             split.apply(gate.clone()).unwrap();
             dense.apply(gate).unwrap();
@@ -119,6 +124,10 @@ fn ten_wire_entanglement_after_measurement_frees_target_for_new_qubit() {
     assert_eq!(measured,dense.measure(0,&mut b).unwrap());
     assert_eq!(state.factor_widths(),vec![9,1,1]);
     assert_eq!(state.projective_wire_splits(),1);
+    // Measured q0 is a deterministic Z-eigenstate. To test a *real*
+    // new two-wire factor join, put it back in superposition first.
+    state.apply(Gate::H(0)).unwrap();
+    dense.apply(Gate::H(0)).unwrap();
     let gate=Gate::Cnot{control:0,target:10};
     state.apply(gate.clone()).unwrap();
     dense.apply(gate).unwrap();
