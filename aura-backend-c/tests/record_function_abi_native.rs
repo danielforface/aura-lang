@@ -749,37 +749,102 @@ cell invalid_construct(n: u32) ->:
 
 
 #[test]
-fn signed_record_arithmetic_wraps_consistently_with_ir_oracle_and_ubsan() {
-    // AURA-Q03-001 / Q03-006: source Record projects signed i64 fields.
-    // I32 arithmetic is tested separately through explicitly typed IR:
-    // source i32 return currently lowers as U32, which fails ABI validation
-    // and is not silently fixed by this C-only signed-overflow change.
-    // The IR Oracle has wrapping I64 Add/Sub/Mul and Neg; signed C overflow
-    // is UB and can disagree under Clang -O2.
+fn typed_record_i64_wraps_consistently_with_ir_oracle_and_ubsan() {
+    // AURA-Q03-001 / Q03-006: typed IR Record projects signed i64 fields.
+    // I32 modular arithmetic is exercised separately through typed scalar IR.
+    // Source signed arithmetic Return still infers U32 and must fail closed;
+    // this test does NOT claim that public source compiler path is qualified.
+    // IR Oracle uses modular i64 Add/Sub/Mul and Neg; C signed UB can diverge
+    // under optimizer, so stress the public typed native C backend.
     // Exercise externally supplied boundary values (not constant folding),
     // original+optimized Aura IR, both C optimization levels and UBSan.
-    let source = r#"
-type Signed64 = record { value: i64 }
-cell add64(p: Signed64, delta: i64) ->:
-    yield p.value + delta
-cell sub64(p: Signed64, delta: i64) ->:
-    yield p.value - delta
-cell mul64(p: Signed64, delta: i64) ->:
-    yield p.value * delta
-cell neg64(p: Signed64) ->:
-    yield -p.value
-cell aura_i64_from_wrapped_bits(n: i64) ->:
-    yield n
-cell probe_reserved64(n: i64) ->:
-    yield aura_i64_from_wrapped_bits(n)
-"#;
-    let ast = aura_parse::parse_source(source).expect("signed Record Aura source parses");
-    Checker::new().check_program(&ast).expect("signed Record source typechecks");
-    let original = lower_program(&ast).expect("signed Record source lowers to real IR");
-    validate_module(&original).expect("source signed Record SSA validates");
+    // Explicit typed IR is the qualified production C boundary today.
+    // Source Cell return inference for signed binary expressions still
+    // returns U32 and is tested fail-closed below, not silently patched.
+    let span: aura_ast::Span = (0, 0).into();
+    let mut original = aura_ir::ModuleIR::new();
+    let layout = vec![("value".to_string(), Type::I64)];
+    original.record_layouts.insert("Signed64".into(),layout.clone());
+    let rec = Type::Record { name:"Signed64".into(),fields:layout };
+    for (cell, op) in [
+        ("add64",Some(aura_ir::BinOp::Add)),
+        ("sub64",Some(aura_ir::BinOp::Sub)),
+        ("mul64",Some(aura_ir::BinOp::Mul)),
+        ("neg64",None),
+    ] {
+        let mut params = vec![aura_ir::Param {
+            name:"p".into(),ty:rec.clone(),span,value:aura_ir::ValueId(0),
+        }];
+        if op.is_some() {
+            params.push(aura_ir::Param {
+                name:"delta".into(),ty:Type::I64,span,value:aura_ir::ValueId(1)
+            });
+        }
+        let insts = vec![
+            aura_ir::Inst {
+                span,dest:Some(aura_ir::ValueId(2)),
+                kind:InstKind::GetField {
+                    base:aura_ir::ValueId(0),field_name:"value".into(),
+                },
+            },
+            aura_ir::Inst {
+                span,dest:Some(aura_ir::ValueId(3)),
+                kind:match op {
+                    Some(op) => InstKind::Binary {
+                        op,left:aura_ir::ValueId(2),right:aura_ir::ValueId(1),
+                    },
+                    None => InstKind::Unary {
+                        op:aura_ir::UnaryOp::Neg,operand:aura_ir::ValueId(2),
+                    },
+                },
+            },
+        ];
+        original.functions.insert(cell.into(),aura_ir::FunctionIR {
+            name:cell.into(),span,params,ret:Type::I64,
+            entry:aura_ir::BlockId(0),blocks:vec![aura_ir::BasicBlock {
+                id:aura_ir::BlockId(0),span,
+                hint:aura_ir::ExecutionHint::Sequential,insts,
+                term:aura_ir::Terminator::Return(Some(aura_ir::ValueId(3))),
+            }],
+        });
+    }
+    // A locally declared Cell may have the same spelling as a generated
+    // C helper, but the source and native linker namespaces cannot collide.
+    original.functions.insert("aura_i64_from_wrapped_bits".into(),aura_ir::FunctionIR {
+        name:"aura_i64_from_wrapped_bits".into(),span,
+        params:vec![aura_ir::Param {
+            name:"n".into(),ty:Type::I64,span,value:aura_ir::ValueId(0),
+        }],
+        ret:Type::I64,entry:aura_ir::BlockId(0),
+        blocks:vec![aura_ir::BasicBlock {
+            id:aura_ir::BlockId(0),span,
+            hint:aura_ir::ExecutionHint::Sequential,insts:vec![],
+            term:aura_ir::Terminator::Return(Some(aura_ir::ValueId(0))),
+        }],
+    });
+    original.functions.insert("probe_reserved64".into(),aura_ir::FunctionIR {
+        name:"probe_reserved64".into(),span,
+        params:vec![aura_ir::Param {
+            name:"n".into(),ty:Type::I64,span,value:aura_ir::ValueId(0),
+        }],
+        ret:Type::I64,entry:aura_ir::BlockId(0),
+        blocks:vec![aura_ir::BasicBlock {
+            id:aura_ir::BlockId(0),span,
+            hint:aura_ir::ExecutionHint::Sequential,
+            insts:vec![aura_ir::Inst {
+                span,dest:Some(aura_ir::ValueId(1)),
+                kind:InstKind::Call {
+                    callee:"aura_i64_from_wrapped_bits".into(),
+                    args:vec![aura_ir::ValueId(0)],
+                },
+            }],
+            term:aura_ir::Terminator::Return(Some(aura_ir::ValueId(1))),
+        }],
+    });
+    validate_module(&original).expect("typed signed Record IR validates");
     let mut optimized = original.clone();
     aura_ir::optimize_module(&mut optimized);
-    validate_module(&optimized).expect("optimized signed Record SSA validates");
+    validate_module(&optimized).expect("optimized signed Record IR validates");
 
     let pairs64: &[(i64, i64)] = &[
         (0, 0), (1, -1), (-1, -1), (i64::MAX, 1),
@@ -798,10 +863,10 @@ cell probe_reserved64(n: i64) ->:
         let mut args = vec![record];
         if op != "neg64" { args.push(OracleValue::I64(y)); }
         let result = run_oracle_entry(ir, op, &args, OracleConfig::default())
-            .expect("Oracle accepts real signed Record and computes arithmetic");
+            .expect("Oracle accepts typed signed Record IR and computes arithmetic");
         assert!(result.ok, "{op} Oracle failed on {x}/{y}: {result:?}");
         assert_eq!(result.return_value, Some(OracleValue::I64(expected)),
-            "{op}: signed Record IR Oracle wrapping behavior changed");
+            "{op}: typed signed Record IR Oracle wrapping behavior changed");
     };
     // Standalone driver deliberately receives runtime inputs from argv so
     // neither the C optimizer nor the Rust IR optimizer can fold the
@@ -835,7 +900,7 @@ int main(int argc, char** argv) {
 }
 "#;
     for (label, ir) in [("source", &original), ("optimized", &optimized)] {
-        let c = emit_module(ir, None).expect("signed Record emits defined native C");
+        let c = emit_module(ir, None).expect("typed signed Record emits defined native C");
         assert!(c.runtime_h.contains("aura_i64_from_wrapped_bits")
             && c.runtime_h.contains("aura_i32_from_wrapped_bits"),
             "{label}: wrapped integer conversion helpers must be present");
@@ -878,5 +943,34 @@ int main(int argc, char** argv) {
                 run("probe_reserved64",n,0,n);
             }
         }
+    }
+}
+
+
+#[test]
+fn unqualified_signed_record_source_return_still_fails_closed_before_native_c() {
+    // The current source Checker represents the return of p.value + delta
+    // as U32 even when operands have i64 type. C emission must not cast the
+    // result or claim source i64 arithmetic is already qualified. The typed
+    // IR arithmetic support above is independent of this pending source
+    // result-type contract.
+    let source = r#"
+type Signed64 = record { value: i64 }
+cell arithmetic_return(p: Signed64, delta: i64) ->:
+    yield p.value + delta
+"#;
+    let ast = aura_parse::parse_source(source).expect("signed Record source parses");
+    Checker::new().check_program(&ast).expect("source Checker accepts arithmetic expression");
+    let original = lower_program(&ast).expect("signed Record source IR lowers");
+    validate_module(&original).expect("signed source IR structurally validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized signed source IR validates");
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let err = emit_module(ir, None).err()
+            .expect("unqualified signed source return must not coerce to unsigned ABI");
+        assert!(err.message.contains("C return scalar type mismatch")
+            && err.message.contains("arithmetic_return"),
+            "{label}: wrong source ABI guard: {err}");
     }
 }
