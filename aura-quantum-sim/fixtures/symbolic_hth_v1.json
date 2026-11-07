@@ -1,0 +1,29 @@
+{
+  "schema": "aura.quantum.symbolic-request/1",
+  "qubits": 1,
+  "classical_bits": 0,
+  "max_memory_bytes": 16777216,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@ on:
       - quantum/agent-c-q28-reference-simulator-001
       - quantum/agent-c-q28-numerical-oracles-002
       - quantum/agent-c-q28-differential-assurance-003
+      - quantum/agent-c-q28-calibration-parity-004
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
@@ -15,6 +16,7 @@ on:
       - plan/aura-quantum-full-stack-v3
       - quantum/agent-c-q28-reference-simulator-001
       - quantum/agent-c-q28-numerical-oracles-002
+      - quantum/agent-c-q28-differential-assurance-003
     paths:
       - 'aura-quantum-sim/**'
       - 'docs/quantum/agent-c/**'
@@ -37,5 +39,121 @@ jobs:
           components: clippy
       - name: Run independent statevector reference suite
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
+      - name: Execute callable dynamic feed-forward example
+        run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example feed_forward
+      - name: Execute Q28-007 density-matrix noise example
+        run: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example density_noise
+      - name: Execute versioned offline JSON CLI through public source fixture
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run < aura-quantum-sim/fixtures/bell_feedforward_v1.json > /tmp/aura-quantum-json-result.json
+          python3 -c 'import json; d=json.load(open("/tmp/aura-quantum-json-result.json")); assert d["status"]=="simulated" and d["qpu_hardware_jobs"]==0 and len(d["results"])==128 and all(len(x["trace"])==2 for x in d["results"]); print("Q28_JSON_CLI REAL_CALLER_PASS schema="+d["schema"]+" shots="+str(d["shots"]))'
+
+      - name: Execute noisy JSON Bell feedback and full density tomography
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example noisy_feedback
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run < aura-quantum-sim/fixtures/noisy_bell_feedforward_v1.json > /tmp/q28-noisy.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run < aura-quantum-sim/fixtures/noisy_tomography_v1.json > /tmp/q28-noisy-density.json
+          python3 -c 'import json; b=json.load(open("/tmp/q28-noisy.json")); d=json.load(open("/tmp/q28-noisy-density.json")); assert b["schema"]=="aura.quantum.noisy-result/1" and b["shots"]==256 and sum(b["histogram"].values())==256 and all(x["bits"][1] is False for x in b["results"]); assert d["evidence_class"]=="simulation" and d["qpu_hardware_jobs"]==0 and abs(d["final_density"]["purity"]-0.6448)<1e-11 and len(d["final_density"]["row_major_complex_pairs"])==4; print("Q28_NOISY_CLI_SMOKE_PASS shots=256 tomography=4 density_purity="+str(d["final_density"]["purity"]))'
+
+      - name: Execute 96-qubit stabilizer GHZ app and offline v1 CLI fixtures
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example stabilizer_ghz
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_feedback_v1.json > /tmp/q28-stab-bell.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_inspection_v1.json > /tmp/q28-stab-inspect.json
+          python3 -c 'import json; a=json.load(open("/tmp/q28-stab-bell.json")); b=json.load(open("/tmp/q28-stab-inspect.json")); assert a["shots"]==256 and sum(a["histogram"].values())==256 and all(v["bits"][1] is False for v in a["results"]); assert b["basis_probabilities"]==[.5,0,0,.5] and b["stabilizer_generators"]==["+XX","+ZZ"]; print("Q28_STABILIZER_CLI_REAL_CALLER_PASS shots=256 exact_bell_probs=4")'
+
+      - name: Execute exact Clifford+T symbolic phase app and offline JSON fixtures
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path aura-quantum-sim/Cargo.toml --example symbolic_phase
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_hth_v1.json > /tmp/q28-symbolic-hth.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run < aura-quantum-sim/fixtures/symbolic_bell_forced_v1.json > /tmp/q28-symbolic-bell.json
+          python3 -c 'import json; a=json.load(open("/tmp/q28-symbolic-hth.json")); b=json.load(open("/tmp/q28-symbolic-bell.json")); p=a["basis_joint_weights"]; assert (p[0]["numerator"]["rational"],p[0]["numerator"]["radical"],p[0]["denominator_power_of_two"])==("2","1",2); assert (p[1]["numerator"]["rational"],p[1]["numerator"]["radical"],p[1]["denominator_power_of_two"])==("2","-1",2); assert b["classical_register"]==[True,False] and b["final_joint_mass"]["denominator_power_of_two"]==1; assert a["sampling"]=="none;forced-outcomes-only" and a["qpu_hardware_jobs"]==0; print("Q28_SYMBOLIC_CLI_REAL_CALLER_PASS exact_HTH=2pmroot2_over4 Bell_branch=1_over2")'
+
+      - name: Record empirical long-depth precision residuals
+        run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
         run: cargo clippy --manifest-path aura-quantum-sim/Cargo.toml --all-targets -- -D warnings
+
+  q28-external-qiskit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout precise source
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install externally pinned numerical oracle
+        run: python -m pip install --disable-pip-version-check --no-cache-dir 'qiskit==2.6.1' 'numpy==2.3.4'
+      - name: Generate real Rust vectors and compare Qiskit results
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts/q28
+          cargo run --release --quiet --manifest-path aura-quantum-sim/Cargo.toml --example export_qiskit_vectors > ci-artifacts/q28/c004-rust-vectors.csv
+          python aura-quantum-sim/tools/check_qiskit_parity.py ci-artifacts/q28/c004-rust-vectors.csv ci-artifacts/q28/c004-qiskit-report.json
+      - name: Compare 24 noisy final density matrices against independent Qiskit Kraus
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run
+          python aura-quantum-sim/tools/check_qiskit_noisy.py aura-quantum-sim/target/release/aura-quantum-noisy-run ci-artifacts/q28/c008-noisy-qiskit-report.json
+      - name: Compare real Clifford tableau CLI against pinned Qiskit statevector
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run
+          python aura-quantum-sim/tools/check_qiskit_stabilizer.py aura-quantum-sim/target/release/aura-quantum-stabilizer-run ci-artifacts/q28/c009-stabilizer-qiskit.json
+      - name: Verify exact symbolic Clifford+T complex phase and forced branches against pinned Qiskit
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-symbolic-run
+          python aura-quantum-sim/tools/check_qiskit_symbolic.py aura-quantum-sim/target/release/aura-quantum-symbolic-run ci-artifacts/q28/c010-symbolic-qiskit.json
+      - name: Upload reproducible parity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q28-qiskit-parity-${{ github.sha }}
+          path: ci-artifacts/q28/
+          if-no-files-found: warn
+          retention-days: 30
+
+  q28-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout precise source
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Benchmark reproducible CPU-only scaling
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts/q28
+          rustc --version --verbose > ci-artifacts/q28/c004-environment.txt
+          uname -a >> ci-artifacts/q28/c004-environment.txt
+          lscpu >> ci-artifacts/q28/c004-environment.txt
+          date -u --iso-8601=seconds >> ci-artifacts/q28/c004-environment.txt
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --example scaling_bench
+          BINARY=aura-quantum-sim/target/release/examples/scaling_bench
+          for n in 4 8 12 16; do
+            "$BINARY" --qubits "$n" --gates 64 --reps 9 > "ci-artifacts/q28/c004-n${n}.csv"
+            if [ "$n" = 4 ]; then
+              cp "ci-artifacts/q28/c004-n${n}.csv" ci-artifacts/q28/c004-scaling.csv
+            else
+              tail -n 1 "ci-artifacts/q28/c004-n${n}.csv" >> ci-artifacts/q28/c004-scaling.csv
+            fi
+          done
+          cat ci-artifacts/q28/c004-scaling.csv
+      - name: Upload observed scaling evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q28-scaling-${{ github.sha }}
+          path: ci-artifacts/q28/
+          if-no-files-found: warn
+          retention-days: 30
