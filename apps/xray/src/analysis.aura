@@ -6,13 +6,13 @@
 # Returns full 256-MiB quanta of a Windows process working set.
 # 0..255 MiB => 0; 256..511 MiB => 1; etc.
 cell xray_memory_quanta_256m(working_set_mib: u32):
-    working_set_mib / 256
+    yield working_set_mib / 256
 
 # Returns full 64-MiB quanta of cumulative process read IO.
 # Cumulative counter, NOT a per-second rate.
 cell xray_io_read_quanta_64m(io_read_kib: u32):
-    io_read_kib / 65536
+    yield io_read_kib / 65536
 
 # Returns a 1,024-KiB resolution; helps exercise non-constant Aura logic.
 cell xray_working_set_mib(working_set_kib: u32):
-    working_set_kib / 1024
+    yield working_set_kib / 1024
