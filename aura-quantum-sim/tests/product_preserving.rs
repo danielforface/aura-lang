@@ -228,9 +228,9 @@ fn reference_rng_stream_is_unchanged_by_conditional_optimized_gate_execution() {
     let mut a=SeededRng::new(1601);
     let mut b=SeededRng::new(1601);
     assert_eq!(f.measure(0,&mut a).unwrap(),d.measure(0,&mut b).unwrap());
-    let control=if f.wire_probability(0,true).unwrap()>0.5 {0} else {1};
-    // The projection makes the measured wire exactly Z-classical.
-    apply_both(&mut f,&mut d,Gate::Cnot{control:0,target:control});
+    // The projection makes wire 0 exactly Z-classical regardless of
+    // its seeded outcome; choose a distinct target in another factor.
+    apply_both(&mut f,&mut d,Gate::Cnot{control:0,target:2});
     assert_eq!(f.measure(3,&mut a).unwrap(),d.measure(3,&mut b).unwrap());
     assert_eq!(a.next_u64(),b.next_u64());
     parity(&f,&d,4);
