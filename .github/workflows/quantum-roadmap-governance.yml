@@ -7,6 +7,7 @@ on:
     branches:
       - plan/lumina-full-platform-qualification-v2
       - main
+      - plan/aura-quantum-full-stack-v3
   workflow_dispatch:
 
 permissions:
@@ -33,3 +34,35 @@ jobs:
         run: python3 tools/qualification/test_quantum_roadmap_v3.py
       - name: Validate shared-agent ownership and recurring phase instructions
         run: python3 tools/qualification/test_agent_coordination.py
+      - name: Test scoped C-governance positive and negative contracts
+        run: python3 tools/qualification/test_scoped_quantum_pr.py
+
+  agent-c-scoped-ownership:
+    if: github.event_name == 'pull_request' && github.base_ref == 'plan/aura-quantum-full-stack-v3'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify base-owned path and Draft evidence policy
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/scoped_quantum.py"
+          if git cat-file -e "${PR_BASE_SHA}:tools/qualification/check_scoped_quantum_pr.py" 2>/dev/null; then
+            git show "${PR_BASE_SHA}:tools/qualification/check_scoped_quantum_pr.py" > "$TRUSTED"
+          elif [ "$PR_HEAD_REF" = "integration/x003-v3-scoped-governance" ]; then
+            # Bootstrap on this exact policy proposal only; reviewed before adoption.
+            cp tools/qualification/check_scoped_quantum_pr.py "$TRUSTED"
+          else
+            echo 'Scoped policy not adopted by base branch' >&2
+            exit 1
+          fi
+          python3 "$TRUSTED" --base-sha "$PR_BASE_SHA" --head-sha "$PR_HEAD_SHA" \
+            --pr-number "$PR_NUMBER" --head-ref "$PR_HEAD_REF" --base-ref "$PR_BASE_REF"
