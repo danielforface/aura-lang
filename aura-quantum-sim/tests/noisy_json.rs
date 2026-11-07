@@ -34,7 +34,13 @@ fn invoke(raw:&[u8],args:&[&str])->Output {
         .args(args)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
-    child.stdin.take().unwrap().write_all(raw).unwrap();
+    // A rejected --submit flag exits before stdin is consumed. BrokenPipe
+    // is an acceptable early-exit result for this *negative test* only.
+    let sent=child.stdin.take().unwrap().write_all(raw);
+    if args.is_empty() { sent.unwrap(); }
+    else if let Err(err)=sent {
+        assert_eq!(err.kind(),std::io::ErrorKind::BrokenPipe);
+    }
     child.wait_with_output().unwrap()
 }
 

@@ -1,7 +1,7 @@
 //! Q28 C-011: new public routing boundary across four existing offline engines.
 //! Verify real external process, nested result equality and fail-closed modes.
 use aura_quantum_sim::dispatch_json::{
-    execute_dispatch_json, DispatchError, REQUEST_SCHEMA, MAX_INPUT_BYTES,
+    execute_dispatch_json, REQUEST_SCHEMA, MAX_INPUT_BYTES,
 };
 use serde_json::{json, Value};
 use std::io::Write;
