@@ -183,7 +183,14 @@ Props:
 - `fg` / `color` (string color)
 - `radius` (int)
 - `on_click` (callback id string, internal)
-- `disabled` (string `"true"`, opt-in): a disabled Button remains visible with muted styling but cannot emit `on_click`. Its visible hit area also blocks pointer events from passing through to an overlapping Button underneath. Changing `disabled` at runtime takes effect on the next frame. Unset or `"false"` retains existing click behavior. This is a native pointer interaction contract, not yet keyboard or screen-reader accessibility.
+- `disabled` (string `"true"`, opt-in): a disabled Button remains visible with muted styling but cannot emit `on_click`. Its visible hit area also blocks pointer events from passing through to an overlapping Button underneath. Changing `disabled` at runtime takes effect on the next frame. Unset or `"false"` retains existing click behavior. Disabled state also excludes a Button from native keyboard focus traversal.
+
+Native Raylib keyboard workflow (Linux/X11 tested):
+- `Tab` and `Shift+Tab` traverse enabled, visible `Button` and `TextInput` controls in source order, with wrap-around. Active IBus TextInput composition retains its existing key authority.
+- `Enter`, keypad Enter and `Space` activate a focused `Button` via its existing `on_click` callback exactly once per key press; the focus indicator is an inset blue ring. When a `TextInput` is focused, Enter still submits and Space edits text.
+- Disabled, offscreen, clipped, invalid callback, and duplicate `on_click` ID Buttons cannot receive keyboard focus. Callback IDs in Button and TextInput domains remain type-distinct even when their numeric values are equal.
+- A Button loses keyboard focus immediately when disabled, removed, clipped or made ambiguous; enabling it again does not silently restore focus. Escape blurs a Button; native pointer selection restores focus.
+- This is Raylib native keyboard usability, **not** a screen-reader accessibility tree, OS semantic accessibility certification, or evidence of Windows/macOS/Wayland/Web/mobile parity.
 
 Children:
 - Ignored

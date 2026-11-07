@@ -329,6 +329,8 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    /// Native Button keyboard focus, exclusive with focused_input.
+    focused_button: Option<u64>,
     /// First eligible, explicitly opted TextInput can get initial focus only
     /// once per window; later user blur/Tab/click must never be overridden.
     autofocus_decided: bool,
@@ -1320,6 +1322,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    focused_button: None,
                     autofocus_decided: false,
                     input_sessions: HashMap::new(),
                     last_text_views: HashMap::new(),
@@ -1405,6 +1408,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
+            let space = win.rl.is_key_pressed(KeyboardKey::KEY_SPACE);
             let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
@@ -1443,7 +1447,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
             });
+            let keyboard_order=layout::keyboard_focus_order(tree,&planned_layout,&focus_order);
             reconcile_input_sessions(win,&focus_order,&revisions);
+            // No callback from a removed, clipped, disabled or ambiguous button.
+            if win.focused_button.is_some_and(|id|!keyboard_order.iter()
+                .any(|entry|matches!(entry,layout::HitTarget::Button(other) if *other==id))) {
+                win.focused_button=None;
+            }
             // The popup is overlaid outside the TextInput rectangle. Consume
             // its hit before ordinary layout hit testing would blur the IME.
             #[cfg(target_os="linux")]
@@ -1468,9 +1478,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
                     Some(layout::HitTarget::Button(id)) => {
-                        switch_input(win, None);Some(id)
+                        switch_input(win,None);
+                        win.focused_button=keyboard_order.iter().find_map(|candidate|match candidate {
+                            layout::HitTarget::Button(other) if *other==id=>Some(id),
+                            _=>None,
+                        });
+                        Some(id)
                     }
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
+                        win.focused_button=None;
                         if focus_order.iter().any(|candidate|matches!(candidate,
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
                             switch_input(win,Some((on_change,on_submit,value,
@@ -1503,19 +1519,37 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                         None
                     }
-                    None => {switch_input(win,None);None}
+                    None => {
+                        win.focused_button=None;
+                        switch_input(win,None);None
+                    }
                 }
             } else {None};
+            // Tab visits eligible native Buttons as well as text fields.
+            // A live IBus composition still owns Tab until explicitly ended.
             if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
-                let active=win.focused_input.as_ref().map(|fi|fi.on_change);
-                let target=layout::next_focus(&focus_order,active,reverse_tab);
-                match target {
-                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) =>
+                let active=win.focused_button.map(layout::FocusKey::Button)
+                    .or_else(||win.focused_input.as_ref()
+                        .map(|fi|layout::FocusKey::TextInput(fi.on_change)));
+                match layout::next_keyboard_focus(&keyboard_order,active,reverse_tab) {
+                    Some(layout::HitTarget::Button(id))=>{
+                        switch_input(win,None);
+                        win.focused_button=Some(id);
+                    },
+                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                        win.focused_button=None;
                         switch_input(win,Some((on_change,on_submit,value,
-                            revisions.get(&on_change).copied().flatten()))),
-                    _=>switch_input(win,None),
+                            revisions.get(&on_change).copied().flatten())));
+                    },
+                    None=>{
+                        win.focused_button=None;
+                        switch_input(win,None);
+                    },
                 }
             }
+            // The existing input/IME Escape branch below remains responsible
+            // for canceling preedit or blurring TextInput.
+            if escape {win.focused_button=None;}
             // User-visible opt-in autofocus is ONE-SHOT per native window,
             // never a repeated layout-driven focus request. A real pointer,
             // Tab, Escape or earlier focused field has priority; the selected
@@ -1872,7 +1906,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             if valid_frame {
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
-                    win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
+                    win.click_anim, &win.focused_input, win.focused_button,
+                    &win.textures, &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
                 #[cfg(target_os="linux")]
@@ -1881,9 +1916,18 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     paint_ibus_candidates(&mut d,panel,page,win.candidate_font.as_ref());
                 }
             }
-            fb.clicked_callback_id = click_cb;
+            // Keyboard buttons share the exact same host callback channel
+            // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
+            let plain_action=!ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+            let keyboard_click=if !tab && !escape && plain_action && (enter || space)
+                && win.focused_input.is_none(){win.focused_button}else{None};
+            fb.clicked_callback_id=click_cb.or(keyboard_click);
 
-            if let Some(id) = click_cb {
+            if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
             } else {
                 // Clear once the animation has elapsed.
@@ -2058,6 +2102,7 @@ fn render_children(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2066,7 +2111,8 @@ fn render_children(
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input,
+                focused_button, textures, input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2080,6 +2126,7 @@ fn render_node(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2092,7 +2139,8 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, textures, input_sessions, text_views, fonts, shaped, false);
+            focused_input, focused_button, textures, input_sessions,
+            text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2100,10 +2148,11 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,textures,input_sessions,text_views,fonts,shaped,true);
+                focused_input,focused_button,textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input,
+        focused_button, textures, input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2115,6 +2164,7 @@ fn paint_node<D: RaylibDraw>(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2441,6 +2491,15 @@ fn paint_node<D: RaylibDraw>(
             let tx = rect.x + (rect.width - est_w) / 2.0;
             let ty = rect.y + (rect.height - ts as f32) / 2.0;
             d.draw_text(label, tx as i32, ty as i32, ts, fg);
+            // Inset optical ring for native keyboard/pointer Button focus.
+            // This does not claim an OS accessibility focus tree.
+            if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                .is_some_and(|id|focused_button==Some(id))
+                && rect.width>10.0 && rect.height>10.0 {
+                d.draw_rectangle_lines_ex(Rectangle::new(
+                    rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                    2.0,Color::SKYBLUE);
+            }
 
         }
         _ => {}

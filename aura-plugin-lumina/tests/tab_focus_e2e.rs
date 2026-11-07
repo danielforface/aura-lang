@@ -92,3 +92,98 @@ fn native_tab_shift_tab_order_wrap_and_skip_hidden_disabled_inputs() {
     drop(plugin);
     eprintln!("LUMINA_TAB_XTEST: retained drafts, forward/reverse, disabled pointer/Tab, clip+offscreen skip PASS");
 }
+
+/// Actual Raylib/XTest mixed Button+TextInput keyboard navigation. Uses the
+/// public on_ui_render feedback surface, not injected internal focus state.
+fn button_frames(p:&AuraLuminaPlugin,root:&UiNode,ctx:&mut NexusContext,n:usize)->Vec<u64>{
+    let mut callbacks=Vec::new();
+    for _ in 0..n {
+        render(p,root,ctx);
+        if let Some(id)=ctx.get::<UiRuntimeFeedback>()
+            .expect("native feedback").clicked_callback_id{callbacks.push(id);}
+    }
+    callbacks
+}
+fn button_key(p:&AuraLuminaPlugin,root:&UiNode,ctx:&mut NexusContext,key:&str)->Vec<u64>{
+    xdo(&["keydown",key]);
+    let mut ids=button_frames(p,root,ctx,5);
+    xdo(&["keyup",key]);
+    ids.extend(button_frames(p,root,ctx,3));
+    ids
+}
+#[test]
+fn native_x11_mixed_buttons_inputs_enter_space_dynamic_disable_and_escape() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","180"),("height","40"),
+            ("on_change","cb:101"),("on_submit","cb:102"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","80"),("width","180"),("height","44"),
+            ("on_click","cb:201"),("label","Save")],vec![]),
+        node("Button",&[("x","20"),("y","140"),("width","180"),("height","44"),
+            ("on_click","cb:202"),("disabled","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","200"),("width","180"),("height","40"),
+            ("on_change","cb:301"),("value","B")],vec![]),
+        node("Button",&[("x","220"),("y","20"),("width","120"),("height","44"),
+            ("on_click","cb:401"),("label","Reset")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,400));
+    frames(&plugin,&root,&mut ctx,3);
+    let w=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=w.lines().next().expect("real native X11 window");
+    xdo(&["windowfocus","--sync",id]);
+
+    // First Tab focuses first field; Enter retains its original submit,
+    // without invoking Button on_click.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    let submitted=press(&plugin,&root,&mut ctx,"Return",false);
+    assert!(submitted.iter().any(|e|e.submitted && e.callback_id==102),
+        "TextInput Enter must preserve submit semantics: {submitted:?}");
+
+    // Next Tab focuses Button 201. Held Return/Space can fire exactly once.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![201]);
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![201],
+        "Space must activate a Button once, not type in an old input");
+
+    // Tab skips disabled Button 202 and reaches TextInput 301.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    let inserted=press(&plugin,&root,&mut ctx,"x",false);
+    assert!(has(&inserted,301,"Bx"),"Tab must skip disabled Button: {inserted:?}");
+
+    // Shift+Tab back to Button, then first field with retained local draft.
+    assert!(press(&plugin,&root,&mut ctx,"Tab",true).is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![201]);
+    assert!(press(&plugin,&root,&mut ctx,"Tab",true).is_empty());
+    let a=press(&plugin,&root,&mut ctx,"q",false);
+    assert!(has(&a,101,"Aq"),"reverse traversal must preserve input draft: {a:?}");
+
+    // Reverse wrap from the first field reaches Button 401.
+    assert!(press(&plugin,&root,&mut ctx,"Tab",true).is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![401]);
+
+    // A dynamic disabled transition immediately revokes keyboard authority.
+    root.children[4].set_prop("disabled","true");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "disabled Button must never fire a stale keyboard callback");
+    root.children[4].set_prop("disabled","false");
+    assert!(button_frames(&plugin,&root,&mut ctx,2).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "re-enabled Button must not reclaim revoked focus without user action");
+
+    // Explicit native pointer click restores focus and a subsequent key works.
+    xdo(&["mousemove","--window",id,"250","40"]);
+    button_frames(&plugin,&root,&mut ctx,3);
+    xdo(&["mousedown","1"]);
+    let by_pointer=button_frames(&plugin,&root,&mut ctx,5);
+    xdo(&["mouseup","1"]);
+    button_frames(&plugin,&root,&mut ctx,2);
+    assert_eq!(by_pointer,vec![401],"original native pointer click: {by_pointer:?}");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![401]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Escape").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "Escape must blur Button and block following Enter");
+    eprintln!("LUMINA_MIXED_KEYBOARD_X11 submit=true enter_once=true space_once=true disabled_skipped=true reverse_wrap=true revoked_focus=true pointer_focus=true escape=true");
+}

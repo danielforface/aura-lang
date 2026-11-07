@@ -410,9 +410,142 @@ pub(crate) fn next_focus(
     Some(order[next].clone())
 }
 
+/// Typed keyboard focus identity keeps on_click and on_change domains apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FocusKey { Button(u64), TextInput(u64) }
+
+fn focus_key(hit:&HitTarget)->FocusKey {
+    match hit {
+        HitTarget::Button(id)=>FocusKey::Button(*id),
+        HitTarget::TextInput{on_change,..}=>FocusKey::TextInput(*on_change),
+    }
+}
+
+/// Source-order focus across native controls. Only inputs already validated
+/// against unique callback identity and value_revision may join this order.
+/// Repeated Button callback IDs are pointer-actionable but intentionally
+/// keyboard-ineligible: one ID cannot own multiple focus rings.
+pub(crate) fn keyboard_focus_order(
+    root:&UiNode,plan:&LayoutNode,eligible_inputs:&[HitTarget]
+)->Vec<HitTarget>{
+    let valid_inputs:std::collections::HashSet<u64>=eligible_inputs.iter()
+        .filter_map(|x|match x{
+            HitTarget::TextInput{on_change,..}=>Some(*on_change),
+            HitTarget::Button(_)=>None,
+        }).collect();
+    fn collect(node:&UiNode,plan:&LayoutNode,allowed:&std::collections::HashSet<u64>,
+        output:&mut Vec<HitTarget>){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if prop(node,"disabled")!=Some("true"){
+            match node.kind.as_str(){
+                "Button"=>{
+                    if let Some(id)=callback(node,"on_click"){
+                        output.push(HitTarget::Button(id));
+                    }
+                },
+                "TextInput"=>{
+                    if let Some(on_change)=callback(node,"on_change"){
+                        if allowed.contains(&on_change){
+                            output.push(HitTarget::TextInput{
+                                on_change,on_submit:callback(node,"on_submit"),
+                                value:prop(node,"value").or_else(||prop(node,"text"))
+                                    .unwrap_or("").to_owned(),
+                            });
+                        }
+                    }
+                },
+                _=>{},
+            }
+        }
+        for (child,prepared) in node.children.iter().zip(&plan.children){
+            if let Some(prepared)=prepared{collect(child,prepared,allowed,output);}
+        }
+    }
+    let mut output=Vec::new();
+    collect(root,plan,&valid_inputs,&mut output);
+    let mut multiplicity=std::collections::HashMap::<u64,usize>::new();
+    for item in &output{
+        if let HitTarget::Button(id)=item{
+            *multiplicity.entry(*id).or_default()+=1;
+        }
+    }
+    output.retain(|item|match item{
+        HitTarget::Button(id)=>multiplicity.get(id)==Some(&1),
+        HitTarget::TextInput{..}=>true,
+    });
+    output
+}
+
+/// Wrap Tab and Shift+Tab through a mixed control sequence. Existing
+/// input-only next_focus remains unchanged for its established consumers.
+pub(crate) fn next_keyboard_focus(
+    order:&[HitTarget],active:Option<FocusKey>,reverse:bool
+)->Option<HitTarget>{
+    if order.is_empty(){return None;}
+    let current=active.and_then(|id|order.iter().position(|x|focus_key(x)==id));
+    let index=match current{
+        Some(i) if reverse=>(i+order.len()-1)%order.len(),
+        Some(i)=>(i+1)%order.len(),
+        None if reverse=>order.len()-1,
+        None=>0,
+    };
+    Some(order[index].clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_keyboard_focus_skips_disabled_clipped_duplicate_and_aliases() {
+        let root=n("App",&[],vec![
+            n("Button",&[("x","10"),("y","10"),("on_click","cb:41")],vec![]),
+            n("TextInput",&[("x","10"),("y","75"),("on_change","cb:41")],vec![]),
+            n("Button",&[("x","10"),("y","145"),("on_click","cb:42"),
+                ("disabled","true")],vec![]),
+            n("Box",&[("x","200"),("y","10"),("width","50"),("height","40"),
+                ("overflow","hidden")],vec![n("Button",&[
+                    ("x","270"),("y","10"),("on_click","cb:43")],vec![])]),
+            n("Button",&[("x","10"),("y","210"),("on_click","cb:44")],vec![]),
+            n("Button",&[("x","10"),("y","280"),("on_click","cb:44")],vec![]),
+            n("Button",&[("x","10"),("y","350"),("on_click","cb:45")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,640.0,400.0));
+        let order=keyboard_focus_order(&root,&plan,&focus_order(&root,&plan));
+        assert_eq!(order.len(),3);
+        assert_eq!(next_keyboard_focus(&order,None,false),Some(HitTarget::Button(41)));
+        assert!(matches!(next_keyboard_focus(&order,Some(FocusKey::Button(41)),false),
+            Some(HitTarget::TextInput{on_change:41,..})));
+        assert_eq!(next_keyboard_focus(&order,Some(FocusKey::TextInput(41)),false),
+            Some(HitTarget::Button(45)));
+        assert_eq!(next_keyboard_focus(&order,Some(FocusKey::Button(45)),false),
+            Some(HitTarget::Button(41)));
+        assert_eq!(next_keyboard_focus(&order,None,true),Some(HitTarget::Button(45)));
+        assert_eq!(next_keyboard_focus(&order,Some(FocusKey::Button(41)),true),
+            Some(HitTarget::Button(45)));
+    }
+
+    #[test]
+    fn revoking_button_eligibility_and_invalid_input_revision_fail_closed() {
+        let mut root=n("App",&[],vec![
+            n("TextInput",&[("x","20"),("y","15"),("on_change","cb:1"),
+                ("value_revision","bogus")],vec![]),
+            n("Button",&[("x","20"),("y","75"),("on_click","cb:2")],vec![]),
+            n("Button",&[("x","20"),("y","145"),("on_click","cb:3")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,500.0,300.0));
+        let order=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(order,vec![HitTarget::Button(2),HitTarget::Button(3)]);
+        root.children[1].set_prop("disabled","true");
+        let disabled=keyboard_focus_order(&root,&plan,&[]);
+        assert_eq!(disabled,vec![HitTarget::Button(3)]);
+        assert_eq!(next_keyboard_focus(&disabled,Some(FocusKey::Button(2)),false),
+            Some(HitTarget::Button(3)));
+        root.children.remove(2);
+        let new_plan=arrange(&root,Bounds::new(0.0,0.0,500.0,300.0));
+        assert!(keyboard_focus_order(&root,&new_plan,&[]).is_empty());
+        assert_eq!(next_keyboard_focus(&[],Some(FocusKey::Button(3)),false),None);
+    }
 
     #[test]
     fn duplicate_callback_ids_fail_closed_without_merging_drafts() {
