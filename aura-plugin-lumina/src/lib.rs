@@ -1,5 +1,41 @@
 #![forbid(unsafe_code)]
 
+#[cfg(any(feature = "raylib", test))]
+mod viewport;
+
+#[cfg(any(feature = "raylib", test))]
+mod layout;
+
+#[cfg(any(feature = "raylib", test))]
+mod forms;
+
+#[cfg(any(feature = "raylib", test))]
+mod text_input;
+
+#[cfg(any(feature = "raylib", test))]
+mod text_revision;
+
+#[cfg(any(feature = "raylib", test))]
+mod text_viewport;
+
+#[cfg(any(feature = "raylib", test))]
+mod font_atlas;
+
+#[cfg(any(feature = "raylib", test))]
+mod gdef_caret;
+
+#[cfg(any(feature = "raylib", test))]
+mod text_shaping;
+#[cfg(feature="raylib")]
+mod shaped_gpu;
+#[cfg(any(feature="raylib",test))]
+mod bidi_editor;
+#[cfg(all(feature="raylib",target_os="linux"))]
+mod ibus_native;
+
+#[cfg(feature = "raylib")]
+use viewport::FrameMetrics;
+
 use aura_nexus::{
     AuraPlugin,
     NexusContext,
@@ -23,6 +59,8 @@ use std::collections::HashMap;
 
 #[cfg(feature = "raylib")]
 use raylib::prelude::*;
+#[cfg(all(feature="raylib",target_os="linux"))]
+use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(feature = "raylib")]
 const SDF_ROUNDED_RECT_FS: &str = r#"
@@ -39,6 +77,10 @@ uniform float softness;   // px AA width
 uniform vec4 fillColor;   // rgba 0..1
 uniform vec4 borderColor; // rgba 0..1
 uniform float borderWidth; // px
+// Fragment coordinates are physical GL pixels with a bottom-left origin.
+// Rectangle/layout coordinates are logical Raylib pixels with a top-left origin.
+uniform vec2 framebufferScale;
+uniform float framebufferHeight;
 
 float sdRoundRect(vec2 p, vec2 b, float r) {
     // p is centered coords; b is half-size.
@@ -47,7 +89,8 @@ float sdRoundRect(vec2 p, vec2 b, float r) {
 }
 
 void main() {
-    vec2 p = gl_FragCoord.xy;
+    vec2 p = vec2(gl_FragCoord.x / framebufferScale.x,
+                  (framebufferHeight - gl_FragCoord.y) / framebufferScale.y);
     vec2 pos = rect.xy;
     vec2 size = rect.zw;
     vec2 halfSize = size * 0.5;
@@ -69,32 +112,245 @@ void main() {
 }
 "#;
 
-#[cfg(feature = "raylib")]
-const SCREEN_W: i32 = 1920;
+/// Explicit operator-controlled native reconnect command on the ROOT App.
+/// A missing, malformed, duplicated, or noncanonical revision cannot rearm
+/// the finite IBus circuit breaker. The host must first supply a baseline.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn root_native_retry_revision(root:&UiNode)->Option<u64>{
+    if root.kind!="App"{return None;}
+    let mut values=root.props.iter().filter(|(name,_)|name=="ibus_retry_revision");
+    let (_,text)=values.next()?;
+    if values.next().is_some()||text.is_empty()||text.len()>20||
+        (text.len()>1 && text.starts_with('0')) ||
+        !text.bytes().all(|b|b.is_ascii_digit()){return None;}
+    text.parse::<u64>().ok()
+}
+#[cfg(all(test,feature="raylib",target_os="linux"))]
+#[test]fn native_retry_revision_requires_unique_canonical_root_value(){
+    let mut app=UiNode::new("App");
+    assert_eq!(root_native_retry_revision(&app),None);
+    app.set_prop("ibus_retry_revision","0");
+    assert_eq!(root_native_retry_revision(&app),Some(0));
+    app.set_prop("ibus_retry_revision","18446744073709551615");
+    assert_eq!(root_native_retry_revision(&app),Some(u64::MAX));
+    for raw in ["-1","+1","01"," 1","1 ","1x","18446744073709551616"] {
+        app.set_prop("ibus_retry_revision",raw);
+        assert_eq!(root_native_retry_revision(&app),None,"invalid retry {raw:?}");
+    }
+    app.set_prop("ibus_retry_revision","1");
+    app.props.push(("ibus_retry_revision".to_string(),"2".to_string()));
+    assert_eq!(root_native_retry_revision(&app),None,"duplicate host command");
+    let mut other=UiNode::new("TextInput");
+    other.set_prop("ibus_retry_revision","2");
+    assert_eq!(root_native_retry_revision(&other),None,"only root App can command");
+}
 
 #[cfg(feature = "raylib")]
-const SCREEN_H: i32 = 1080;
+const INITIAL_WINDOW_W: i32 = 1920;
+
+#[cfg(feature = "raylib")]
+const INITIAL_WINDOW_H: i32 = 1080;
 
 #[cfg(feature = "raylib")]
 pub struct AuraLuminaPlugin {
     window: RefCell<Option<LuminaWindow>>,
+    composition_queue: RefCell<Vec<CompositionEvent>>,
+}
+
+/// Explicit input-method adapter events. Raylib's GetCharPressed() exposes
+/// committed Unicode only; it DOES NOT provide XIM preedit lifecycle.
+#[cfg(feature="raylib")]
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum CompositionEvent {
+    Start{callback_id:u64,sequence:u64},
+    Update{callback_id:u64,sequence:u64,text:String,caret:usize},
+    Commit{callback_id:u64,sequence:u64,text:String},
+    Cancel{callback_id:u64,sequence:u64},
+}
+#[cfg(feature="raylib")]
+impl CompositionEvent {
+    fn target(&self)->u64{match self{
+        Self::Start{callback_id,..}|Self::Update{callback_id,..}|
+        Self::Commit{callback_id,..}|Self::Cancel{callback_id,..}=>*callback_id
+    }}
+    fn sequence(&self)->u64{match self{
+        Self::Start{sequence,..}|Self::Update{sequence,..}|
+        Self::Commit{sequence,..}|Self::Cancel{sequence,..}=>*sequence
+    }}
 }
 
 #[cfg(feature = "raylib")]
+#[cfg(target_os="linux")]
+struct IbusCandidateFont {
+    source:String,
+    glyphs:String,
+    font:Font,
+}
+/// Real native IBus lookup candidates are an overlay, never edit-session text.
+/// Use an explicit bounded font atlas; do not draw missing CJK glyphs as tofu.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn prepare_ibus_candidate_font(
+    rl:&mut RaylibHandle,thread:&RaylibThread,
+    cache:&mut Option<IbusCandidateFont>,
+    page:Option<&ibus_native::IbusCandidatePage>,
+) {
+    let Some(page)=page else{return;};
+    let Ok(source)=std::env::var("LUMINA_IBUS_CANDIDATE_FONT_PATH") else {
+        *cache=None;return;
+    };
+    let admissible=std::fs::metadata(&source).is_ok_and(|m|
+        m.is_file() && m.len()>0 && m.len()<=font_atlas::MAX_FONT_FILE_BYTES);
+    if !admissible{*cache=None;return;}
+    let labels:Vec<String>=page.candidates.iter().enumerate()
+        .map(|(i,text)|format!("{}  {}",page.page_start+i+1,text)).collect();
+    let refs:Vec<&str>=labels.iter().map(String::as_str).collect();
+    let existing=cache.as_ref().filter(|f|f.source==source)
+        .map(|f|f.glyphs.as_str()).unwrap_or("");
+    let Some(glyphs)=font_atlas::glyph_request(existing,&refs) else {
+        *cache=None;return;
+    };
+    if cache.as_ref().is_some_and(|f|f.source==source && f.glyphs==glyphs){return;}
+    match rl.load_font_ex(thread,&source,22,Some(glyphs.as_str())){
+        Ok(font)=>*cache=Some(IbusCandidateFont{source,glyphs,font}),
+        Err(_)=>*cache=None,
+    }
+}
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn ibus_candidate_bounds(
+    candidate_caret_anchor:Rectangle,viewport:layout::Bounds,rows:usize,
+)->Option<Rectangle>{
+    if rows==0||rows>8||viewport.width<100.0||viewport.height<65.0{return None;}
+    let width=viewport.width.min(360.0);
+    let height=12.0+rows as f32*32.0;
+    let below=candidate_caret_anchor.y+candidate_caret_anchor.height+4.0;
+    let y=if below+height<=viewport.height {below}
+        else if candidate_caret_anchor.y>=height+4.0 {
+            candidate_caret_anchor.y-height-4.0
+        }else{return None};
+    Some(Rectangle::new(candidate_caret_anchor.x.max(0.0)
+        .min(viewport.width-width),y,width,height))
+}
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn paint_ibus_candidates(
+    d:&mut RaylibDrawHandle,panel:Rectangle,
+    page:&ibus_native::IbusCandidatePage,font:Option<&IbusCandidateFont>,
+){
+    d.draw_rectangle_rec(panel,Color::new(18,26,38,255));
+    d.draw_rectangle_lines_ex(panel,1.0,Color::new(70,87,111,255));
+    let mut scissor=d.begin_scissor_mode(
+        panel.x.ceil() as i32,panel.y.ceil() as i32,
+        panel.width.floor() as i32,panel.height.floor() as i32);
+    for (i,text) in page.candidates.iter().enumerate(){
+        let row_y=panel.y+6.0+32.0*i as f32;
+        if page.cursor==page.page_start+i {
+            scissor.draw_rectangle_rec(Rectangle::new(panel.x+4.0,row_y,
+                (panel.width-8.0).max(0.0),30.0),
+                Color::new(35,92,142,255));
+        }
+        let label=format!("{}  {}",page.page_start+i+1,text);
+        if let Some(f)=font.filter(|font|font_atlas::covers(&font.glyphs,&label)){
+            scissor.draw_text_ex(&f.font,&label,
+                Vector2::new(panel.x+12.0,row_y+4.0),22.0,0.0,Color::RAYWHITE);
+        }
+    }
+}
+/// A displayed candidate is clickable only inside its actual glyph row,
+/// within the committed previous GPU frame geometry. Never clip-hit the
+/// background padding or rows not sent by the real engine.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn candidate_row_at(panel:Rectangle,page:&ibus_native::IbusCandidatePage,
+    mouse:Vector2)->Option<usize>{
+    let xx=mouse.x-panel.x;let yy=mouse.y-panel.y;
+    if !xx.is_finite()||!yy.is_finite()||
+        xx<4.0||xx>=panel.width-4.0||yy<6.0{return None;}
+    let row=(yy-6.0)/32.0;
+    if row<0.0 || row>=page.candidates.len() as f32 {return None;}
+    let idx=row.floor() as usize;
+    if (yy-6.0)-(idx as f32)*32.0>=30.0{return None;}
+    let absolute=page.page_start.checked_add(idx)?;
+    if absolute>=page.total{return None;}
+    Some(absolute)
+}
+#[cfg(all(feature="raylib",target_os="linux"))]
+#[derive(Clone,Copy)]
+struct NativeCaretPosition {
+    local:Rectangle,
+    screen:(u32,u32,u32,u32),
+}
+/// Derive the real on-screen clipped and scrolled caret from the same
+/// native text viewport measurement used for GPU text and selection.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn native_ibus_caret_rect(
+    target:layout::Bounds,clip:layout::Bounds,
+    visual:&text_viewport::Visual,viewport:layout::Bounds,
+    window_position:Vector2,scale_x:f32,scale_y:f32,
+)->Option<NativeCaretPosition>{
+    if !visual.caret_valid || !window_position.x.is_finite() ||
+        !window_position.y.is_finite() || !scale_x.is_finite() ||
+        !scale_y.is_finite() || scale_x<=0.0 || scale_y<=0.0 ||
+        scale_x>8.0 || scale_y>8.0 {return None;}
+    let content=text_viewport::content_bounds(target);
+    let visible=content.intersect(clip).intersect(viewport);
+    if visible.is_empty() || visible.width<2.0 || visible.height<12.0 {return None;}
+    let caret_x=visual.caret_screen(content).clamp(
+        visible.x+1.0,visible.x+visible.width-1.0);
+    let caret_y=(visible.y+visible.height-11.0).max(visible.y);
+    let local=Rectangle::new(caret_x,caret_y,1.0,10.0);
+    let sx=(window_position.x+local.x*scale_x).round();
+    let sy=(window_position.y+local.y*scale_y).round();
+    let sw=scale_x.ceil().max(1.0);
+    let sh=(local.height*scale_y).ceil().max(1.0);
+    if sx<0.0||sy<0.0||sx+sw>32768.0||sy+sh>32768.0{
+        return None;
+    }
+    Some(NativeCaretPosition{local,
+        screen:(sx as u32,sy as u32,sw as u32,sh as u32)})
+}
+#[cfg(feature = "raylib")]
 struct LuminaWindow {
-    rl: RaylibHandle,
-    thread: RaylibThread,
+    // Rust drops struct fields in declaration order. All GPU objects MUST be
+    // released while the native Raylib/OpenGL context is still alive.
+    // Keep the window handle LAST; dropping it first caused a SIGSEGV at
+    // shutdown in the actual Xvfb Raylib smoke, not in headless unit tests.
+    textures: HashMap<String, Texture2D>,
+    fonts: HashMap<String,LoadedUnicodeFont>,
+    shaped_textures: HashMap<String,shaped_gpu::PreparedGlyphText>,
+    #[cfg(target_os="linux")]
+    candidate_font:Option<IbusCandidateFont>,
+    #[cfg(target_os="linux")]
+    last_candidate_bounds:Option<Rectangle>,
+    #[cfg(target_os="linux")]
+    last_native_caret:Option<Rectangle>,
+    #[cfg(target_os="linux")]
+    native_ibus: Option<ibus_native::NativeIbus>,
+    #[cfg(target_os="linux")]
+    native_ibus_reconnect:ibus_native::IbusReconnectBudget,
+    #[cfg(target_os="linux")]
+    native_ibus_serial_floor:u64,
+    #[cfg(target_os="linux")]
+    native_ibus_health_frames:u8,
+    sdf: RoundedRectShader,
+
+    focused_input: Option<FocusedTextInput>,
+    /// Native Button keyboard focus, exclusive with focused_input.
+    focused_button: Option<u64>,
+    /// Forms whose last native submit attempt failed. Field errors are
+    /// always recomputed against current authoritative EditSession drafts.
+    attempted_forms: std::collections::HashSet<String>,
+    /// Monotonic host request generations for which the native user already
+    /// emitted a cancellation request. Bounded, never cleared by a re-render.
+    cancelled_requests: HashMap<String,u64>,
+    /// First eligible, explicitly opted TextInput can get initial focus only
+    /// once per window; later user blur/Tab/click must never be overridden.
+    autofocus_decided: bool,
+    input_sessions: HashMap<u64, FocusedTextInput>,
+    last_text_views: HashMap<u64,text_viewport::Visual>,
+    click_anim: Option<(u64, f64)>,
     just_opened: bool,
     open_frames: u8,
 
-    sdf: RoundedRectShader,
-
-    // Minimal tween state: animate the last-clicked callback for a short duration.
-    click_anim: Option<(u64, f64)>,
-
-    focused_input: Option<FocusedTextInput>,
-
-    textures: HashMap<String, Texture2D>,
+    thread: RaylibThread,
+    rl: RaylibHandle,
 }
 
 #[cfg(feature = "raylib")]
@@ -102,15 +358,441 @@ struct LuminaWindow {
 struct FocusedTextInput {
     on_change: u64,
     on_submit: Option<u64>,
-    buffer: String,
-    caret: usize,
+    revision: text_revision::RevisionTracker,
+    session: text_input::EditSession,
+    scroll_x: f32,
+    visual_affinity: Option<usize>,
+}
+
+/// Unknown explicit policies fail closed. Normal TextInput keeps phase-25
+/// behavior; this is NOT a complete password/secure-memory widget.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn native_surrounding_policy_allows(node:&UiNode)->bool{
+    if node.kind!="TextInput"{return false;}
+    for key in ["type","input_type"]{
+        if prop_string(node,key).is_some_and(|value|
+            !matches!(value,"text"|"search"|"email"|"number"|"url"|"tel")){
+            return false; // Includes password, OTP and unknown types.
+        }
+    }
+    if prop_string(node,"sensitive")
+        .is_some_and(|value|!matches!(value,"false"|"0")){return false;}
+    matches!(prop_string(node,"surrounding_text"),None|Some("full"))
+}
+/// Keep the engine's committed surrounding snapshot current *before* keys
+/// (and again after edits). A host rebase resets the IME generation; local
+/// edits keep composition continuity. No new public injection surface.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn sync_native_ibus_context(
+    bus:&mut ibus_native::NativeIbus,fi:&FocusedTextInput
+)->bool{
+    let cb=fi.on_change;
+    if !bus.sync_authority_generation(cb,fi.session.rebase_generation()){
+        return false;
+    }
+    let scalar_at=|idx:usize|{
+        let byte=fi.session.buffer.grapheme_indices(true)
+            .nth(idx).map(|(b,_)|b).unwrap_or(fi.session.buffer.len());
+        u32::try_from(fi.session.buffer[..byte].chars().count()).ok()
+    };
+    let (Some(caret),Some(anchor))=
+        (scalar_at(fi.session.caret),scalar_at(fi.session.anchor))
+        else{return false;};
+    let unsafe_context=fi.session.buffer.len()>1024 ||
+        fi.session.buffer.chars().any(|c|c.is_control() ||
+            matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'));
+    let sent=if unsafe_context {
+        bus.sync_surrounding_text(cb,"",0,0)
+    }else{
+        bus.sync_surrounding_text(cb,&fi.session.buffer,caret,anchor)
+    };
+    sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
+}
+
+/// Picks from the already-qualified focus order: clipping, visibility,
+/// disabled controls, unique callback identity and value_revision validation
+/// are enforced BEFORE this opt-in focus decision.
+#[cfg(feature = "raylib")]
+fn initial_autofocus_target(
+    tree:&UiNode,planned:&layout::LayoutNode,
+    order:&[layout::HitTarget]
+)->Option<layout::HitTarget>{
+    order.iter().find(|candidate|match candidate{
+        layout::HitTarget::TextInput{on_change,..} =>
+            find_input_by_callback(tree,planned,*on_change)
+                .is_some_and(|(node,_)|prop_string(node,"autofocus")==Some("true")),
+        _=>false,
+    }).cloned()
 }
 
 #[cfg(feature = "raylib")]
-#[derive(Default)]
-struct ClickState {
-    clicked_cb: Option<u64>,
-    hit_text_input: bool,
+fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
+    if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
+        if active.on_change == *new_id { return; }
+    }
+    if let Some(mut previous) = win.focused_input.take() {
+        // Blurring a field cancels the uncommitted composition. It may never
+        // reappear when that input regains focus via the persistent session.
+        previous.session.abandon_composition();
+        win.input_sessions.insert(previous.on_change, previous);
+    }
+    if let Some((on_change, on_submit, source_value, revision)) = target {
+        let mut entry = win.input_sessions.remove(&on_change).unwrap_or_else(|| FocusedTextInput {
+            on_change, on_submit,
+            revision: text_revision::RevisionTracker::new(&source_value, revision),
+            session: text_input::EditSession::new(source_value.clone()),
+            scroll_x: 0.0,
+            visual_affinity: None,
+        });
+        if entry.revision.observe(&source_value,revision)
+            == text_revision::Decision::Rebase
+            && (entry.session.buffer != source_value || revision.is_some()) {
+            // Even identical text at a *new* explicit revision starts new
+            // authority epoch: old undo history must not resurrect stale data.
+            entry.session.rebase_authority(source_value.clone());
+            entry.visual_affinity=None;
+        }
+        entry.on_submit = on_submit;
+        win.focused_input = Some(entry);
+    }
+}
+
+/// Only valid revision props for *uniquely identified* visible inputs.
+/// A malformed token is never silently downgraded to legacy authority.
+#[cfg(feature = "raylib")]
+fn input_value_revisions(tree:&UiNode,plan:&layout::LayoutNode,order:&[layout::HitTarget])
+    -> (HashMap<u64,Option<u64>>,std::collections::HashSet<u64>)
+{
+    let valid_ids:std::collections::HashSet<u64>=order.iter().filter_map(|t|match t{
+        layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+        _=>None,
+    }).collect();
+    fn collect(node:&UiNode,plan:&layout::LayoutNode,
+        valid:&std::collections::HashSet<u64>,
+        map:&mut HashMap<u64,Option<u64>>,
+        invalid:&mut std::collections::HashSet<u64>)
+    {
+        if plan.bounds.intersect(plan.clip).is_empty() {return;}
+        if node.kind=="TextInput" {
+            let cb=node.props.iter().find(|(key,_)|key=="on_change")
+                .and_then(|(_,v)|parse_callback_id(Some(v.as_str())));
+            if let Some(id)=cb.filter(|id|valid.contains(id)) {
+                let raw=node.props.iter().find(|(key,_)|key=="value_revision")
+                    .map(|(_,v)|v.as_str());
+                match raw {
+                    None=>{map.insert(id,None);}
+                    Some(x)=>match x.parse::<u64>() {
+                        Ok(v)=>{map.insert(id,Some(v));}
+                        Err(_)=>{invalid.insert(id);}
+                    }
+                }
+            }
+        }
+        for (child,prepared) in node.children.iter().zip(&plan.children) {
+            if let Some(prepared)=prepared {collect(child,prepared,valid,map,invalid);}
+        }
+    }
+    let mut result=HashMap::new();
+    let mut invalid=std::collections::HashSet::new();
+    collect(tree,plan,&valid_ids,&mut result,&mut invalid);
+    (result,invalid)
+}
+
+/// Keep local edits when same revision host values echo older locally
+/// emitted strings. Strictly increasing value_revision rebases authority.
+/// The legacy path (no value_revision) keeps prior changed-prop semantics.
+#[cfg(feature = "raylib")]
+fn reconcile_input_sessions(
+    win:&mut LuminaWindow,order:&[layout::HitTarget],
+    revisions:&HashMap<u64,Option<u64>>
+) {
+    let present:HashMap<u64,(&str,Option<u64>,Option<u64>)> =
+        order.iter().filter_map(|item|match item {
+            layout::HitTarget::TextInput{on_change,on_submit,value} =>
+                revisions.get(on_change).map(|version|
+                    (*on_change,(value.as_str(),*on_submit,*version))),
+            _=>None,
+        }).collect();
+    win.input_sessions.retain(|id,_|present.contains_key(id));
+    let refresh=|entry:&mut FocusedTextInput,prop:&str,submit:Option<u64>,
+        revision:Option<u64>| {
+        if entry.revision.observe(prop,revision)==text_revision::Decision::Rebase
+            && (entry.session.buffer!=prop || revision.is_some()) {
+            entry.session.rebase_authority(prop.to_owned());
+            entry.visual_affinity=None;
+        }
+        entry.on_submit=submit;
+    };
+    for (id,entry) in &mut win.input_sessions {
+        if let Some((prop,submit,rev))=present.get(id) {
+            refresh(entry,prop,*submit,*rev);
+        }
+    }
+    if let Some(entry)=&mut win.focused_input {
+        if let Some((prop,submit,rev))=present.get(&entry.on_change) {
+            refresh(entry,prop,*submit,*rev);
+        } else {win.focused_input=None;}
+    }
+}
+
+/// Measure text with the *same* Raylib default-font width used by
+/// draw_text, before BeginDrawing. Only a few UAX29 grapheme prefixes per
+/// visible input, not an O(n²) full prefix map per frame.
+#[cfg(feature = "raylib")]
+struct LoadedUnicodeFont {
+    font: Font,
+    glyphs: String,
+}
+
+/// Build only fonts explicitly requested on visible/arranged Text/TextInput.
+/// Glyphs are dynamically enlarged before drawing; never draw missing
+/// codepoints through a partial custom atlas without checking coverage.
+/// Font GPU textures live before RaylibHandle in LuminaWindow drop order.
+#[cfg(feature = "raylib")]
+fn ensure_fonts_loaded(
+    rl:&mut RaylibHandle,thread:&RaylibThread,
+    fonts:&mut HashMap<String,LoadedUnicodeFont>,
+    tree:&UiNode,plan:&layout::LayoutNode,
+    focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
+) {
+    let mut requested:HashMap<String,(String,i32,Vec<String>)>=HashMap::new();
+    fn gather(node:&UiNode,plan:&layout::LayoutNode,
+        focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
+        result:&mut HashMap<String,(String,i32,Vec<String>)>) {
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if (node.kind=="Text" || node.kind=="TextInput") && !shaped_gpu::is_opted(node) {
+            if let Some(path)=prop_string(node,"font_path") {
+                let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text" {20}else{18}).max(10);
+                if let Some(key)=font_atlas::font_key(path,size) {
+                    let value=if node.kind=="Text" {
+                        prop_string(node,"text").or_else(||prop_string(node,"content")).unwrap_or("")
+                    } else {
+                        let cb=parse_callback_id(prop_string(node,"on_change"));
+                        focus.as_ref().filter(|fi|Some(fi.on_change)==cb)
+                            .or_else(||cb.and_then(|id|sessions.get(&id)))
+                            .map(|fi|fi.session.buffer.as_str())
+                            .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                            .unwrap_or("")
+                    };
+                    if !result.contains_key(&key) && result.len()>=font_atlas::MAX_FONTS {
+                        // Fail closed on cache capacity instead of unbounded GPU atlases.
+                    } else {
+                        let req=result.entry(key).or_insert_with(||(path.to_owned(),size,Vec::new()));
+                        req.2.push(value.to_owned());
+                        if node.kind=="TextInput" {
+                            req.2.push(prop_string(node,"placeholder").unwrap_or("").to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children) {
+            if let Some(planned)=slot {gather(child,planned,focus,sessions,result);}
+        }
+    }
+    gather(tree,plan,focus,sessions,&mut requested);
+    fonts.retain(|key,_|requested.contains_key(key));
+    for (key,(path,size,values)) in requested {
+        let existing=fonts.get(&key).map(|v|v.glyphs.as_str()).unwrap_or("");
+        let texts:Vec<&str>=values.iter().map(String::as_str).collect();
+        let Some(wanted)=font_atlas::glyph_request(existing,&texts) else {
+            // A massive distinct charset cannot be incompletely displayed.
+            fonts.remove(&key);continue;
+        };
+        if fonts.get(&key).is_some_and(|entry|entry.glyphs==wanted) {continue;}
+        // No O(n) upload if already covered; only grow/rebuild when needed.
+        // Optional local font files are untrusted; avoid arbitrary large
+        // allocations by limiting source files before native atlas upload.
+        let admissible=std::fs::metadata(&path).is_ok_and(|m|
+            m.is_file() && m.len()>0 && m.len()<=font_atlas::MAX_FONT_FILE_BYTES);
+        if !admissible {fonts.remove(&key);continue;}
+        if let Ok(font)=rl.load_font_ex(thread,&path,size,Some(wanted.as_str())) {
+            fonts.insert(key,LoadedUnicodeFont{font,glyphs:wanted});
+        } else {
+            fonts.remove(&key); // fall back to old default font honestly
+        }
+    }
+}
+
+#[cfg(feature = "raylib")]
+fn selected_unicode_font<'a>(
+    fonts:&'a HashMap<String,LoadedUnicodeFont>,
+    node:&UiNode,size:i32,text:&str,
+)->Option<&'a Font> {
+    let key=font_atlas::font_key(prop_string(node,"font_path")?,size)?;
+    let loaded=fonts.get(&key)?;
+    if font_atlas::covers(&loaded.glyphs,text){Some(&loaded.font)}else{None}
+}
+
+#[cfg(feature="raylib")]
+fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
+    focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>)
+    ->Vec<(String,String,Option<String>,i32,String,String)>{
+    fn walk(node:&UiNode,plan:&layout::LayoutNode,focus:&Option<FocusedTextInput>,
+        sessions:&HashMap<u64,FocusedTextInput>,
+        out:&mut Vec<(String,String,Option<String>,i32,String,String)>){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
+            let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
+            let display:String=if node.kind=="Text"{
+                prop_string(node,"text").or_else(||prop_string(node,"content"))
+                    .unwrap_or("").to_owned()
+            }else{
+                let id=parse_callback_id(prop_string(node,"on_change"));
+                let active=focus.as_ref().filter(|e|Some(e.on_change)==id);
+                let session=active.or_else(||id.and_then(|id|sessions.get(&id)));
+                let value=active.and_then(|e|e.session.projected()).map(|p|p.display)
+                    .or_else(||session.map(|e|e.session.buffer.clone()))
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text"))
+                        .map(str::to_owned)).unwrap_or_default();
+                if value.is_empty(){prop_string(node,"placeholder").unwrap_or("").to_owned()}
+                else{value}
+            };
+            if let (Some(key),Some(path))=(
+                shaped_gpu::entry_key(node,&display,size),prop_string(node,"font_path")){
+                if out.len()<shaped_gpu::MAX_CACHE_ENTRIES && !out.iter().any(|r|r.0==key){
+                    out.push((key,path.to_owned(),
+                        prop_string(node,"fallback_font_path").map(str::to_owned),size,
+                        prop_string(node,"direction").unwrap_or("auto").to_owned(),display));
+                }
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children){
+            if let Some(prepared)=slot{walk(child,prepared,focus,sessions,out);}
+        }
+    }
+    let mut out=Vec::new();walk(tree,plan,focus,sessions,&mut out);out
+}
+
+#[cfg(feature="raylib")]
+fn find_input_by_callback<'a>(node:&'a UiNode,plan:&'a layout::LayoutNode,cb:u64)
+    ->Option<(&'a UiNode,&'a layout::LayoutNode)>{
+    if plan.bounds.intersect(plan.clip).is_empty(){return None;}
+    if node.kind=="TextInput"&&parse_callback_id(prop_string(node,"on_change"))==Some(cb){
+        return Some((node,plan));
+    }
+    for (child,slot) in node.children.iter().zip(&plan.children){
+        if let Some(child_plan)=slot {
+            if let Some(found)=find_input_by_callback(child,child_plan,cb){return Some(found);}
+        }
+    }
+    None
+}
+#[cfg(feature="raylib")]
+fn loaded_shaped_input<'a>(node:&UiNode,value:&str,
+    cache:&'a HashMap<String,shaped_gpu::PreparedGlyphText>)
+    ->Option<&'a text_shaping::ShapedText>{
+    let size=prop_i32(node,"size").unwrap_or(18).max(10);
+    let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
+    let key=shaped_gpu::entry_key(node,display,size)?;
+    Some(&cache.get(&key)?.shaped)
+}
+
+#[cfg(feature = "raylib")]
+fn measure_input_visuals(
+    rl: &RaylibHandle, tree: &UiNode, plan: &layout::LayoutNode,
+    focus_order: &[layout::HitTarget],
+    focused: &mut Option<FocusedTextInput>,
+    sessions: &mut HashMap<u64,FocusedTextInput>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
+) -> HashMap<u64,text_viewport::Visual> {
+    let allowed: std::collections::HashSet<u64> = focus_order.iter().filter_map(|x|match x {
+        layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+        _=>None,
+    }).collect();
+    fn collect(
+        rl:&RaylibHandle,node:&UiNode,plan:&layout::LayoutNode,
+        allowed:&std::collections::HashSet<u64>,
+        focused:&mut Option<FocusedTextInput>,
+        sessions:&mut HashMap<u64,FocusedTextInput>,
+        fonts:&HashMap<String,LoadedUnicodeFont>,
+        shaped:&HashMap<String,shaped_gpu::PreparedGlyphText>,
+        result:&mut HashMap<u64,text_viewport::Visual>,
+    ) {
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="TextInput" {
+            if let Some(cb)=parse_callback_id(prop_string(node,"on_change")).filter(|id|allowed.contains(id)) {
+                let active=focused.as_ref().is_some_and(|fi|fi.on_change==cb);
+                let entry=if active {focused.as_mut()}else{sessions.get_mut(&cb)};
+                let projection=if active {
+                    entry.as_ref().and_then(|fi|fi.session.projected())
+                }else{None};
+                let value=projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||entry.as_ref().map(|fi|fi.session.buffer.as_str()))
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
+                    .unwrap_or("");
+                let size=prop_i32(node,"size").unwrap_or(18).max(10);
+                let opt=shaped_gpu::is_opted(node);
+                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
+                let prepared=shaped_gpu::entry_key(node,display,size).and_then(|k|shaped.get(&k));
+                let font=if opt{None}else{selected_unicode_font(fonts,node,size,value)};
+                let measure=|text:&str|->f32 {
+                    if let Some(font)=font{font.measure_text(text,size as f32,0.0).x.max(0.0)}
+                    else {rl.measure_text(text,size).max(0) as f32}
+                };
+                let width=prepared.map(|r|r.shaped.width)
+                    .unwrap_or(if opt {0.0}else{measure(value)});
+                let caret_index=projection.as_ref().map(|p|p.caret)
+                    .or_else(||entry.as_ref().map(|fi|fi.session.caret)).unwrap_or(0);
+                let caret_stop=if active&&opt {
+                    prepared.and_then(|p|bidi_editor::caret_position(&p.shaped,
+                        caret_index,if projection.is_some(){None}else{
+                            entry.as_ref().and_then(|fi|fi.visual_affinity)
+                        }))
+                }else{None};
+                let caret=if active {
+                    if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
+                    else{measure(text_viewport::grapheme_prefix(value,caret_index))}
+                }else{0.0};
+                let segments=if active&&opt&&projection.is_none(){
+                    entry.as_ref().and_then(|fi|fi.session.selection())
+                        .and_then(|(a,b)|prepared.and_then(|p|
+                            bidi_editor::selection_fragments(&p.shaped,a,b)))
+                        .unwrap_or_default()
+                }else{Vec::new()};
+                let selection=if active&&!opt&&projection.is_none(){
+                    entry.as_ref().and_then(|fi|fi.session.selection())
+                        .map(|(a,b)|{
+                            let x=measure(text_viewport::grapheme_prefix(value,a));
+                            let y=measure(text_viewport::grapheme_prefix(value,b));
+                            (x.min(y),x.max(y))
+                        })
+                }else{None};
+                let preedit_spans=projection.as_ref().and_then(|p|{
+                    let a=p.preedit_graphemes.start;
+                    let b=p.preedit_graphemes.end;
+                    if a>=b{return None;}
+                    if opt {
+                        prepared.and_then(|shape|bidi_editor::selection_fragments(
+                            &shape.shaped,a,b))
+                    }else {
+                        let x=measure(text_viewport::grapheme_prefix(value,a));
+                        let y=measure(text_viewport::grapheme_prefix(value,b));
+                        Some(vec![(x.min(y),x.max(y))])
+                    }
+                }).unwrap_or_default();
+                let previous=entry.as_ref().map(|fi|fi.scroll_x).unwrap_or(0.0);
+                let content=text_viewport::content_bounds(plan.bounds);
+                let mut v=text_viewport::plan(content.width,width,caret,selection,previous,active);
+                if opt {
+                    v.caret_valid=!active || caret_stop.is_some();
+                    v.selection_spans=segments;
+                }
+                v.preedit_spans=preedit_spans;
+                if let Some(entry)=entry {entry.scroll_x=v.scroll;}
+                result.insert(cb,v);
+            }
+        }
+        for (child,slot) in node.children.iter().zip(&plan.children){
+            if let Some(child_plan)=slot {
+                collect(rl,child,child_plan,allowed,focused,sessions,fonts,shaped,result);
+            }
+        }
+    }
+    let mut result=HashMap::new();
+    collect(rl,tree,plan,&allowed,focused,sessions,fonts,shaped,&mut result);
+    result
 }
 
 #[cfg(feature = "raylib")]
@@ -122,6 +804,8 @@ struct RoundedRectShader {
     loc_fill: i32,
     loc_border: i32,
     loc_border_width: i32,
+    loc_framebuffer_scale: i32,
+    loc_framebuffer_height: i32,
 }
 
 #[cfg(feature = "raylib")]
@@ -139,6 +823,7 @@ impl Default for AuraLuminaPlugin {
     fn default() -> Self {
         Self {
             window: RefCell::new(None),
+            composition_queue: RefCell::new(Vec::new()),
         }
     }
 }
@@ -150,6 +835,424 @@ pub struct AuraLuminaPlugin;
 impl AuraLuminaPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Send an input-method event from an external, explicitly integrated
+    /// platform adapter. This is not a native XIM/IBus hookup: Raylib 5.5.1
+    /// does not expose preedit lifecycle. Events are checked again against
+    /// actual focus and session serial during the next native frame.
+    #[cfg(feature="raylib")]
+    pub fn submit_composition_event(&self,event:CompositionEvent)->bool{
+        if event.target()==0||event.sequence()==0{return false;}
+        let valid=match &event {
+            CompositionEvent::Update{text,..}|CompositionEvent::Commit{text,..} =>
+                text.len()<=text_input::MAX_PREEDIT_BYTES &&
+                text.chars().all(|c|!c.is_control() &&
+                    !matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}')),
+            _=>true
+        };
+        if !valid{return false;}
+        let mut queue=self.composition_queue.borrow_mut();
+        if queue.len()>=32{return false;}
+        queue.push(event);
+        true
+    }
+}
+
+/// Opt-in native diagnostic info. This is not enabled for production builds.
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiagnosticMetrics {
+    pub logical_width: i32,
+    pub logical_height: i32,
+    pub render_width: i32,
+    pub render_height: i32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiagnosticPixel {
+    pub r: u8, pub g: u8, pub b: u8, pub a: u8,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone,Debug,PartialEq)]
+pub struct DiagnosticTextVisual {
+    pub scroll_x: f32,
+    pub measured_caret: f32,
+    pub caret_screen_x: f32,
+    pub selection_screen: Option<(f32,f32)>,
+    pub selection_screens: Vec<(f32,f32)>,
+    pub preedit_screens: Vec<(f32,f32)>,
+    pub caret_visible: bool,
+    pub caret_affinity: Option<usize>,
+    pub caret_grapheme: Option<usize>,
+    pub logical_selection: Option<(usize,usize)>,
+    pub content_left: f32,
+    pub content_right: f32,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagnosticShaping {
+    pub visual_source_starts: Vec<usize>,
+    pub visual_run_rtl: Vec<bool>,
+    pub glyph_ids: Vec<u16>,
+    pub logical_cluster_bytes: Vec<usize>,
+    pub glyph_advances: Vec<f32>,
+    pub glyph_offsets: Vec<(f32,f32)>,
+    pub width: f32,
+    /// There is no GPU atlas indexed by OpenType glyph-ID yet.
+    pub native_paintable: bool,
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+impl AuraLuminaPlugin {
+    /// Opt-in diagnostic shaping using the same user-supplied TTF path and
+    /// bounded file rules as the renderer. Does NOT alter legacy GPU drawing.
+    pub fn diagnostic_shape_external_font(
+        &self, path: &str, text: &str, size: i32, direction: &str,
+    ) -> Option<DiagnosticShaping> {
+        if self.window.borrow().as_ref().is_none() { return None; }
+        font_atlas::font_key(path,size)?;
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() || meta.len()==0 ||
+           meta.len()>text_shaping::MAX_SHAPE_FONT_BYTES as u64 {return None;}
+        let bytes = std::fs::read(path).ok()?;
+        let dir=text_shaping::ParagraphDirection::parse(Some(direction))?;
+        let result=text_shaping::shape_text(text,&bytes,size as f32,dir)?;
+        let mut starts=Vec::new();
+        let mut rtl=Vec::new();
+        let mut ids=Vec::new();
+        let mut clusters=Vec::new();
+        let mut advances=Vec::new();
+        let mut offsets=Vec::new();
+        for run in &result.visual_runs {
+            starts.push(run.source_bytes.start);
+            rtl.push(run.rtl);
+            for glyph in &run.glyphs {
+                ids.push(glyph.glyph_id);
+                clusters.push(glyph.cluster_byte);
+                advances.push(glyph.advance_x);
+                offsets.push((glyph.offset_x,glyph.offset_y));
+            }
+        }
+        Some(DiagnosticShaping {
+            visual_source_starts:starts,
+            visual_run_rtl:rtl,
+            glyph_ids:ids,
+            logical_cluster_bytes:clusters,
+            glyph_advances:advances,
+            glyph_offsets:offsets,
+            width:result.width,
+            native_paintable:result.native_paintable,
+        })
+    }
+}
+
+#[cfg(feature = "lumina-diagnostics")]
+impl AuraLuminaPlugin {
+    /// Read exact latest frame's default-font logical text geometry.
+    pub fn diagnostic_text_visual(&self,on_change:u64,content_left:f32,content_width:f32)
+        ->Option<DiagnosticTextVisual> {
+        let w=self.window.borrow();
+        let v=w.as_ref()?.last_text_views.get(&on_change)?.clone();
+        if !content_left.is_finite() || !content_width.is_finite()
+            || content_width<=0.0 { return None; }
+        let c=layout::Bounds::new(content_left,0.0,content_width,1.0);
+        Some(DiagnosticTextVisual {
+            scroll_x:v.scroll,measured_caret:v.caret,
+            caret_screen_x:v.caret_screen(c),
+            selection_screen:v.selection_screen(c),
+            selection_screens:v.selection_screens(c),
+            preedit_screens:v.preedit_screens(c),
+            caret_visible:v.caret_valid,
+            caret_affinity:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change)
+                .and_then(|fi|fi.visual_affinity),
+            caret_grapheme:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).map(|fi|fi.session.caret),
+            logical_selection:w.as_ref()?.focused_input.as_ref()
+                .filter(|fi|fi.on_change==on_change).and_then(|fi|fi.session.selection()),
+            content_left:c.x,content_right:c.x+c.width,
+        })
+    }
+
+    /// Returns explicit loaded-atlas metrics only when glyphs were fully
+    /// requested; this does not prove visual bidi/shaping.
+    pub fn diagnostic_font_coverage(&self,path:&str,size:i32,text:&str)->Option<f32> {
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let key=font_atlas::font_key(path,size)?;
+        let loaded=win.fonts.get(&key)?;
+        if !font_atlas::covers(&loaded.glyphs,text) {return None;}
+        Some(loaded.font.measure_text(text,size as f32,0.0).x)
+    }
+
+    /// Reports exactly which actual font-index glyphs have an uploaded GPU
+    /// raster atlas; unlike a mere successful CPU shaper this requires a
+    /// prepared Texture2D in the active Raylib window.
+    pub fn diagnostic_shaped_gpu(
+        &self,font_path:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<u16>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",font_path);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyph_ids=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|g.glyph_id)).collect();
+        Some((prepared.cells.len(),glyph_ids,prepared.shaped.width))
+    }
+
+    /// Actual one-frame GPU upload evidence for a two-face atlas.
+    /// Reports (rasterized pair count, [(origin_font_index, real GID)], width).
+    pub fn diagnostic_shaped_gpu_fallback(
+        &self,primary:&str,fallback:&str,size:i32,direction:&str,text:&str
+    )->Option<(usize,Vec<(usize,u16)>,f32)> {
+        let guard=self.window.borrow();
+        let win=guard.as_ref()?;
+        let mut node=UiNode::new("Text");
+        node.set_prop("shaping","opentype");
+        node.set_prop("font_path",primary);
+        node.set_prop("fallback_font_path",fallback);
+        node.set_prop("direction",direction);
+        let key=shaped_gpu::entry_key(&node,text,size)?;
+        let prepared=win.shaped_textures.get(&key)?;
+        let glyphs=prepared.shaped.visual_runs.iter()
+            .flat_map(|r|r.glyphs.iter().map(|g|(g.font_index,g.glyph_id)))
+            .collect();
+        Some((prepared.cells.len(),glyphs,prepared.shaped.width))
+    }
+
+    /// Diagnostic only: (authoritative buffer, temporary projected string,
+    /// preedit caret in projected graphemes, undo depth).
+    #[cfg(feature="lumina-diagnostics")]
+    pub fn diagnostic_composition(&self,callback_id:u64)->Option<(String,String,usize,usize)>{
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let fi=win.focused_input.as_ref().filter(|fi|fi.on_change==callback_id)?;
+        let projection=fi.session.projected()?;
+        Some((fi.session.buffer.clone(),projection.display,
+            projection.caret,fi.session.undo_len()))
+    }
+
+    /// Diagnostics prove that the active IBus client was started by the
+    /// configured helper, and expose the count of actual daemon engine
+    /// preedit/commit callbacks (never synthetic injected queue events).
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.engine_events)
+    }
+    /// Kill the genuine running libibus helper, not the daemon or mock data.
+    /// Available only with diagnostics for an actual X11 recovery E2E.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_terminate_native_ibus_helper(&self)->bool{
+        self.window.borrow_mut().as_mut()
+            .and_then(|win|win.native_ibus.as_mut())
+            .is_some_and(|bus|bus.terminate_helper_for_diagnostic())
+    }
+    /// Non-sensitive read-only native helper recovery budget telemetry.
+    /// Exposes at most (attempts in current bounded epoch, exhausted);
+    /// never reveals text, native keys or any focus/callback identity.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_recovery_budget(&self)->Option<(u8,bool)>{
+        Some(self.window.borrow().as_ref()?
+            .native_ibus_reconnect.diagnostic_status())
+    }
+    /// Acknowledged by the real helper, not an emulated keyboard stream.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_keys(&self)->Option<(usize,usize,usize)>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|(bus.key_acks,bus.release_acks,bus.shifted_acks))
+    }
+    /// Actual live engine lookup signal, not fabricated candidate text.
+    /// Snapshot belongs to a focused callback and is NEVER an EditSession edit.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidates(&self)
+        ->Option<(u64,usize,usize,usize,Vec<String>,usize)> {
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let page=bus.candidate_snapshot()?;
+        Some((page.callback_id,page.cursor,page.page_start,
+            page.total,page.candidates,bus.candidate_events))
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_bounds(&self)->Option<(f32,f32,f32,f32)>{
+        let borrowed=self.window.borrow();
+        let b=borrowed.as_ref()?.last_candidate_bounds?;
+        Some((b.x,b.y,b.width,b.height))
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_clicks(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.candidate_click_acks)
+    }
+    /// Diagnostic only. Committed editor text is sent to the real IBus
+    /// context as a bounded read-only surrounding snapshot (never preedit).
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_surrounding(&self)
+        ->Option<(String,u32,u32,usize,usize,usize)> {
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let (value,caret,anchor)=bus.surrounding_text.clone()?;
+        Some((value,caret,anchor,bus.surrounding_text_acks,
+            bus.surrounding_requires,bus.surrounding_delete_requests))
+    }
+    /// Genuine libibus engine-origin D request observed on the currently
+    /// focused IBus input context. No edit has been performed for this signal.
+    /// None means no valid request in the current focus generation.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_deletion(&self)->Option<(usize,i32,u32)>{
+        let borrowed=self.window.borrow();
+        let bus=borrowed.as_ref()?.native_ibus.as_ref()?;
+        let (offset,count)=bus.surrounding_last_delete?;
+        Some((bus.surrounding_delete_requests,offset,count))
+    }
+    /// Number of D→C tokens actually produced by the real libibus adapter,
+    /// not the count of trusted or applied host edit transactions.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_replacements(&self)->Option<usize>{
+        self.window.borrow().as_ref()?.native_ibus.as_ref()
+            .map(|bus|bus.native_replacement_pairs)
+    }
+
+
+    /// Actual acknowledged libibus absolute screen rectangle; diagnostic only.
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_cursor_location(&self)
+        ->Option<((u32,u32,u32,u32),usize)>{
+        let w=self.window.borrow();
+        let bus=w.as_ref()?.native_ibus.as_ref()?;
+        Some((bus.cursor_location?,bus.cursor_location_acks))
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_caret_logical(&self)->Option<(f32,f32,f32,f32)>{
+        let w=self.window.borrow();
+        let c=w.as_ref()?.last_native_caret?;
+        Some((c.x,c.y,c.width,c.height))
+    }
+    #[cfg(all(feature="lumina-diagnostics",target_os="linux"))]
+    pub fn diagnostic_native_ibus_candidate_glyph_pixels(&self)->Option<usize>{
+        let borrowed=self.window.borrow();
+        let win=borrowed.as_ref()?;
+        let area=win.last_candidate_bounds?;
+        let font=win.candidate_font.as_ref()?;
+        let page=win.native_ibus.as_ref()?.candidate_snapshot()?;
+        if !page.candidates.iter().enumerate().all(|(i,s)|{
+            font_atlas::covers(&font.glyphs,
+                &format!("{}  {}",page.page_start+i+1,s))
+        }){return None;}
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),
+            win.rl.get_screen_height(),win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut white=0usize;
+        // Bounds are clipped to the popup; cap GPU readback work to 360x270.
+        for dy in 0..((area.height as i32).min(270)){
+            for dx in 12..((area.width as i32).min(360)-10){
+                let (px,py)=m.logical_to_framebuffer(area.x+dx as f32,
+                    area.y+dy as f32)?;
+                if px>=image.width() || py>=image.height(){return None;}
+                let color=image.get_color(px,py);
+                if color.r>185 && color.g>185 && color.b>185{white+=1;}
+            }
+        }
+        Some(white)
+    }
+
+    /// Pixel-position sensitive framebuffer digest. Counts only text-red
+    /// pixels (not background); different visual forms produce distinct
+    /// hashes even if the raw number of red pixels is similar. Xvfb only.
+    pub fn diagnostic_red_signature(&self,x:i32,y:i32,width:i32,height:i32)
+        ->Option<(usize,u64)> {
+        if width<=0||height<=0||width>640||height>480{return None;}
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),win.rl.get_screen_height(),
+            win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut count=0;
+        let mut hash=14695981039346656037u64;
+        for iy in y..y.saturating_add(height) {
+            for ix in x..x.saturating_add(width) {
+                let (px,py)=m.logical_to_framebuffer(ix as f32,iy as f32)?;
+                if px>=image.width()||py>=image.height(){return None;}
+                let c=image.get_color(px,py);
+                if c.r>160&&c.g<155&&c.b<155 {
+                    count+=1;
+                    hash=(hash^(ix as u64)).wrapping_mul(1099511628211);
+                    hash=(hash^(iy as u64)).wrapping_mul(1099511628211);
+                }
+            }
+        }
+        Some((count,hash))
+    }
+
+    /// One GPU readback over a bounded logical rectangle, counting only
+    /// distinctly red text pixels. Never expose the raw screenshot pixels.
+    pub fn diagnostic_red_pixels_in_rect(&self,x:i32,y:i32,width:i32,height:i32)->Option<usize> {
+        if width<=0||height<=0||width>640||height>480{return None;}
+        let w=self.window.borrow();
+        let win=w.as_ref()?;
+        let m=FrameMetrics::from_window(win.rl.get_screen_width(),win.rl.get_screen_height(),
+            win.rl.get_render_width(),win.rl.get_render_height());
+        let mut image=win.rl.load_image_from_screen(&win.thread);
+        let mut count=0;
+        for iy in y..y.saturating_add(height) {
+            for ix in x..x.saturating_add(width) {
+                let (px,py)=m.logical_to_framebuffer(ix as f32,iy as f32)?;
+                if px>=image.width()||py>=image.height(){return None;}
+                let c=image.get_color(px,py);
+                if c.r>160 && c.g<155 && c.b<155 {count+=1;}
+            }
+        }
+        Some(count)
+    }
+
+    /// Real native window resize. Runs only in opt-in Xvfb/device tests.
+    pub fn diagnostic_resize_window(&self, width: i32, height: i32) -> bool {
+        if width <= 0 || height <= 0 { return false; }
+        let mut guard = self.window.borrow_mut();
+        if let Some(w) = guard.as_mut() {
+            w.rl.set_window_size(width, height);
+            true
+        } else { false }
+    }
+
+    /// Samples physical render size independently of logical window geometry.
+    pub fn diagnostic_frame_metrics(&self) -> Option<DiagnosticMetrics> {
+        let guard = self.window.borrow();
+        let w = guard.as_ref()?;
+        let m = FrameMetrics::from_window(
+            w.rl.get_screen_width(), w.rl.get_screen_height(),
+            w.rl.get_render_width(), w.rl.get_render_height());
+        Some(DiagnosticMetrics {
+            logical_width: m.logical.width as i32,
+            logical_height: m.logical.height as i32,
+            render_width: m.render_width, render_height: m.render_height,
+            scale_x: m.scale_x, scale_y: m.scale_y,
+        })
+    }
+
+    /// Read back the GPU screen buffer. Use stable solid-color interiors and
+    /// repeated frames for virtual X11 because buffer swap timing is platform
+    /// dependent. No absolute pixel parity outside that environment is implied.
+    pub fn diagnostic_capture_pixel(&self, logical_x: f32, logical_y: f32) -> Option<DiagnosticPixel> {
+        let guard = self.window.borrow();
+        let w = guard.as_ref()?;
+        let m = FrameMetrics::from_window(
+            w.rl.get_screen_width(), w.rl.get_screen_height(),
+            w.rl.get_render_width(), w.rl.get_render_height());
+        let (px,py) = m.logical_to_framebuffer(logical_x,logical_y)?;
+        let mut image = w.rl.load_image_from_screen(&w.thread);
+        if px >= image.width() || py >= image.height() { return None; }
+        let c = image.get_color(px,py);
+        Some(DiagnosticPixel { r:c.r,g:c.g,b:c.b,a:c.a })
     }
 }
 
@@ -194,11 +1297,14 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
         #[cfg(feature = "raylib")]
         {
+            // Keep a bounded event batch outside the Raylib mutable borrow.
+            let mut pending_composition=std::mem::take(&mut *self.composition_queue.borrow_mut());
             let mut win_ref = self.window.borrow_mut();
             if win_ref.is_none() {
                 let (mut rl, thread) = raylib::init()
-                    .size(SCREEN_W, SCREEN_H)
+                    .size(INITIAL_WINDOW_W, INITIAL_WINDOW_H)
                     .title("Aura Lumina Sentinel")
+                    .resizable()
                     .build();
                 rl.set_target_fps(60);
                 // Keep the AVM-driven UI loop alive; closing should be explicit via the window close button.
@@ -213,6 +1319,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     loc_fill: shader.get_shader_location("fillColor"),
                     loc_border: shader.get_shader_location("borderColor"),
                     loc_border_width: shader.get_shader_location("borderWidth"),
+                    loc_framebuffer_scale: shader.get_shader_location("framebufferScale"),
+                    loc_framebuffer_height: shader.get_shader_location("framebufferHeight"),
                     shader,
                 };
                 *win_ref = Some(LuminaWindow {
@@ -223,11 +1331,53 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    focused_button: None,
+                    attempted_forms: std::collections::HashSet::new(),
+                    cancelled_requests: HashMap::new(),
+                    autofocus_decided: false,
+                    input_sessions: HashMap::new(),
+                    last_text_views: HashMap::new(),
                     textures: HashMap::new(),
+                    fonts: HashMap::new(),
+                    shaped_textures: HashMap::new(),
+                    #[cfg(target_os="linux")]
+                    candidate_font:None,
+                    #[cfg(target_os="linux")]
+                    last_candidate_bounds:None,
+                    #[cfg(target_os="linux")]
+                    last_native_caret:None,
+                    #[cfg(target_os="linux")]
+                    native_ibus: ibus_native::NativeIbus::connect(),
+                    #[cfg(target_os="linux")]
+                    native_ibus_reconnect:ibus_native::IbusReconnectBudget::default(),
+                    #[cfg(target_os="linux")]
+                    native_ibus_serial_floor:0,
+                    #[cfg(target_os="linux")]
+                    native_ibus_health_frames:0,
                 });
             }
 
             let win = win_ref.as_mut().expect("window initialized");
+
+            // Normal recovery is capped at three attempts. After exhaustion,
+            // ONLY a strictly increasing HOST App ibus_retry_revision can
+            // rearm a *new* finite epoch; initial value is merely baseline.
+            // A fresh helper begins with surrounding capability OFF.
+            #[cfg(target_os="linux")]
+            if let Some(version)=root_native_retry_revision(tree){
+                win.native_ibus_reconnect.observe_host_retry_revision(
+                    version,win.native_ibus.is_none());
+            }
+            #[cfg(target_os="linux")]
+            if win.native_ibus.is_none() && win.native_ibus_reconnect.tick(){
+                if let Some(mut fresh)=ibus_native::NativeIbus::connect(){
+                    fresh.set_serial_floor(win.native_ibus_serial_floor);
+                    win.native_ibus_health_frames=0;
+                    win.native_ibus=Some(fresh);
+                }else{
+                    win.native_ibus_reconnect.arm();
+                }
+            }
 
             // Preload any image textures before begin_drawing (needs &mut RaylibHandle).
             ensure_textures_loaded(&mut win.rl, &win.thread, &mut win.textures, tree);
@@ -252,13 +1402,35 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let now = win.rl.get_time();
 
             // Keyboard sampling must happen before begin_drawing (borrow rules).
-            let backspace = win.rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE);
-            let delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
-            let left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
-            let right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
-            let enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
+            let mut backspace = win.rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE);
+            let mut delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
+            let mut left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
+            let mut right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let radio_up = win.rl.is_key_pressed(KeyboardKey::KEY_UP);
+            let radio_down = win.rl.is_key_pressed(KeyboardKey::KEY_DOWN);
+            let mut home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
+            let mut end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
+            let mut enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
                 || win.rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER);
-            let escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+            let mut escape = win.rl.is_key_pressed(KeyboardKey::KEY_ESCAPE);
+            let ctrl = win.rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL);
+            let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
+            let undo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Z);
+            let redo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Y);
+            let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
+            let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
+            let space = win.rl.is_key_pressed(KeyboardKey::KEY_SPACE);
+            // Sample modifiers BEFORE begin_drawing borrows the Raylib handle.
+            // A keyboard Button action may not use Ctrl/Alt/Super shortcuts.
+            let plain_button_action=!ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+            let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
             let mut typed = String::new();
             while let Some(ch) = win.rl.get_char_pressed() {
@@ -268,107 +1440,620 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }
 
-            let (rl, thread, sdf) = (&mut win.rl, &win.thread, &mut win.sdf);
-
-            let mut d = rl.begin_drawing(thread);
-            // Allow app-level theming via `App(bg: ...)`.
-            let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
-            d.clear_background(app_bg);
-
-            let mut click_state = ClickState::default();
-            render_node(
-                &mut d,
-                tree,
-                Rectangle::new(0.0, 0.0, SCREEN_W as f32, SCREEN_H as f32),
-                clicked,
-                mouse,
-                now,
-                sdf,
-                win.click_anim,
-                &mut click_state,
-                &mut win.focused_input,
-                &win.textures,
+            // Geometry & pointer coordinates stay LOGICAL. The shader alone
+            // transforms gl_FragCoord physical bottom-left pixels to logical
+            // top-left coordinates. Raylib's scissor mode performs its own DPI
+            // transform: do NOT scale scissor rectangles again here.
+            let frame = FrameMetrics::from_window(
+                win.rl.get_screen_width(), win.rl.get_screen_height(),
+                win.rl.get_render_width(), win.rl.get_render_height(),
             );
-
-            let click_cb = click_state.clicked_cb;
-
-            fb.clicked_callback_id = click_cb;
-
-            // Blur on click outside any text input.
-            if clicked && !click_state.hit_text_input {
-                win.focused_input = None;
+            let viewport = frame.logical;
+            let valid_frame = frame.scale_x > 0.0 && frame.scale_y > 0.0;
+            if valid_frame {
+                win.sdf.shader.set_shader_value(
+                    win.sdf.loc_framebuffer_scale, [frame.scale_x, frame.scale_y]);
+                win.sdf.shader.set_shader_value(
+                    win.sdf.loc_framebuffer_height, frame.render_height as f32);
             }
-
-            // Apply keyboard edits for the currently focused input and emit events.
-            if let Some(fi) = &mut win.focused_input {
-                let mut changed = false;
-
-                if escape {
-                    win.focused_input = None;
-                } else {
-                    if left {
-                        fi.caret = fi.caret.saturating_sub(1);
+            // Construct all geometry before beginning the paint pass. Headless
+            // tests exercise this exact measure/arrange model without Raylib.
+            let planned_layout = layout::arrange(tree, layout::Bounds::new(
+                0.0, 0.0, viewport.width, viewport.height,
+            ));
+            let invalid_radio_groups=layout::invalid_radio_groups(tree,&planned_layout);
+            let cancel_pre=forms::cancel_plan(tree,&planned_layout,&win.cancelled_requests);
+            let mut focus_order = layout::focus_order(tree, &planned_layout);
+            let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
+            focus_order.retain(|entry|match entry {
+                layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
+                _=>false,
+            });
+            let keyboard_order=layout::keyboard_focus_order_with_blocked(
+                tree,&planned_layout,&focus_order,&cancel_pre.blocked);
+            reconcile_input_sessions(win,&focus_order,&revisions);
+            // No callback from a removed, clipped, disabled or ambiguous button.
+            if win.focused_button.is_some_and(|id|!keyboard_order.iter()
+                .any(|entry|matches!(entry,layout::HitTarget::Button(other) if *other==id))) {
+                win.focused_button=None;
+            }
+            // The popup is overlaid outside the TextInput rectangle. Consume
+            // its hit before ordinary layout hit testing would blur the IME.
+            #[cfg(target_os="linux")]
+            let candidate_row_clicked=if clicked {
+                match (win.native_ibus.as_ref().and_then(|bus|bus.candidate_snapshot()),
+                       win.last_candidate_bounds,
+                       win.focused_input.as_ref().filter(|fi|fi.session.composing())
+                           .map(|fi|fi.on_change)) {
+                    (Some(page),Some(panel),Some(cb)) if page.callback_id==cb=>
+                        candidate_row_at(panel,&page,mouse).map(|row|(cb,row)),
+                    _=>None,
+                }
+            }else{None};
+            #[cfg(target_os="linux")]
+            let candidate_row_clicked=candidate_row_clicked.filter(|(cb,_)|
+                find_input_by_callback(tree,&planned_layout,*cb)
+                    .is_some_and(|(node,_)|native_surrounding_policy_allows(node)));
+            #[cfg(target_os="linux")]
+            let candidate_click_consumed=candidate_row_clicked.is_some();
+            #[cfg(not(target_os="linux"))]
+            let candidate_click_consumed=false;
+            let composing_before_pointer=win.focused_input.as_ref()
+                .is_some_and(|fi|fi.session.composing());
+            let click_cb = if clicked && !candidate_click_consumed {
+                match layout::hit_test_with_blocked(tree, &planned_layout,
+                    mouse.x, mouse.y,&cancel_pre.blocked) {
+                    Some(layout::HitTarget::Button(id)) => {
+                        switch_input(win,None);
+                        win.focused_button=keyboard_order.iter().find_map(|candidate|match candidate {
+                            layout::HitTarget::Button(other) if *other==id=>Some(id),
+                            _=>None,
+                        });
+                        Some(id)
                     }
-                    if right {
-                        fi.caret = (fi.caret + 1).min(fi.buffer.chars().count());
+                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
+                        win.focused_button=None;
+                        if focus_order.iter().any(|candidate|matches!(candidate,
+                            layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
+                            switch_input(win,Some((on_change,on_submit,value,
+                                revisions.get(&on_change).copied().flatten())));
+                            // Apply cursor placement in shaped, scrolled logical
+                            // coordinates using the previously displayed GPU
+                            // atlas; on missing/incomplete clusters, do not
+                            // manufacture a byte position.
+                            if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
+                                if shaped_gpu::is_opted(n) {
+                                    let hit=win.focused_input.as_ref().and_then(|fi|{
+                                        if fi.session.composing(){return None;}
+                                        let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
+                                        let c=text_viewport::content_bounds(pl.bounds);
+                                        let scroll=win.last_text_views.get(&on_change)
+                                            .map(|v|v.scroll).unwrap_or(0.0);
+                                        bidi_editor::hit_test(shape,mouse.x-c.x+scroll)
+                                    });
+                                    if let (Some(stop),Some(fi))=(hit,win.focused_input.as_mut()) {
+                                        fi.session.set_visual_caret(stop.grapheme,false);
+                                        fi.visual_affinity=Some(stop.run);
+                                    }
+                                }
+                            }
+                        } else {
+                            // Duplicate callback IDs are ambiguous: never
+                            // grant mouse focus to a field that cannot own a
+                            // unique session identity.
+                            switch_input(win,None);
+                        }
+                        None
                     }
-
-                    if backspace {
-                        if fi.caret > 0 {
-                            let mut chars: Vec<char> = fi.buffer.chars().collect();
-                            let idx = fi.caret - 1;
-                            if idx < chars.len() {
-                                chars.remove(idx);
-                                fi.buffer = chars.into_iter().collect();
-                                fi.caret = fi.caret.saturating_sub(1);
-                                changed = true;
+                    None => {
+                        win.focused_button=None;
+                        switch_input(win,None);None
+                    }
+                }
+            } else {None};
+            // Tab visits eligible native Buttons as well as text fields.
+            // A live IBus composition still owns Tab until explicitly ended.
+            if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
+                let active=win.focused_button.map(layout::FocusKey::Button)
+                    .or_else(||win.focused_input.as_ref()
+                        .map(|fi|layout::FocusKey::TextInput(fi.on_change)));
+                match layout::next_keyboard_focus(&keyboard_order,active,reverse_tab) {
+                    Some(layout::HitTarget::Button(id))=>{
+                        switch_input(win,None);
+                        win.focused_button=Some(id);
+                    },
+                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                        win.focused_button=None;
+                        switch_input(win,Some((on_change,on_submit,value,
+                            revisions.get(&on_change).copied().flatten())));
+                    },
+                    None=>{
+                        win.focused_button=None;
+                        switch_input(win,None);
+                    },
+                }
+            }
+            // The existing input/IME Escape branch below remains responsible
+            // for canceling preedit or blurring TextInput.
+            if escape {win.focused_button=None;}
+            // User-visible opt-in autofocus is ONE-SHOT per native window,
+            // never a repeated layout-driven focus request. A real pointer,
+            // Tab, Escape or earlier focused field has priority; the selected
+            // target was already checked for unique ID, clipping, disabled
+            // state and valid host value_revision by focus_order above.
+            if !win.autofocus_decided {
+                if clicked || tab || escape || win.focused_input.is_some() {
+                    win.autofocus_decided=true;
+                } else if let Some(layout::HitTarget::TextInput{on_change,on_submit,value})=
+                    initial_autofocus_target(tree,&planned_layout,&focus_order){
+                    switch_input(win,Some((on_change,on_submit,value,
+                        revisions.get(&on_change).copied().flatten())));
+                    win.autofocus_decided=true;
+                }
+            }
+            // Linux opt-in: forward sampled native Raylib keyboard semantics
+            // into REAL libibus. GLFW chars supply Unicode keysyms, while named
+            // keys use documented X11 keysyms; unknown hardware scancodes are
+            // NEVER guessed. Tab stays a Lumina focus key outside composition.
+            // Unhandled keys retain the standard editor fallback.
+            #[cfg(target_os="linux")]
+            {
+                let mut helper_lost=false;
+                if let (Some((cb,row)),Some(bus))=
+                    (candidate_row_clicked,win.native_ibus.as_mut()){
+                    // No fake composition events: only engine-generated
+                    // navigation and CommitText can change EditSession.
+                    if let Some(events)=bus.select_candidate_via_engine(cb,row){
+                        pending_composition.extend(events);
+                    }
+                }
+                if let Some(bus)=win.native_ibus.as_mut(){
+                    // A live helper is not proof that the original daemon
+                    // still owns the context. Read-only T every 12 frames
+                    // catches daemon loss even without another physical key.
+                    win.native_ibus_health_frames=
+                        win.native_ibus_health_frames.saturating_add(1);
+                    if win.native_ibus_health_frames>=12 {
+                        win.native_ibus_health_frames=0;
+                        if !bus.probe_daemon_generation(){helper_lost=true;}
+                    }
+                    let focus=win.focused_input.as_ref().map(|f|f.on_change);
+                    // If an external value_revision rebased the editor while
+                    // the engine still owns preedit, reset that engine session.
+                    // Never allow a late CommitText into the new authority era.
+                    if bus.has_composition() && win.focused_input.as_ref()
+                        .is_some_and(|fi|!fi.session.composing()) {
+                        let _=bus.sync_focus(None);
+                    }
+                    // Restrict BEFORE focus, key delivery, or any text sync.
+                    // Private fields retain direct local typing but no IBus IME.
+                    let authorized=win.focused_input.as_ref()
+                        .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                        .is_some_and(|(node,_)|native_surrounding_policy_allows(node));
+                    if !authorized {
+                        // Native reset discards IBus's preedit; discard the
+                        // matching local projection before direct typing too.
+                        if let Some(fi)=win.focused_input.as_mut(){
+                            fi.session.abandon_composition();
+                        }
+                    }
+                    let native_focus=if authorized{focus}else{None};
+                    let available=bus.set_surrounding_enabled(authorized)
+                        && bus.sync_focus(native_focus);
+                    if available && authorized && focus.is_some() {
+                        if let Some(fi)=win.focused_input.as_ref(){
+                            let _=sync_native_ibus_context(bus,fi);
+                        }
+                        let shift=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
+                        let alt=win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT);
+                        let super_key=win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                            ||win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+                        let mut mods=0;
+                        if shift { mods|=ibus_native::MOD_SHIFT; }
+                        if ctrl { mods|=ibus_native::MOD_CONTROL; }
+                        if alt { mods|=ibus_native::MOD_ALT; }
+                        if super_key { mods|=ibus_native::MOD_SUPER; }
+                        // Named virtual-key events provide key press/release
+                        // independently of text. Shifted and navigational
+                        // preedit can now reach IBus; editor shortcuts remain
+                        // reserved rather than swallowed by the IME.
+                        if !ctrl && !alt && !super_key {
+                            let composing=win.focused_input.as_ref()
+                                .is_some_and(|f|f.session.composing());
+                            let keys=[
+                                (KeyboardKey::KEY_BACKSPACE,0xff08u32),
+                                (KeyboardKey::KEY_DELETE,0xffff),
+                                (KeyboardKey::KEY_LEFT,0xff51),
+                                (KeyboardKey::KEY_UP,0xff52),
+                                (KeyboardKey::KEY_RIGHT,0xff53),
+                                (KeyboardKey::KEY_DOWN,0xff54),
+                                (KeyboardKey::KEY_PAGE_UP,0xff55),
+                                (KeyboardKey::KEY_PAGE_DOWN,0xff56),
+                                (KeyboardKey::KEY_HOME,0xff50),
+                                (KeyboardKey::KEY_END,0xff57),
+                                (KeyboardKey::KEY_ENTER,0xff0d),
+                                (KeyboardKey::KEY_ESCAPE,0xff1b),
+                                (KeyboardKey::KEY_TAB,0xff09),
+                            ];
+                            for &(vk,keysym) in &keys {
+                                if vk==KeyboardKey::KEY_TAB && !composing {continue;}
+                                for released in [false,true] {
+                                    let active=if released {
+                                        win.rl.is_key_released(vk)
+                                    }else{win.rl.is_key_pressed(vk)};
+                                    if !active {continue;}
+                                    let event=ibus_native::NativeKeyEvent{
+                                        keysym,modifiers:mods,released,
+                                    };
+                                    if let Some((handled,signals))=
+                                        bus.process_ibus_key_event(event,focus){
+                                        pending_composition.extend(signals);
+                                        if handled && !released {
+                                            match keysym {
+                                                0xff08=>backspace=false,
+                                                0xffff=>delete=false,
+                                                0xff51=>left=false,
+                                                0xff53=>right=false,
+                                                0xff50=>home=false,
+                                                0xff57=>end=false,
+                                                0xff0d=>enter=false,
+                                                0xff1b=>escape=false,
+                                                _=>{}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let incoming=std::mem::take(&mut typed);
+                            for ch in incoming.chars() {
+                                if let Some(event)=ibus_native::NativeKeyEvent::from_char(ch,mods){
+                                    match bus.process_ibus_key_event(event,focus){
+                                        Some((handled,signals))=>{
+                                            pending_composition.extend(signals);
+                                            if !handled{typed.push(ch);}
+                                        }
+                                        None=>typed.push(ch),
+                                    }
+                                }else{typed.push(ch);}
                             }
                         }
                     }
+                    helper_lost|=bus.is_disconnected();
+                }
+                if helper_lost {
+                    if let Some(old)=win.native_ibus.as_ref(){
+                        win.native_ibus_serial_floor=
+                            win.native_ibus_serial_floor.max(old.last_serial());
+                    }
+                    // Discard every native event observed during a dying
+                    // generation. No old P/C/D/NativeReplace may be applied
+                    // after reconnect or given a fresh focus/authority epoch.
+                    pending_composition.clear();
+                    typed.clear(); // uncertain in-flight key: fail closed
+                    win.native_ibus=None;
+                    win.native_ibus_health_frames=0;
+                    win.native_ibus_reconnect.arm();
+                    win.last_candidate_bounds=None;
+                    win.candidate_font=None;
+                    win.last_native_caret=None;
+                    if let Some(fi)=win.focused_input.as_mut() {
+                        // A dead IME may not leave a permanent editor lock.
+                        // Never commit a preedit that outlived its engine.
+                        fi.session.abandon_composition();
+                    }
+                }
+            }
 
-                    if delete {
-                        let mut chars: Vec<char> = fi.buffer.chars().collect();
-                        if fi.caret < chars.len() {
-                            chars.remove(fi.caret);
-                            fi.buffer = chars.into_iter().collect();
-                            changed = true;
+            // Private native queue is populated ONLY by a real libibus key
+            // with exactly one positive D before its matching C. A public
+            // CompositionEvent cannot manufacture a NativeReplace.
+            #[cfg(target_os="linux")]
+            let native_replacements=win.native_ibus.as_mut()
+                .map(|bus|bus.take_native_replacements()).unwrap_or_default();
+            // Composition events are distinct from Raylib committed-char
+            // queue. Match the currently focused widget and monotonic serial.
+            // Never emit callbacks for preedit updates or cancellation.
+            let mut composition_consumed=false;
+            for event in pending_composition {
+                let Some(fi)=win.focused_input.as_mut() else{continue;};
+                if event.target()!=fi.on_change{continue;}
+                use CompositionEvent::*;
+                match event {
+                    Start{sequence,..}=>{
+                        if fi.session.start_composition(sequence){
+                            composition_consumed=true;
                         }
                     }
-
-                    if !typed.is_empty() {
-                        let mut chars: Vec<char> = fi.buffer.chars().collect();
-                        let insert: Vec<char> = typed.chars().collect();
-                        let mut idx = fi.caret.min(chars.len());
-                        for ch in insert {
-                            chars.insert(idx, ch);
-                            idx += 1;
+                    Update{sequence,text,caret,..}=>{
+                        if fi.session.update_composition(sequence,&text,caret){
+                            composition_consumed=true;
                         }
-                        fi.buffer = chars.into_iter().collect();
-                        fi.caret = idx;
-                        changed = true;
                     }
-
-                    if changed {
-                        fb.text_input_events.push(UiTextInputEvent {
-                            callback_id: fi.on_change,
-                            text: fi.buffer.clone(),
-                            submitted: false,
+                    Cancel{sequence,..}=>{
+                        if fi.session.cancel_composition(sequence){
+                            composition_consumed=true;
+                        }
+                    }
+                    Commit{sequence,text,..}=>{
+                        if let Some(changed)=fi.session.commit_composition(sequence,&text){
+                            composition_consumed=true;
+                            if changed{
+                                fi.visual_affinity=None;
+                                fi.revision.record_local_edit(&fi.session.buffer);
+                                fb.text_input_events.push(UiTextInputEvent{
+                                    callback_id:fi.on_change,text:fi.session.buffer.clone(),
+                                    submitted:false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            // Apply one authoritative transaction for real engine-origin D
+            // followed by C. Even a genuine D never edits host text by itself.
+            // Snapshot, scalar caret, focus and EditSession authority epoch
+            // are checked again AFTER reconciliation and other queued events.
+            #[cfg(target_os="linux")]
+            for replacement in native_replacements {
+                let Some(fi)=win.focused_input.as_mut()else{continue;};
+                if fi.on_change!=replacement.callback_id{continue;}
+                if let Some(changed)=fi.session.replace_surrounding_if_snapshot(
+                    replacement.authority_epoch,&replacement.expected,
+                    replacement.caret_scalar,replacement.anchor_scalar,
+                    replacement.offset,replacement.count,&replacement.text,
+                    replacement.sequence
+                ){
+                    composition_consumed=true;
+                    if changed{
+                        fi.visual_affinity=None;
+                        fi.revision.record_local_edit(&fi.session.buffer);
+                        fb.text_input_events.push(UiTextInputEvent{
+                            callback_id:fi.on_change,
+                            text:fi.session.buffer.clone(),submitted:false,
                         });
                     }
-
+                }
+            }
+            if let Some(fi)=&mut win.focused_input {
+                if fi.session.composing() || composition_consumed {
+                    // The platform adapter owns navigation and typing while
+                    // the preedit transaction is active. Escape aborts it.
+                    if escape{fi.session.abandon_composition();}
+                } else if escape {
+                    switch_input(win,None);
+                } else {
+                    use text_input::{EditCommand,SessionAction};
+                    if select_all {fi.session.apply(SessionAction::SelectAll);}
+                    // Physical Left/Right for opt-in shaped text only: every
+                    // move carries its UAX9 run affinity separately from
+                    // logical UAX29 grapheme index. No false logical fallback
+                    // if GSUB cannot provide an exact boundary.
+                    let found=find_input_by_callback(tree,&planned_layout,fi.on_change);
+                    let opted=found.is_some_and(|(n,_)|shaped_gpu::is_opted(n));
+                    let geometry=found.and_then(|(n,_)|
+                        loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures));
+                    if home||end {
+                        if !opted {
+                            if home {fi.session.apply(SessionAction::Move(EditCommand::Home,extend_selection));}
+                            if end {fi.session.apply(SessionAction::Move(EditCommand::End,extend_selection));}
+                        }else if let Some(shape)=geometry {
+                            if let Some(stop)=bidi_editor::edge(shape,end){
+                                fi.session.set_visual_caret(stop.grapheme,extend_selection);
+                                fi.visual_affinity=Some(stop.run);
+                            }
+                        }
+                    }
+                    if left||right {
+                        if !opted {
+                            if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
+                            if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                        }else if let Some(shape)=geometry {
+                            if let Some(stop)=bidi_editor::navigate(shape,fi.session.caret,
+                                fi.visual_affinity,right,extend_selection,fi.session.selection()){
+                                fi.session.set_visual_caret(stop.grapheme,extend_selection);
+                                fi.visual_affinity=Some(stop.run);
+                            }
+                        }
+                    }
+                    let mut changed=false;
+                    if undo {changed|=fi.session.apply(SessionAction::Undo);}
+                    if redo {changed|=fi.session.apply(SessionAction::Redo);}
+                    if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
+                    if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
+                    if !ctrl && !typed.is_empty() {
+                        changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                    }
+                    if changed {
+                        fi.visual_affinity=None;
+                        fi.revision.record_local_edit(&fi.session.buffer);
+                        fb.text_input_events.push(UiTextInputEvent {
+                            callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
+                        });
+                    }
                     if enter {
-                        if let Some(cb) = fi.on_submit {
+                        if let Some(cb)=fi.on_submit {
                             fb.text_input_events.push(UiTextInputEvent {
-                                callback_id: cb,
-                                text: fi.buffer.clone(),
-                                submitted: true,
+                                callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
                             });
                         }
                     }
                 }
             }
+            #[cfg(target_os="linux")]
+            if let (Some(bus),Some(fi))=
+                (win.native_ibus.as_mut(),win.focused_input.as_ref()){
+                let _=sync_native_ibus_context(bus,fi);
+            }
+            ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
+                &planned_layout,&win.focused_input,&win.input_sessions);
+            let requests=collect_shaped_requests(tree,&planned_layout,
+                &win.focused_input,&win.input_sessions);
+            shaped_gpu::prepare(&mut win.rl,&win.thread,&mut win.shaped_textures,&requests);
+            #[cfg(target_os="linux")]
+            let candidate_page=win.native_ibus.as_ref()
+                .and_then(|bus|bus.candidate_snapshot())
+                .filter(|page|win.focused_input.as_ref()
+                    .is_some_and(|fi|fi.on_change==page.callback_id));
+            let text_views=measure_input_visuals(
+                &win.rl,tree,&planned_layout,&focus_order,
+                &mut win.focused_input,&mut win.input_sessions,&win.fonts,&win.shaped_textures);
+            win.last_text_views=text_views.clone();
+            #[cfg(target_os="linux")]
+            {
+                let vp=layout::Bounds::new(0.0,0.0,viewport.width,viewport.height);
+                let cursor_position=win.focused_input.as_ref()
+                    .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change)
+                        .and_then(|(_,plan)|text_views.get(&fi.on_change)
+                            .and_then(|visual|native_ibus_caret_rect(
+                                plan.bounds,plan.clip,visual,vp,
+                                win.rl.get_window_position(),frame.scale_x,frame.scale_y))
+                            .map(|position|(fi.on_change,position))));
+                win.last_native_caret=cursor_position.map(|(_,position)|position.local);
+                if let (Some((callback_id,position)),Some(bus))=
+                    (cursor_position,win.native_ibus.as_mut()){
+                    let _=bus.set_cursor_location(callback_id,position.screen);
+                }
+                win.last_candidate_bounds=candidate_page.as_ref()
+                    .and_then(|page|cursor_position
+                        .filter(|(cb,_)|*cb==page.callback_id)
+                        .and_then(|(_,position)|ibus_candidate_bounds(
+                            position.local,vp,page.candidates.len())));
+                prepare_ibus_candidate_font(&mut win.rl,&win.thread,
+                    &mut win.candidate_font,candidate_page.as_ref());
+            }
+            // Radio arrow traversal changes focused Button and emits the
+            // target's existing callback, but never mutates host checked.
+            // Sample all key state BEFORE Raylib borrows its draw handle.
+            let radio_reverse=left || radio_up;
+            let radio_forward=right || radio_down;
+            let radio_action=if !clicked && !tab && !escape && !(enter||space)
+                && plain_button_action && win.focused_input.is_none()
+                && radio_reverse!=radio_forward {
+                win.focused_button.and_then(|id|layout::radio_arrow_target(
+                    tree,&planned_layout,&keyboard_order,id,radio_reverse))
+            }else{None};
+            if let Some(id)=radio_action{win.focused_button=Some(id);}
+            // Evaluate the current committed draft, not the (possibly stale)
+            // host value prop nor a provisional IBus composition projection.
+            let mut current_values:HashMap<u64,String>=win.input_sessions.iter()
+                .map(|(id,fi)|(*id,fi.session.buffer.clone())).collect();
+            if let Some(fi)=win.focused_input.as_ref(){
+                current_values.insert(fi.on_change,fi.session.buffer.clone());
+            }
+            let eligible_fields:std::collections::HashSet<u64>=focus_order.iter()
+                .filter_map(|item|match item{
+                    layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+                    _=>None,
+                }).collect();
+            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
+                && win.focused_input.is_none(){win.focused_button}else{None};
+            let mut validated_click=click_cb.or(radio_action).or(keyboard_click);
+            if let Some(id)=validated_click{
+                if let Some(decision)=cancel_pre.decisions.get(&id){
+                    match decision {
+                        forms::CancelDecision::Dispatch{form,revision}=>{
+                            if win.cancelled_requests.len()<32 ||
+                                win.cancelled_requests.contains_key(form){
+                                win.cancelled_requests.insert(form.clone(),*revision);
+                                // The old focus identity cannot be used to
+                                // reissue the same cancel on held Enter/Space.
+                                win.focused_button=None;
+                            }else{
+                                validated_click=None;
+                                win.focused_button=None;
+                            }
+                        },
+                        forms::CancelDecision::Reject=>{
+                            validated_click=None;
+                            win.focused_button=None;
+                        },
+                    }
+                }else{
+                match forms::submit_action(tree,&planned_layout,id){
+                    forms::SubmitAction::Normal=>{},
+                    forms::SubmitAction::Reject=>validated_click=None,
+                    forms::SubmitAction::Validate(form)=>{
+                        if composing_before_pointer{
+                            // A pointer blur may have abandoned native preedit
+                            // already; it must NOT commit the form opportunistically.
+                            validated_click=None;
+                        }else{
+                            let assessment=forms::assess(tree,&planned_layout,&form,
+                                &current_values,&eligible_fields);
+                            if assessment.valid(){
+                                win.attempted_forms.remove(&form);
+                            }else{
+                                validated_click=None;
+                                if win.attempted_forms.len()<32{
+                                    win.attempted_forms.insert(form);
+                                }
+                                // Radio and TextInput failures compete in
+                                // actual source Tab order, not numeric callback ID.
+                                match assessment.first_focus_target(&keyboard_order){
+                                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                                        win.focused_button=None;
+                                        switch_input(win,Some((on_change,on_submit,value,
+                                            revisions.get(&on_change).copied().flatten())));
+                                        win.autofocus_decided=true;
+                                    },
+                                    Some(layout::HitTarget::Button(id))=>{
+                                        switch_input(win,None);
+                                        win.focused_button=Some(id);
+                                        win.autofocus_decided=true;
+                                    },
+                                    None=>{},
+                                }
+                            }
+                        }
+                    }
+                }
+                }
+            }
+            let cancel_draw=forms::cancel_plan(tree,&planned_layout,
+                &win.cancelled_requests);
+            let mut form_errors=forms::RenderErrors::default();
+            let attempted:Vec<_>=win.attempted_forms.iter().cloned().collect();
+            for form in attempted{
+                let assessment=forms::assess(tree,&planned_layout,&form,
+                    &current_values,&eligible_fields);
+                if assessment.valid(){
+                    win.attempted_forms.remove(&form);
+                }else{
+                    for (cb,reason) in assessment.errors{
+                        form_errors.text.insert(cb,reason);
+                    }
+                    for (cb,reason) in assessment.radio_errors{
+                        form_errors.radio.insert(cb,reason);
+                    }
+                }
+            }
+            let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
+            let mut d = rl.begin_drawing(thread);
+            // Allow app-level theming via `App(bg: ...)`.
+            let app_bg = parse_color(prop_string(tree, "bg").or_else(|| prop_string(tree, "background")));
+            d.clear_background(app_bg);
 
-            if let Some(id) = click_cb {
+            if valid_frame {
+                render_node(
+                    &mut d, tree, &planned_layout, now, sdf,
+                    win.click_anim, &win.focused_input, win.focused_button,
+                    &invalid_radio_groups, &form_errors, &cancel_draw, &win.textures,
+                    &win.input_sessions,
+                    &text_views,&win.fonts,&win.shaped_textures,
+                );
+                #[cfg(target_os="linux")]
+                if let (Some(page),Some(panel))=
+                    (candidate_page.as_ref(),win.last_candidate_bounds){
+                    paint_ibus_candidates(&mut d,panel,page,win.candidate_font.as_ref());
+                }
+            }
+            // Keyboard buttons share the exact same host callback channel
+            // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
+            fb.clicked_callback_id=validated_click;
+
+            if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
             } else {
                 // Clear once the animation has elapsed.
@@ -512,123 +2197,6 @@ fn parse_callback_id(s: Option<&str>) -> Option<u64> {
 }
 
 #[cfg(feature = "raylib")]
-fn point_in_rect(p: Vector2, r: Rectangle) -> bool {
-    p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-}
-
-#[cfg(feature = "raylib")]
-fn measure_node(node: &UiNode) -> (f32, f32) {
-    match node.kind.as_str() {
-        "Box" => {
-            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
-            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
-
-            let (pt, pr, pb, pl) = padding_4(node);
-            let (cw, ch) = node
-                .children
-                .first()
-                .map(measure_node)
-                .unwrap_or((0.0, 0.0));
-
-            let w = w_prop.unwrap_or(cw + pl + pr);
-            let h = h_prop.unwrap_or(ch + pt + pb);
-            (w, h)
-        }
-        "Grid" => {
-            let cols = prop_i32(node, "cols")
-                .or_else(|| prop_i32(node, "columns"))
-                .unwrap_or(1)
-                .max(1) as usize;
-
-            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
-            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
-            if rows == 0 {
-                for child in &node.children {
-                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-                    rows = rows.max(r + rs);
-                }
-                rows = rows.max(1);
-            }
-
-            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
-            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
-            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
-
-            let (pt, pr, pb, pl) = padding_4(node);
-
-            let mut max_cell_w = 0.0_f32;
-            let mut max_cell_h = 0.0_f32;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                max_cell_w = max_cell_w.max(cw);
-                max_cell_h = max_cell_h.max(ch);
-            }
-
-            let w_prop = prop_i32(node, "width").map(|v| v.max(0) as f32);
-            let h_prop = prop_i32(node, "height").map(|v| v.max(0) as f32);
-
-            let w = w_prop.unwrap_or((cols as f32) * max_cell_w + ((cols - 1) as f32) * gap_x + pl + pr);
-            let h = h_prop.unwrap_or((rows as f32) * max_cell_h + ((rows - 1) as f32) * gap_y + pt + pb);
-            (w, h)
-        }
-        "Button" => {
-            let w = prop_i32(node, "width").unwrap_or(200) as f32;
-            let h = prop_i32(node, "height").unwrap_or(50) as f32;
-            (w, h)
-        }
-        "Rect" => {
-            let w = prop_i32(node, "width").unwrap_or(100) as f32;
-            let h = prop_i32(node, "height").unwrap_or(100) as f32;
-            (w, h)
-        }
-        "Text" => {
-            let size = prop_i32(node, "size").unwrap_or(20) as f32;
-            let text = prop_string(node, "text")
-                .or_else(|| prop_string(node, "content"))
-                .unwrap_or("");
-            // Best-effort estimate (avoids font API differences across raylib-rs versions).
-            let w = (text.chars().count() as f32) * (size * 0.6);
-            let h = size;
-            (w, h)
-        }
-        "TextInput" => {
-            let w = prop_i32(node, "width").unwrap_or(360) as f32;
-            let h = prop_i32(node, "height").unwrap_or(46) as f32;
-            (w, h)
-        }
-        "Image" => {
-            let w = prop_i32(node, "width").unwrap_or(256) as f32;
-            let h = prop_i32(node, "height").unwrap_or(256) as f32;
-            (w, h)
-        }
-        _ => {
-            // Containers default to available space.
-            (0.0, 0.0)
-        }
-    }
-}
-
-#[cfg(feature = "raylib")]
-fn padding_4(node: &UiNode) -> (f32, f32, f32, f32) {
-    // Box model padding: allow `padding` shorthand plus overrides.
-    let p = prop_i32(node, "padding").unwrap_or(0) as f32;
-    let px = prop_i32(node, "padding_x").map(|v| v as f32);
-    let py = prop_i32(node, "padding_y").map(|v| v as f32);
-
-    let pt = prop_i32(node, "padding_top").map(|v| v as f32);
-    let pr = prop_i32(node, "padding_right").map(|v| v as f32);
-    let pb = prop_i32(node, "padding_bottom").map(|v| v as f32);
-    let pl = prop_i32(node, "padding_left").map(|v| v as f32);
-
-    let top = pt.or(py).unwrap_or(p).max(0.0);
-    let right = pr.or(px).unwrap_or(p).max(0.0);
-    let bottom = pb.or(py).unwrap_or(p).max(0.0);
-    let left = pl.or(px).unwrap_or(p).max(0.0);
-    (top, right, bottom, left)
-}
-
-#[cfg(feature = "raylib")]
 fn ensure_textures_loaded(
     rl: &mut RaylibHandle,
     thread: &RaylibThread,
@@ -652,291 +2220,148 @@ fn ensure_textures_loaded(
 }
 
 #[cfg(feature = "raylib")]
-fn render_node(
+fn render_children(
     d: &mut RaylibDrawHandle,
     node: &UiNode,
-    bounds: Rectangle,
-    mouse_clicked: bool,
-    mouse: Vector2,
+    layout: &layout::LayoutNode,
     now: f64,
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
-    click_state: &mut ClickState,
-    focused_input: &mut Option<FocusedTextInput>,
+    focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
     textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
 ) {
-    // Optional absolute positioning: if a node provides `x`/`y` props, render it at that position.
-    // This enables simple "game-ish" demos (moving objects) without adding a full canvas API yet.
-    let mut bounds = bounds;
-    if let Some(x) = prop_i32(node, "x") {
-        bounds.x = x as f32;
+    for (child, prepared) in node.children.iter().zip(&layout.children) {
+        if let Some(prepared) = prepared {
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input,
+                focused_button, invalid_radio_groups, form_errors, cancel_plan,
+                textures, input_sessions, text_views, fonts, shaped);
+        }
     }
-    if let Some(y) = prop_i32(node, "y") {
-        bounds.y = y as f32;
+}
+
+#[cfg(feature = "raylib")]
+fn render_node(
+    d: &mut RaylibDrawHandle,
+    node: &UiNode,
+    layout: &layout::LayoutNode,
+    now: f64,
+    sdf: &mut RoundedRectShader,
+    click_anim: Option<(u64, f64)>,
+    focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
+    textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
+) {
+    // Independent scissor scopes. TextInput draws its frame under inherited
+    // clipping, then its text under its inner bounds, never nesting scissors.
+    let Some((x, y, width, height)) = layout.clip.scissor() else { return };
+    {
+        let mut clipped = d.begin_scissor_mode(x, y, width, height);
+        paint_node(&mut clipped, node, layout, now, sdf, click_anim,
+            focused_input, focused_button, invalid_radio_groups,
+            form_errors, cancel_plan, textures, input_sessions, text_views, fonts, shaped, false);
     }
+    if node.kind=="TextInput" {
+        // TextInput content clip: glyphs/selection/caret stay inside padding.
+        let inside=layout.clip.intersect(text_viewport::content_bounds(layout.bounds));
+        if let Some((x,y,w,h))=inside.scissor() {
+            let mut clipped=d.begin_scissor_mode(x,y,w,h);
+            paint_node(&mut clipped,node,layout,now,sdf,click_anim,
+                focused_input,focused_button,invalid_radio_groups,form_errors,
+                cancel_plan,textures,input_sessions,text_views,fonts,shaped,true);
+        }
+    }
+    render_children(d, node, layout, now, sdf, click_anim, focused_input,
+        focused_button, invalid_radio_groups, form_errors, cancel_plan,
+        textures, input_sessions, text_views, fonts, shaped);
+}
+
+#[cfg(feature = "raylib")]
+fn paint_node<D: RaylibDraw>(
+    d: &mut D,
+    node: &UiNode,
+    layout: &layout::LayoutNode,
+    now: f64,
+    sdf: &mut RoundedRectShader,
+    click_anim: Option<(u64, f64)>,
+    focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
+    textures: &HashMap<String, Texture2D>,
+    input_sessions: &HashMap<u64, FocusedTextInput>,
+    text_views: &HashMap<u64,text_viewport::Visual>,
+    fonts: &HashMap<String,LoadedUnicodeFont>,
+    shaped: &HashMap<String,shaped_gpu::PreparedGlyphText>,
+    text_only: bool,
+) {
+    // Paint consumes the already arranged (including absolute overrides) bounds.
+    // No geometry measurement or placement occurs during draw recursion.
+    let b = layout.bounds;
+    let bounds = Rectangle::new(b.x, b.y, b.width, b.height);
 
     match node.kind.as_str() {
-        "Box" => {
-            let w = prop_i32(node, "width")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.width);
-            let h = prop_i32(node, "height")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.height);
-
-            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
-            let (pt, pr, pb, pl) = padding_4(node);
-
+        "Box" | "Grid" => {
+            // Draw only; Box/Grid dimensions and children were arranged in
+            // the pure layout prepass. No per-frame measurement inside paint.
+            let rect = bounds;
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
             let border_w = prop_i32(node, "border_width")
                 .or_else(|| prop_i32(node, "stroke_width"))
-                .unwrap_or(0)
-                .max(0) as f32;
+                .unwrap_or(0).max(0) as f32;
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
 
             if radius > 0.0 {
                 let min_dim = rect.width.min(rect.height).max(1.0);
                 let rect_u = [rect.x, rect.y, rect.width, rect.height];
-                let radius_u = radius.min(min_dim * 0.5);
-                let softness_u = 1.25_f32;
-
                 sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
-                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
-                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
+                sdf.shader.set_shader_value(sdf.loc_radius, radius.min(min_dim * 0.5));
+                sdf.shader.set_shader_value(sdf.loc_softness, 1.25_f32);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
-
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
-                if bg.a > 0 {
-                    d.draw_rectangle_rec(rect, bg);
-                }
-                if border_w > 0.0 {
-                    d.draw_rectangle_lines_ex(rect, border_w, border);
-                }
-            }
-
-            // Render single child in the padded content rect.
-            if let Some(child) = node.children.first() {
-                let content = Rectangle::new(
-                    rect.x + pl,
-                    rect.y + pt,
-                    (rect.width - pl - pr).max(1.0),
-                    (rect.height - pt - pb).max(1.0),
-                );
-                render_node(
-                    d,
-                    child,
-                    content,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
+                if bg.a > 0 { d.draw_rectangle_rec(rect, bg); }
+                if border_w > 0.0 { d.draw_rectangle_lines_ex(rect, border_w, border); }
             }
         }
-        "App" => {
-            // App is just a root container.
-            for child in &node.children {
-                render_node(
-                    d,
-                    child,
-                    bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
-        }
-        "VStack" => {
-            let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
-            let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
-            let alignment = prop_string(node, "alignment").unwrap_or("start");
-
-            let mut y = bounds.y + padding;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                let x = if alignment == "center" && cw > 0.0 {
-                    bounds.x + (bounds.width - cw) / 2.0
-                } else {
-                    bounds.x + padding
-                };
-
-                let child_bounds = Rectangle::new(x, y, if cw > 0.0 { cw } else { bounds.width }, ch);
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-                y += ch + spacing;
-            }
-        }
-        "Grid" => {
-            let w = prop_i32(node, "width")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.width);
-            let h = prop_i32(node, "height")
-                .map(|v| v.max(0) as f32)
-                .unwrap_or(bounds.height);
-
-            let rect = Rectangle::new(bounds.x, bounds.y, w.max(1.0), h.max(1.0));
-            let (pt, pr, pb, pl) = padding_4(node);
-
-            let cols = prop_i32(node, "cols")
-                .or_else(|| prop_i32(node, "columns"))
-                .unwrap_or(1)
-                .max(1) as usize;
-            let rows_prop = prop_i32(node, "rows").or_else(|| prop_i32(node, "row_count"));
-            let mut rows = rows_prop.unwrap_or(0).max(0) as usize;
-            if rows == 0 {
-                for child in &node.children {
-                    let r = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                    let rs = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-                    rows = rows.max(r + rs);
-                }
-                rows = rows.max(1);
-            }
-
-            let gap = prop_i32(node, "gap").unwrap_or(0).max(0) as f32;
-            let gap_x = prop_i32(node, "gap_x").map(|v| v.max(0) as f32).unwrap_or(gap);
-            let gap_y = prop_i32(node, "gap_y").map(|v| v.max(0) as f32).unwrap_or(gap);
-
-            // Optional background/border like Box (useful for debugging grid bounds).
-            let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
-            let border = parse_color(prop_string(node, "border").or_else(|| prop_string(node, "stroke")));
-            let border_w = prop_i32(node, "border_width")
-                .or_else(|| prop_i32(node, "stroke_width"))
-                .unwrap_or(0)
-                .max(0) as f32;
-            let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
-
-            if radius > 0.0 {
-                let min_dim = rect.width.min(rect.height).max(1.0);
-                let rect_u = [rect.x, rect.y, rect.width, rect.height];
-                let radius_u = radius.min(min_dim * 0.5);
-                let softness_u = 1.25_f32;
-
-                sdf.shader.set_shader_value(sdf.loc_rect, rect_u);
-                sdf.shader.set_shader_value(sdf.loc_radius, radius_u);
-                sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
-                sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
-                sdf.shader.set_shader_value(sdf.loc_border, color_to_vec4(border));
-                sdf.shader.set_shader_value(sdf.loc_border_width, border_w);
-
-                let mut sd = d.begin_shader_mode(&mut sdf.shader);
-                sd.draw_rectangle_rec(rect, Color::WHITE);
-            } else {
-                if bg.a > 0 {
-                    d.draw_rectangle_rec(rect, bg);
-                }
-                if border_w > 0.0 {
-                    d.draw_rectangle_lines_ex(rect, border_w, border);
-                }
-            }
-
-            let content = Rectangle::new(
-                rect.x + pl,
-                rect.y + pt,
-                (rect.width - pl - pr).max(1.0),
-                (rect.height - pt - pb).max(1.0),
-            );
-
-            let total_gap_x = ((cols - 1) as f32) * gap_x;
-            let total_gap_y = ((rows - 1) as f32) * gap_y;
-            let cell_w = ((content.width - total_gap_x) / cols as f32).max(1.0);
-            let cell_h = ((content.height - total_gap_y) / rows as f32).max(1.0);
-
-            for child in &node.children {
-                let col = prop_i32(child, "col").unwrap_or(0).max(0) as usize;
-                let row = prop_i32(child, "row").unwrap_or(0).max(0) as usize;
-                let col_span = prop_i32(child, "col_span").unwrap_or(1).max(1) as usize;
-                let row_span = prop_i32(child, "row_span").unwrap_or(1).max(1) as usize;
-
-                if col >= cols || row >= rows {
-                    continue;
-                }
-
-                let col_span = col_span.min(cols - col);
-                let row_span = row_span.min(rows - row);
-
-                let span_w = (cell_w * (col_span as f32)) + (gap_x * ((col_span - 1) as f32));
-                let span_h = (cell_h * (row_span as f32)) + (gap_y * ((row_span - 1) as f32));
-
-                let x = content.x + (col as f32) * (cell_w + gap_x);
-                let y = content.y + (row as f32) * (cell_h + gap_y);
-                let child_bounds = Rectangle::new(x, y, span_w.min(content.width), span_h.min(content.height));
-
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
-        }
-        "HStack" => {
-            let spacing = prop_i32(node, "spacing").unwrap_or(0) as f32;
-            let padding = prop_i32(node, "padding").unwrap_or(0) as f32;
-
-            let mut x = bounds.x + padding;
-            for child in &node.children {
-                let (cw, ch) = measure_node(child);
-                let child_bounds = Rectangle::new(x, bounds.y + padding, cw, ch);
-                render_node(
-                    d,
-                    child,
-                    child_bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-                x += cw + spacing;
-            }
-        }
+        "App" | "VStack" | "HStack" => {}
         "Text" => {
             let size = prop_i32(node, "size").unwrap_or(20);
             let color = parse_color(prop_string(node, "color").or_else(|| prop_string(node, "fg")));
             let text = prop_string(node, "text")
                 .or_else(|| prop_string(node, "content"))
                 .unwrap_or("");
-            d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
+            if shaped_gpu::is_opted(node) {
+                if let Some(r)=shaped_gpu::entry_key(node,text,size).and_then(|k|shaped.get(&k)){
+                    shaped_gpu::paint(d,r,bounds.x,bounds.y,color);
+                } // fail-closed: no incorrect legacy codepoint RTL paint.
+            } else if let Some(font)=selected_unicode_font(fonts,node,size,text) {
+                d.draw_text_ex(font,text,Vector2::new(bounds.x,bounds.y),size as f32,0.0,color);
+            } else {
+                d.draw_text(text, bounds.x as i32, bounds.y as i32, size, color);
+            }
         }
         "Image" => {
-            let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
-            let h = prop_i32(node, "height").unwrap_or(bounds.height as i32).max(1) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let src = prop_string(node, "src").or_else(|| prop_string(node, "path"));
             let Some(src) = src else {
@@ -1003,28 +2428,26 @@ fn render_node(
             }
         }
         "TextInput" => {
-            let w = prop_i32(node, "width").unwrap_or(360) as f32;
-            let h = prop_i32(node, "height").unwrap_or(46) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")).or(Some("#0D1117")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
-            let border = parse_color(prop_string(node, "border").or(Some("#30363D")));
+            let on_change = parse_callback_id(prop_string(node, "on_change"));
+            let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
+            let border = if field_error.is_some(){
+                Color::new(235,76,89,255)
+            }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
-            // Determine identity via callbacks.
-            let on_change = parse_callback_id(prop_string(node, "on_change"));
-            let on_submit = parse_callback_id(prop_string(node, "on_submit"));
+            // The focus decision was already made by pure hit testing.
+            let is_focused = match (focused_input.as_ref(), on_change) {
+                (Some(fi), Some(cb)) => fi.on_change == cb,
+                _ => false,
+            };
 
-            let mut is_focused = false;
-            if let (Some(fi), Some(cb)) = (focused_input.as_ref(), on_change) {
-                if fi.on_change == cb {
-                    is_focused = true;
-                }
-            }
-
-            // Background.
+            // Frame/background separate from text clipping.
+            if !text_only {
             if radius > 0.0 {
                 let min_dim = rect.width.min(rect.height).max(1.0);
                 let rect_u = [rect.x, rect.y, rect.width, rect.height];
@@ -1045,35 +2468,35 @@ fn render_node(
                 d.draw_rectangle_rec(rect, bg);
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
             }
-
-            // Click-to-focus.
-            if mouse_clicked && point_in_rect(mouse, rect) {
-                click_state.hit_text_input = true;
-                if let Some(cb) = on_change {
-                    let value = prop_string(node, "value")
-                        .or_else(|| prop_string(node, "text"))
-                        .unwrap_or("")
-                        .to_string();
-                    let caret = value.chars().count();
-                    *focused_input = Some(FocusedTextInput {
-                        on_change: cb,
-                        on_submit,
-                        buffer: value,
-                        caret,
-                    });
-                    is_focused = true;
+            if let Some(reason)=field_error {
+                // Compact local hint plus border; never displays private text.
+                if rect.width>=130.0 && rect.height>=28.0 {
+                    let label=reason.label();
+                    let x=(rect.x+rect.width-(label.len() as f32*6.5)-8.0)
+                        .max(rect.x+10.0);
+                    d.draw_text(label,x as i32,(rect.y+3.0) as i32,
+                        11,Color::new(255,125,130,255));
                 }
             }
 
-            // Display value (controlled input).
+            return;
+            }
+            // Display retained drafts for nonfocused inputs until the host
+            // changes their authoritative value. Avoid the old visual reset
+            // to stale controlled props on Tab/blur.
+            // The IME projection is *display only*: never replace the
+            // authoritative buffer or create an Undo entry while composing.
+            let projection=if is_focused {
+                focused_input.as_ref().and_then(|fi|fi.session.projected())
+            }else{None};
             let value = if is_focused {
-                focused_input
-                    .as_ref()
-                    .map(|fi| fi.buffer.as_str())
+                projection.as_ref().map(|p|p.display.as_str())
+                    .or_else(||focused_input.as_ref().map(|fi|fi.session.buffer.as_str()))
                     .unwrap_or("")
             } else {
-                prop_string(node, "value")
-                    .or_else(|| prop_string(node, "text"))
+                on_change.and_then(|cb|input_sessions.get(&cb))
+                    .map(|fi|fi.session.buffer.as_str())
+                    .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("")
             };
 
@@ -1081,24 +2504,60 @@ fn render_node(
             let display = if value.is_empty() { placeholder } else { value };
             let display_color = if value.is_empty() { placeholder_c } else { fg };
 
-            let ts = prop_i32(node, "size").unwrap_or(18);
-            let pad_x = 12.0_f32;
+            let ts = prop_i32(node, "size").unwrap_or(18).max(10);
             let pad_y = (rect.height - ts as f32) / 2.0;
-            d.draw_text(display, (rect.x + pad_x) as i32, (rect.y + pad_y) as i32, ts, display_color);
-
-            // Caret (end-of-text only, MVP).
+            let content=text_viewport::content_bounds(b);
+            let visual=on_change.and_then(|cb|text_views.get(&cb));
+            let text_x=visual.map(|v|v.origin(content)).unwrap_or(content.x);
+            // Native MeasureText widths shared by selection and caret;
+            // scissor prevents long text from escaping the input widget.
             if is_focused {
-                let est_w = (value.chars().count() as f32) * (ts as f32 * 0.6);
-                let cx = rect.x + pad_x + est_w + 1.0;
-                let cy0 = rect.y + 10.0;
-                let cy1 = rect.y + rect.height - 10.0;
-                d.draw_line(cx as i32, cy0 as i32, cx as i32, cy1 as i32, Color::RAYWHITE);
+                if let Some(v)=visual {
+                    for (x0,x1) in v.selection_screens(content) {
+                        d.draw_rectangle_rec(Rectangle::new(x0,rect.y+4.0,
+                            x1-x0,(rect.height-8.0).max(0.0)),Color::new(59,130,246,100));
+                    }
+                }
+            }
+            let shaped_present=shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k));
+            if shaped_gpu::is_opted(node) {
+                if let Some(r)=shaped_present{
+                    shaped_gpu::paint(d,r,text_x,rect.y+pad_y,display_color);
+                }
+            } else if let Some(font)=selected_unicode_font(fonts,node,ts,display) {
+                d.draw_text_ex(font,display,Vector2::new(text_x,rect.y+pad_y),ts as f32,0.0,display_color);
+            } else {
+                d.draw_text(display,text_x.floor() as i32,(rect.y+pad_y) as i32,ts,display_color);
+            }
+
+            // Only explicitly injected preedit events can draw this blue
+            // underline; Raylib committed Unicode chars do not imply IME.
+            if is_focused {
+                if let Some(v)=visual {
+                    for (x0,x1) in v.preedit_screens(content){
+                        d.draw_rectangle_rec(Rectangle::new(x0,
+                            rect.y+rect.height-7.0,(x1-x0).max(0.0),2.0),
+                            Color::new(56,189,248,255));
+                    }
+                }
+            }
+
+            // Exact default-font pixel measurements, not an average cell;
+            // OS-native XIM/preedit delivery remains unqualified.
+            if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
+                if let Some(v)=visual.filter(|v|v.caret_valid) {
+                    let cx=v.caret_screen(content);
+                    let cy0=rect.y+10.0;
+                    let cy1=rect.y+rect.height-10.0;
+                    if cy1>cy0 {
+                        d.draw_line(cx.floor() as i32,cy0 as i32,
+                            cx.floor() as i32,cy1 as i32,Color::RAYWHITE);
+                    }
+                }
             }
         }
         "Rect" => {
-            let w = prop_i32(node, "width").unwrap_or(bounds.width as i32).max(1) as f32;
-            let h = prop_i32(node, "height").unwrap_or(bounds.height as i32).max(1) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
+            let rect = bounds;
 
             let fill = parse_color(prop_string(node, "color").or_else(|| prop_string(node, "fg")).or_else(|| prop_string(node, "fill")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
@@ -1125,16 +2584,127 @@ fn render_node(
 
         }
         "Button" => {
-            let w = prop_i32(node, "width").unwrap_or(200) as f32;
-            let h = prop_i32(node, "height").unwrap_or(50) as f32;
-            let rect = Rectangle::new(bounds.x, bounds.y, w, h);
-
+            let rect = bounds;
+            let control = layout::button_control(node);
+            let submit_state=forms::submit_state(node);
+            let cancel_cb=parse_callback_id(prop_string(node,"on_click"));
+            let cancel_blocked=cancel_cb
+                .is_some_and(|id|cancel_plan.blocked.contains(&id))
+                || (prop_string(node,"form_cancel").is_some() && cancel_cb.is_none());
+            let cancellation_acknowledged=cancel_cb
+                .is_some_and(|id|cancel_plan.acknowledged.contains(&id));
+            let disabled = cancel_blocked ||
+                prop_string(node, "disabled") == Some("true")
+                || control == layout::ButtonControl::Invalid
+                || !submit_state.actionable()
+                || (matches!(control,layout::ButtonControl::Radio(_))
+                    && prop_string(node,"group")
+                        .is_some_and(|g|invalid_radio_groups.contains(g)));
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+            // Opt-in controlled form selectors reuse an Aura Button constructor
+            // and its existing callback. NEVER mutate checked on click: only
+            // the authoritative host render changes the indicator.
+            if matches!(control,layout::ButtonControl::Checkbox(_) |
+                layout::ButtonControl::Switch(_) | layout::ButtonControl::Radio(_)){
+                let accent=Color::new(32,177,124,255);
+                let accent=if disabled{Color::new(104,112,119,255)}else{accent};
+                let panel=if disabled{Color::new(58,62,68,255)}else{
+                    prop_string(node,"bg").or_else(||prop_string(node,"background"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::new(28,35,45,255))
+                };
+                let label_color=if disabled{Color::new(164,169,174,255)}else{
+                    prop_string(node,"fg").or_else(||prop_string(node,"color"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::RAYWHITE)
+                };
+                d.draw_rectangle_rec(rect,panel);
+                d.draw_rectangle_lines_ex(rect,1.0,Color::new(92,102,114,255));
+                let cx=rect.x+14.0;
+                let cy=rect.y+rect.height/2.0;
+                let label_x=match control{
+                    layout::ButtonControl::Checkbox(checked)=>{
+                        let box_rect=Rectangle::new(cx,cy-11.0,22.0,22.0);
+                        let fill=if checked{accent}else{Color::new(42,50,63,255)};
+                        d.draw_rectangle_rec(box_rect,fill);
+                        d.draw_rectangle_lines_ex(box_rect,2.0,
+                            if checked{accent}else{Color::new(173,186,197,255)});
+                        if checked {
+                            // Two opaque strokes are rasterized under the
+                            // normal per-widget scissor; no glyph dependency.
+                            d.draw_line((cx+5.0) as i32,(cy) as i32,
+                                (cx+9.0) as i32,(cy+4.0) as i32,Color::RAYWHITE);
+                            d.draw_line((cx+9.0) as i32,(cy+4.0) as i32,
+                                (cx+18.0) as i32,(cy-6.0) as i32,Color::RAYWHITE);
+                        }
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Radio(checked)=>{
+                        // A radio has a circular selected dot, unlike a
+                        // checkbox; only the host may update this state.
+                        let x=cx+11.0;
+                        d.draw_circle(x as i32,cy as i32,11.0,
+                            if disabled{Color::new(88,94,104,255)}
+                            else{Color::new(173,186,197,255)});
+                        d.draw_circle(x as i32,cy as i32,8.0,
+                            Color::new(42,50,63,255));
+                        if checked{d.draw_circle(x as i32,cy as i32,5.0,accent);}
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Switch(checked)=>{
+                        // A 44x22 pill track and independent 16px thumb.
+                        // The track fill stays stable until host checked changes.
+                        let x=cx;
+                        let track=if checked{accent}else{Color::new(66,75,87,255)};
+                        d.draw_rectangle_rec(Rectangle::new(x+11.0,cy-11.0,22.0,22.0),track);
+                        d.draw_circle((x+11.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+33.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+(if checked{33.0}else{11.0})) as i32,
+                            cy as i32,8.0,Color::RAYWHITE);
+                        cx+56.0
+                    },
+                    _=>cx+56.0,
+                };
+                let label=prop_string(node,"label").unwrap_or("");
+                let ts=18;
+                let label_y=rect.y+(rect.height-ts as f32)/2.0;
+                d.draw_text(label,label_x as i32,label_y as i32,ts,label_color);
+                if let Some(reason)=parse_callback_id(prop_string(node,"on_click"))
+                    .and_then(|id|form_errors.radio.get(&id)).copied(){
+                    // Visual, clipped and local; no screen-reader role implied.
+                    d.draw_rectangle_lines_ex(rect,2.0,Color::new(235,76,89,255));
+                    if rect.width>=190.0 && rect.height>=35.0{
+                        d.draw_text(reason.label(),(rect.x+rect.width-118.0) as i32,
+                            (rect.y+3.0) as i32,10,Color::new(255,125,130,255));
+                    }
+                }
+                // Native keyboard focus is a visual hint, NOT semantic OS a11y.
+                if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                    .is_some_and(|id|focused_button==Some(id))
+                    && rect.width>10.0 && rect.height>10.0{
+                    d.draw_rectangle_lines_ex(Rectangle::new(
+                        rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                        2.0,Color::SKYBLUE);
+                }
+                return;
+            }
+            // Disabled is an actual interaction state, not just a visual hint.
+            // Give users a visible state change without changing their theme props.
+            let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };
+            let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
+            let stroke=if matches!(submit_state,forms::SubmitState::Error(_)){
+                Color::new(235,76,89,255)
+            }else if cancellation_acknowledged{
+                // Neutral informational colour: host-authored acknowledgement,
+                // not network cancellation verified by Lumina.
+                Color::new(91,163,220,255)
+            }else if disabled{Color::GRAY}else{Color::RAYWHITE};
 
-            // 200ms click tween: brighten the background briefly when clicked.
+            // 200ms click tween: never animate a disabled control.
             let mut bg = base_bg;
+            if !disabled {
             if let Some((id, start)) = click_anim {
                 if let Some(cb) = parse_callback_id(prop_string(node, "on_click")) {
                     if cb == id {
@@ -1144,6 +2714,7 @@ fn render_node(
                         bg = lerp_color(base_bg, Color::RAYWHITE, tt * 0.25);
                     }
                 }
+            }
             }
 
             // Rounded rect rendering: prefer rounded corners when radius > 0.
@@ -1159,7 +2730,7 @@ fn render_node(
                 sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader
-                    .set_shader_value(sdf.loc_border, color_to_vec4(Color::RAYWHITE));
+                    .set_shader_value(sdf.loc_border, color_to_vec4(stroke));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w_u);
 
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
@@ -1167,40 +2738,63 @@ fn render_node(
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
                 d.draw_rectangle_rec(rect, bg);
-                d.draw_rectangle_lines_ex(rect, 2.0, Color::RAYWHITE);
+                d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
-            let label = prop_string(node, "label").unwrap_or("Button");
+            let label=if cancel_cb.is_some_and(|id|cancel_plan.requested.contains(&id)){
+                "Cancel requested"
+            }else if matches!(submit_state,forms::SubmitState::Cancelled{..}){
+                if cancellation_acknowledged{"Cancelled"}else{"Unverified cancel"}
+            }else if matches!(submit_state,forms::SubmitState::Busy){
+                "Submitting..."
+            }else if matches!(submit_state,forms::SubmitState::Invalid){
+                "Invalid form state"
+            }else if prop_string(node,"form_cancel").is_some() && cancel_blocked{
+                "Cancel unavailable"
+            }else{prop_string(node,"label").unwrap_or("Button")};
             let ts = 20;
             // Simple centering with a rough width estimate.
             let est_w = (label.chars().count() as f32) * (ts as f32 * 0.6);
             let tx = rect.x + (rect.width - est_w) / 2.0;
-            let ty = rect.y + (rect.height - ts as f32) / 2.0;
-            d.draw_text(label, tx as i32, ty as i32, ts, fg);
+            let cancel_notice=match submit_state {
+                forms::SubmitState::Cancelled{notice,..}
+                    if cancellation_acknowledged=>notice,
+                _=>None,
+            };
+            let ty=if (matches!(submit_state,forms::SubmitState::Error(_))
+                || cancel_notice.is_some()) && rect.height>=46.0 {
+                rect.y+4.0
+            }else{rect.y+(rect.height-ts as f32)/2.0};
+            d.draw_text(label,tx as i32,ty as i32,ts,fg);
+            if let forms::SubmitState::Error(message)=submit_state{
+                // Only validated, bounded, host-authored status text. The
+                // scissor restricts pixels to this Button's visible bounds.
+                if rect.width>=130.0 && rect.height>=46.0{
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(255,125,130,255));
+                }
+            }
+            if let Some(message)=cancel_notice{
+                // Display only when a previously emitted request's generation
+                // matches the explicit host terminal acknowledgement.
+                if rect.width>=130.0 && rect.height>=46.0 {
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(125,195,239,255));
+                }
+            }
+            // Inset optical ring for native keyboard/pointer Button focus.
+            // This does not claim an OS accessibility focus tree.
+            if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                .is_some_and(|id|focused_button==Some(id))
+                && rect.width>10.0 && rect.height>10.0 {
+                d.draw_rectangle_lines_ex(Rectangle::new(
+                    rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                    2.0,Color::SKYBLUE);
+            }
 
-            if mouse_clicked && point_in_rect(mouse, rect) {
-                click_state.clicked_cb = click_state
-                    .clicked_cb
-                    .or_else(|| parse_callback_id(prop_string(node, "on_click")));
-            }
         }
-        _ => {
-            // Unknown nodes: traverse children.
-            for child in &node.children {
-                render_node(
-                    d,
-                    child,
-                    bounds,
-                    mouse_clicked,
-                    mouse,
-                    now,
-                    sdf,
-                    click_anim,
-                    click_state,
-                    focused_input,
-                    textures,
-                );
-            }
-        }
+        _ => {}
     }
 }

@@ -1,0 +1,67 @@
+name: X004 Synthetic Core plus Lumina compatibility
+
+on:
+  push:
+    branches: [integration/x004-core-lumina-synthetic]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x004-core-lumina-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  combined-workspace-and-z3:
+    name: A latest Core plus B latest Lumina locked workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install existing Core native test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Check root workspace and reconciled lock without automatic updates
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Run entire actual A plus B default-free workspace
+        env:
+          AURA_DIFFERENTIAL_REQUIRE_C: "1"
+        run: cargo test --workspace --locked --no-default-features
+      - name: Verify real Z3 Aura Core profile on the combined tree
+        run: cargo check -p aura --locked --no-default-features --features z3
+      - name: Validate A latest source Record native C independently
+        run: cargo test --locked -p aura-backend-c --test record_function_abi_native -- --nocapture
+      - name: Declare synthetic CLI/compiler compatibility only
+        run: echo X004_AB_CORE_LOCKED_WORKSPACE_AND_NATIVE_PASS
+
+  lumina-raylib-real-x11:
+    name: B native Lumina and real X11 on A Core source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      IBUS_USE_PORTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install original B graphical native CI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config \
+            libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core \
+            fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul \
+            fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
+      - uses: Swatinem/rust-cache@v2
+      - name: Native Raylib and IBus protocol unit tests under virtual display
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib
+      - name: Actual X11 XTest mouse, forms and pixel event regression
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
+      - name: Actual X11 Tab, keyboard, focus and controlled form regression
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test tab_focus_e2e -- --nocapture --test-threads=1
+      - name: Declare scoped native graphical compatibility only
+        run: echo X004_AB_LUMINA_REAL_X11_PASS
