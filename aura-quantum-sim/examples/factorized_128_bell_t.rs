@@ -11,8 +11,8 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
         state.apply(Gate::T(a+1))?;
     }
     let expected=2f64.powi(-64);
-    let zero=state.basis_probability(&vec![false;128])?;
-    let one=state.basis_probability(&vec![true;128])?;
+    let zero=state.basis_probability(&[false;128])?;
+    let one=state.basis_probability(&[true;128])?;
     if state.factor_count()!=64 ||
         state.logical_state_bytes()!=4096 ||
         (zero-expected).abs()>1e-25 ||
