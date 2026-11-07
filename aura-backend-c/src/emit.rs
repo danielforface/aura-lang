@@ -2151,7 +2151,13 @@ fn emit_interpolated_println(
         let key = &template[after_open..close];
 
         let replacement = named_values.get(key).and_then(|(ct, c_name)| match *ct {
-            CType::U32 => Some(("%u", format!("(unsigned int)({c_name})"))),
+            // printf's variadic integer promotions require an explicit
+            // matching argument type, independent of the narrower Aura ABI.
+            CType::U8 | CType::U16 | CType::U32 =>
+                Some(("%u", format!("(unsigned int)({c_name})"))),
+            CType::U64 => Some(("%llu", format!("(unsigned long long)({c_name})"))),
+            CType::I8 | CType::I16 | CType::I32 =>
+                Some(("%d", format!("(int)({c_name})"))),
             CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
             CType::F64 => Some(("%f", format!("(double)({c_name})"))),
             CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),

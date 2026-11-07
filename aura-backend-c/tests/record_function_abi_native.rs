@@ -274,3 +274,61 @@ cell render_local() ->:
             "{opt}: Native must match AVM nominal string interpolation");
     }
 }
+
+
+#[test]
+fn record_and_mixed_width_scalar_interpolation_matches_avm_display() {
+    // Product-level parity: AVM's interpolate_string renders every supported
+    // integer as its own value. Previously Native left narrow/signed/u64
+    // placeholders literally in the printed output even beside a Record.
+    // Keep the independent C driver and the full Aura Parser→Checker→IR path.
+    let source = r#"
+type Point = record { x: u32, y: u32 }
+cell render_mixed(p: Point, n8: u8, n16: u16, big: u64, m8: i8, m16: i16, m32: i32) ->:
+    io.println("record={p}, u8={n8}, u16={n16}, u64={big}, i8={m8}, i16={m16}, i32={m32}, unknown={unbound}")
+    yield p.x
+"#;
+    let ast = aura_parse::parse_source(source).expect("mixed Record/scalar source parses");
+    Checker::new().check_program(&ast).expect("mixed Record/scalar print typechecks");
+    let original = lower_program(&ast).expect("real source lowers to typed IR");
+    validate_module(&original).expect("mixed Record/scalar IR validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized IR validates");
+
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let output = emit_module(ir, None).expect("mixed-width native interpolation emits C");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &output.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &output.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), concat!(
+            "#include <stdint.h>\n",
+            "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+            "uint32_t render_mixed(aura_record_506f696e74, uint8_t, uint16_t, uint64_t, int8_t, int16_t, int32_t);\n",
+            "int main(void) {\n",
+            "  aura_record_506f696e74 p = {7u,13u};\n",
+            "  return render_mixed(p,250u,65000u,4294967301ULL,-7,-2048,-100000)==7u ? 0 : 1;\n",
+            "}\n"
+        )).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("mixed_integer_interpolation_{label}_{}", &opt[1..]));
+            let built = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang installed in Native CI");
+            assert!(built.status.success(),
+                "{label}/{opt}: generated C does not compile: {}\n{}",
+                String::from_utf8_lossy(&built.stderr), output.module_c);
+            let ran = Command::new(&exe).output().expect("linked native program executes");
+            assert!(ran.status.success(),
+                "{label}/{opt}: wrong Record ABI return: {}",
+                String::from_utf8_lossy(&ran.stderr));
+            assert_eq!(
+                String::from_utf8_lossy(&ran.stdout),
+                "record=<Point>, u8=250, u16=65000, u64=4294967301, i8=-7, i16=-2048, i32=-100000, unknown={unbound}\n",
+                "{label}/{opt}: native integer interpolation differs from AVM value display"
+            );
+        }
+    }
+}
