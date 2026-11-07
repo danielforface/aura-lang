@@ -98,7 +98,7 @@ def main(binary,out):
             report["mutation_negative_controls"]+=1
             report["max_complex_delta"]=max(report["max_complex_delta"],delta)
             report["max_normalization_residual"]=max(report["max_normalization_residual"],norm)
-    if report["cases"]!=64 or report["amplitudes"]!=240:
+    if report["cases"]!=64 or report["amplitudes"]!=480:
         raise AssertionError("incomplete corpus")
     out.parent.mkdir(parents=True,exist_ok=True)
     out.write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
