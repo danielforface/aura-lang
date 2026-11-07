@@ -2436,11 +2436,77 @@ fn paint_node<D: RaylibDraw>(
         }
         "Button" => {
             let rect = bounds;
-
-            let disabled = prop_string(node, "disabled") == Some("true");
+            let control = layout::button_control(node);
+            let disabled = prop_string(node, "disabled") == Some("true")
+                || control == layout::ButtonControl::Invalid;
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+            // Opt-in controlled form selectors reuse an Aura Button constructor
+            // and its existing callback. NEVER mutate checked on click: only
+            // the authoritative host render changes the indicator.
+            if matches!(control,layout::ButtonControl::Checkbox(_) | layout::ButtonControl::Switch(_)){
+                let accent=Color::new(32,177,124,255);
+                let accent=if disabled{Color::new(104,112,119,255)}else{accent};
+                let panel=if disabled{Color::new(58,62,68,255)}else{
+                    prop_string(node,"bg").or_else(||prop_string(node,"background"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::new(28,35,45,255))
+                };
+                let label_color=if disabled{Color::new(164,169,174,255)}else{
+                    prop_string(node,"fg").or_else(||prop_string(node,"color"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::RAYWHITE)
+                };
+                d.draw_rectangle_rec(rect,panel);
+                d.draw_rectangle_lines_ex(rect,1.0,Color::new(92,102,114,255));
+                let cx=rect.x+14.0;
+                let cy=rect.y+rect.height/2.0;
+                let label_x=match control{
+                    layout::ButtonControl::Checkbox(checked)=>{
+                        let box_rect=Rectangle::new(cx,cy-11.0,22.0,22.0);
+                        let fill=if checked{accent}else{Color::new(42,50,63,255)};
+                        d.draw_rectangle_rec(box_rect,fill);
+                        d.draw_rectangle_lines_ex(box_rect,2.0,
+                            if checked{accent}else{Color::new(173,186,197,255)});
+                        if checked {
+                            // Two opaque strokes are rasterized under the
+                            // normal per-widget scissor; no glyph dependency.
+                            d.draw_line((cx+5.0) as i32,(cy) as i32,
+                                (cx+9.0) as i32,(cy+4.0) as i32,Color::RAYWHITE);
+                            d.draw_line((cx+9.0) as i32,(cy+4.0) as i32,
+                                (cx+18.0) as i32,(cy-6.0) as i32,Color::RAYWHITE);
+                        }
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Switch(checked)=>{
+                        // A 44x22 pill track and independent 16px thumb.
+                        // The track fill stays stable until host checked changes.
+                        let x=cx;
+                        let track=if checked{accent}else{Color::new(66,75,87,255)};
+                        d.draw_rectangle_rec(Rectangle::new(x+11.0,cy-11.0,22.0,22.0),track);
+                        d.draw_circle((x+11.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+33.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+(if checked{33.0}else{11.0})) as i32,
+                            cy as i32,8.0,Color::RAYWHITE);
+                        cx+56.0
+                    },
+                    _=>cx+56.0,
+                };
+                let label=prop_string(node,"label").unwrap_or("");
+                let ts=18;
+                let label_y=rect.y+(rect.height-ts as f32)/2.0;
+                d.draw_text(label,label_x as i32,label_y as i32,ts,label_color);
+                // Native keyboard focus is a visual hint, NOT semantic OS a11y.
+                if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                    .is_some_and(|id|focused_button==Some(id))
+                    && rect.width>10.0 && rect.height>10.0{
+                    d.draw_rectangle_lines_ex(Rectangle::new(
+                        rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                        2.0,Color::SKYBLUE);
+                }
+                return;
+            }
             // Disabled is an actual interaction state, not just a visual hint.
             // Give users a visible state change without changing their theme props.
             let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };

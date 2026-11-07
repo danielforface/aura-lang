@@ -187,3 +187,81 @@ fn native_x11_mixed_buttons_inputs_enter_space_dynamic_disable_and_escape() {
         "Escape must blur Button and block following Enter");
     eprintln!("LUMINA_MIXED_KEYBOARD_X11 submit=true enter_once=true space_once=true disabled_skipped=true reverse_wrap=true revoked_focus=true pointer_focus=true escape=true");
 }
+
+
+/// Real X11 keyboard-only controlled selectors coexist with TextInput
+/// without claiming host state toggling or screen-reader role semantics.
+#[test]
+fn native_x11_checkbox_and_switch_keyboard_host_authority_and_invalid_revocation() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","200"),("height","40"),
+            ("on_change","cb:10"),("on_submit","cb:11"),("value","A")],vec![]),
+        node("Button",&[("x","20"),("y","80"),("width","220"),("height","45"),
+            ("control","checkbox"),("checked","false"),("label","Agree"),
+            ("on_click","cb:101")],vec![]),
+        node("Button",&[("x","20"),("y","140"),("width","220"),("height","45"),
+            ("control","switch"),("checked","true"),("label","Alerts"),
+            ("on_click","cb:102")],vec![]),
+        node("Button",&[("x","20"),("y","200"),("width","220"),("height","45"),
+            ("control","checkbox"),("checked","false"),("disabled","true"),
+            ("on_click","cb:103")],vec![]),
+        node("Button",&[("x","20"),("y","260"),("width","220"),("height","45"),
+            ("control","switch"),("checked","not-bool"),
+            ("on_click","cb:104")],vec![]),
+        node("Button",&[("x","20"),("y","320"),("width","220"),("height","45"),
+            ("label","Save"),("on_click","cb:105")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,420));
+    frames(&plugin,&root,&mut ctx,3);
+    let w=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=w.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",id]);
+
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    let edit=press(&plugin,&root,&mut ctx,"q",false);
+    assert!(has(&edit,10,"Aq"),"first Tab must select the TextInput: {edit:?}");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![101]);
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![101],
+        "Space and Enter share the same controlled on_click channel");
+    root.children[1].set_prop("checked","true");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty(),
+        "host checked changes are renders, not synthetic callbacks");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![101],
+        "host checked update must not unexpectedly revoke keyboard focus");
+
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![102],
+        "next selector receives keyboard Space while retaining host checked");
+    // Skip both disabled Checkbox and malformed Switch; reach ordinary Button.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![105]);
+    assert!(press(&plugin,&root,&mut ctx,"Tab",true).is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![102]);
+
+    // An active native selector must immediately lose focus if the host
+    // supplies invalid selection state. Fixing it must not resurrect focus.
+    root.children[2].set_prop("checked","invalid");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
+    root.children[2].set_prop("checked","false");
+    assert!(button_frames(&plugin,&root,&mut ctx,2).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"space").is_empty(),
+        "correcting the host prop must not auto-focus the switch");
+
+    // User pointer explicitly restores native focus after authority repair.
+    xdo(&["mousemove","--window",id,"60","162"]);
+    button_frames(&plugin,&root,&mut ctx,3);
+    xdo(&["mousedown","1"]);
+    let pointer=button_frames(&plugin,&root,&mut ctx,5);
+    xdo(&["mouseup","1"]);
+    button_frames(&plugin,&root,&mut ctx,2);
+    assert_eq!(pointer,vec![102]);
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![102]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Escape").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
+    eprintln!("LUMINA_SELECTION_KEYBOARD_X11 checkbox_enter_space=true switch_space=true skip_invalid_disabled=true checked_host_update_keeps_focus=true invalid_revokes_focus=true pointer_restore=true escape_blurs=true");
+}

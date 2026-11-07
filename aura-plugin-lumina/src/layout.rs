@@ -306,6 +306,35 @@ pub(crate) enum HitTarget {
 fn callback(node: &UiNode, key: &str) -> Option<u64> {
     prop(node, key)?.strip_prefix("cb:")?.parse::<u64>().ok()
 }
+/// Controlled selection variants of the Aura-visible Button constructor.
+/// The host owns checked; Lumina emits only on_click.
+/// Unknown variants/boolean tokens must not degrade to a normal button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ButtonControl {
+    Push,
+    Checkbox(bool),
+    Switch(bool),
+    Invalid,
+}
+pub(crate) fn button_control(node:&UiNode)->ButtonControl {
+    let checked=||match prop(node,"checked"){
+        Some("true")=>Some(true),
+        Some("false")=>Some(false),
+        _=>None,
+    };
+    match prop(node,"control"){
+        None|Some("button")=>ButtonControl::Push,
+        Some("checkbox")=>checked().map(ButtonControl::Checkbox)
+            .unwrap_or(ButtonControl::Invalid),
+        Some("switch")=>checked().map(ButtonControl::Switch)
+            .unwrap_or(ButtonControl::Invalid),
+        _=>ButtonControl::Invalid,
+    }
+}
+fn button_actionable(node:&UiNode)->bool {
+    prop(node,"disabled")!=Some("true")
+        && button_control(node)!=ButtonControl::Invalid
+}
 /// A disabled visible control occupies its pointer surface but never fires
 /// its callback. Distinguish "blocked" from "miss" so a lower z-order button
 /// cannot receive a click through the disabled foreground control.
@@ -326,7 +355,7 @@ fn hit_test_inner(node: &UiNode, layout: &LayoutNode, x: f32, y: f32) -> Pointer
     }
     if !layout.bounds.contains(x, y) { return PointerHit::Miss; }
     match node.kind.as_str() {
-        "Button" if prop(node, "disabled") == Some("true") => PointerHit::Blocked,
+        "Button" if !button_actionable(node) => PointerHit::Blocked,
         "Button" => callback(node, "on_click")
             .map(|id| PointerHit::Action(HitTarget::Button(id)))
             .unwrap_or(PointerHit::Miss),
@@ -438,7 +467,7 @@ pub(crate) fn keyboard_focus_order(
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
         if prop(node,"disabled")!=Some("true"){
             match node.kind.as_str(){
-                "Button"=>{
+                "Button" if button_actionable(node)=>{
                     if let Some(id)=callback(node,"on_click"){
                         output.push(HitTarget::Button(id));
                     }
@@ -495,6 +524,84 @@ pub(crate) fn next_keyboard_focus(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controlled_selection_requires_exact_boolean_and_known_control_variant() {
+        let mut node=n("Button",&[("control","checkbox"),("checked","false"),
+            ("on_click","cb:41")],vec![]);
+        assert_eq!(button_control(&node),ButtonControl::Checkbox(false));
+        assert!(button_actionable(&node));
+        node.set_prop("checked","true");
+        assert_eq!(button_control(&node),ButtonControl::Checkbox(true));
+        node.set_prop("control","switch");
+        assert_eq!(button_control(&node),ButtonControl::Switch(true));
+        node.set_prop("checked","FALSE");
+        assert_eq!(button_control(&node),ButtonControl::Invalid);
+        assert!(!button_actionable(&node));
+        node.set_prop("checked","1");
+        assert_eq!(button_control(&node),ButtonControl::Invalid);
+        node.set_prop("checked","");
+        assert_eq!(button_control(&node),ButtonControl::Invalid);
+        node.set_prop("checked","false");
+        node.set_prop("control","checkbox ");
+        assert_eq!(button_control(&node),ButtonControl::Invalid);
+        node.set_prop("control","button");
+        assert_eq!(button_control(&node),ButtonControl::Push);
+        assert!(button_actionable(&node));
+        node.set_prop("disabled","true");
+        assert!(!button_actionable(&node));
+    }
+
+    #[test]
+    fn selections_block_invalid_or_disabled_clicks_without_leaking_to_back_button() {
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","160"),
+                ("height","65"),("on_click","cb:11")],vec![]),
+            n("Button",&[("x","30"),("y","25"),("width","140"),
+                ("height","55"),("control","checkbox"),("checked","bad"),
+                ("on_click","cb:12")],vec![]),
+            n("Button",&[("x","20"),("y","110"),("width","160"),
+                ("height","50"),("control","switch"),("checked","false"),
+                ("on_click","cb:13")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,400.0,250.0));
+        assert_eq!(hit_test(&root,&plan,50.0,45.0),None);
+        let inputs=focus_order(&root,&plan);
+        let order=keyboard_focus_order(&root,&plan,&inputs);
+        assert_eq!(order,vec![HitTarget::Button(11),HitTarget::Button(13)]);
+        root.children[1].set_prop("checked","false");
+        assert_eq!(hit_test(&root,&plan,50.0,45.0),Some(HitTarget::Button(12)));
+        root.children[1].set_prop("checked","true");
+        assert_eq!(hit_test(&root,&plan,50.0,45.0),Some(HitTarget::Button(12)));
+        root.children[2].set_prop("disabled","true");
+        assert_eq!(hit_test(&root,&plan,70.0,135.0),None);
+        root.children[2].set_prop("disabled","false");
+        assert_eq!(hit_test(&root,&plan,70.0,135.0),Some(HitTarget::Button(13)));
+    }
+
+    #[test]
+    fn selection_keyboard_focus_rejects_malformed_checked_and_tracks_host_updates() {
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("control","checkbox"),
+                ("checked","false"),("on_click","cb:10")],vec![]),
+            n("Button",&[("x","20"),("y","100"),("control","switch"),
+                ("checked","true"),("on_click","cb:20")],vec![]),
+            n("TextInput",&[("x","20"),("y","190"),("on_change","cb:30")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,500.0,320.0));
+        let order=keyboard_focus_order(&root,&plan,&focus_order(&root,&plan));
+        assert_eq!(order,vec![HitTarget::Button(10),HitTarget::Button(20),
+            HitTarget::TextInput{on_change:30,on_submit:None,value:String::new()}]);
+        root.children[0].set_prop("checked","true");
+        let updated=keyboard_focus_order(&root,&plan,&focus_order(&root,&plan));
+        assert_eq!(updated,order,"host checked update must keep keyboard focus stable");
+        root.children[0].set_prop("checked","yes");
+        let invalid=keyboard_focus_order(&root,&plan,&focus_order(&root,&plan));
+        assert_eq!(invalid,vec![HitTarget::Button(20),
+            HitTarget::TextInput{on_change:30,on_submit:None,value:String::new()}]);
+        assert_eq!(next_keyboard_focus(&invalid,Some(FocusKey::Button(10)),false),
+            Some(HitTarget::Button(20)));
+    }
 
     #[test]
     fn mixed_keyboard_focus_skips_disabled_clipped_duplicate_and_aliases() {

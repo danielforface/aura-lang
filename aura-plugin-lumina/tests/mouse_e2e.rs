@@ -100,3 +100,79 @@ fn real_x11_disabled_button_blocks_click_through_and_tracks_host_state() {
         "host re-disabling must remove native callback immediately: {disabled_again:?}");
     eprintln!("LUMINA_DISABLED_BUTTON_X11 disabled_blocks=true uncovered_enabled=true dynamic_reenable=true disabled_again_blocks=true");
 }
+
+
+/// Native controlled selection contract: a click emits a callback, but the
+/// visual state stays unchanged until the Aura host supplies a new checked
+/// prop. Real software-OpenGL X11 framebuffers are sampled for both widgets.
+#[test]
+fn real_x11_controlled_checkbox_and_switch_host_state_pixel_contract() {
+    let plugin=AuraLuminaPlugin::new();
+    let mut nexus=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","210"),("height","50"),
+            ("control","checkbox"),("checked","false"),("label","Remember choice"),
+            ("on_click","cb:71")],vec![]),
+        node("Button",&[("x","20"),("y","100"),("width","210"),("height","50"),
+            ("control","switch"),("checked","false"),("label","Enable alerts"),
+            ("on_click","cb:72")],vec![]),
+        node("Button",&[("x","280"),("y","20"),("width","175"),("height","56"),
+            ("on_click","cb:73"),("label","Behind invalid")],vec![]),
+        node("Button",&[("x","290"),("y","25"),("width","150"),("height","48"),
+            ("control","checkbox"),("checked","sometimes"),
+            ("on_click","cb:74")],vec![]),
+        node("Button",&[("x","280"),("y","100"),("width","175"),("height","50"),
+            ("control","switch"),("on_click","cb:75")],vec![]),
+    ]);
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    assert!(plugin.diagnostic_resize_window(640,400));
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let windows=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native X11 window");
+    let initial_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0)
+        .expect("checkbox GPU pixel before host update");
+    let initial_switch=plugin.diagnostic_capture_pixel(55.0,117.0)
+        .expect("switch GPU track pixel before host update");
+
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,44,45),vec![71],
+        "click must use the established on_click channel");
+    let unchanged_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0).unwrap();
+    assert_eq!(initial_checkbox,unchanged_checkbox,
+        "native click must not optimistically mutate host-owned checked");
+    tree.children[0].set_prop("checked","true");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let checked_checkbox=plugin.diagnostic_capture_pixel(38.0,38.0).unwrap();
+    assert!(checked_checkbox.g>initial_checkbox.g.saturating_add(65),
+        "checked host prop must produce visible green checkbox indicator: off={initial_checkbox:?}, on={checked_checkbox:?}");
+
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,52,125),vec![72]);
+    let unchanged_switch=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert_eq!(initial_switch,unchanged_switch,
+        "switch must not toggle a local copy before authoritative host update");
+    tree.children[1].set_prop("checked","true");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let checked_switch=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert!(checked_switch.g>initial_switch.g.saturating_add(65),
+        "host checked must visibly toggle native switch track: off={initial_switch:?}, on={checked_switch:?}");
+
+    // Unknown control boolean and missing checked fail closed, including
+    // click-through to an underlying ordinary Button.
+    assert!(click(&plugin,&tree,&mut nexus,id,320,45).is_empty(),
+        "invalid checkbox must block own callback and lower overlapping button");
+    assert!(click(&plugin,&tree,&mut nexus,id,325,125).is_empty(),
+        "missing mandatory checked must fail closed");
+
+    tree.children[1].set_prop("disabled","true");
+    assert!(click(&plugin,&tree,&mut nexus,id,52,125).is_empty(),
+        "disabled controlled switch cannot fire");
+    tree.children[1].set_prop("disabled","false");
+    assert_eq!(click(&plugin,&tree,&mut nexus,id,52,125),vec![72],
+        "re-enabled switch becomes actionable without stale state copy");
+    tree.children[1].set_prop("checked","false");
+    for _ in 0..5 {render(&plugin,&tree,&mut nexus);}
+    let turned_off=plugin.diagnostic_capture_pixel(55.0,117.0).unwrap();
+    assert_eq!(turned_off,initial_switch,
+        "host false update must restore exact off-track color");
+
+    eprintln!("LUMINA_CONTROLLED_SELECTION_X11 checkbox_click=true switch_click=true host_only_visuals=true malformed_blocks_underlay=true missing_checked_blocks=true disable_reenable=true pixel_off_on_off=true");
+}

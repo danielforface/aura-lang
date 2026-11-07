@@ -184,6 +184,10 @@ Props:
 - `radius` (int)
 - `on_click` (callback id string, internal)
 - `disabled` (string `"true"`, opt-in): a disabled Button remains visible with muted styling but cannot emit `on_click`. Its visible hit area also blocks pointer events from passing through to an overlapping Button underneath. Changing `disabled` at runtime takes effect on the next frame. Unset or `"false"` retains existing click behavior. Disabled state also excludes a Button from native keyboard focus traversal.
+- `control` (optional string: `"button"` [default], `"checkbox"`, or `"switch"`): native controlled-selection appearance using the **existing Aura `Button` constructor**, not a new Core builtin or semantic OS accessibility widget.
+- `checked` (required when `control="checkbox"` or `control="switch"`): strict boolean `true`/`false` in Aura, received as the exact strings `"true"` / `"false"` at the Lumina runtime boundary. The application is authoritative: a pointer click, Enter or Space emits the existing `on_click` ID, but **does not locally invert `checked`**. The host must update its own state and re-render to change the drawn selection. Subsequent host updates are reflected in the next frame without a synthetic event.
+- Invalid/missing `checked` for a selector, or an unknown `control` variant, fails closed: it remains visibly disabled, is excluded from Tab focus and cannot emit callbacks or pass a click through to an underlying button. Restoring a valid prop alone does not auto-reacquire revoked keyboard focus.
+- `checkbox` draws a filled/unfilled square with a painted checkmark when selected. `switch` draws a colored track and moving thumb. Both reuse existing `label`, `width`, `height`, `on_click`, and `disabled` props and share the native focus ring and clipping. The standard Button when `control` is absent retains its previous visual behavior.
 
 Native Raylib keyboard workflow (Linux/X11 tested):
 - `Tab` and `Shift+Tab` traverse enabled, visible `Button` and `TextInput` controls in source order, with wrap-around. Active IBus TextInput composition retains its existing key authority.
