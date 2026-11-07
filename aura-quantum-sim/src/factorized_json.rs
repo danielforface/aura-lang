@@ -153,6 +153,9 @@ struct Response {
     histogram:BTreeMap<String,usize>,
     results:Vec<ShotOut>,
     peak_logical_state_bytes:usize,
+    /// Per-shot projection-driven factorization, aggregated over the batch.
+    projective_wire_splits:usize,
+    projective_split_deferred:usize,
     evidence_class:&'static str,
     qpu_hardware_jobs:u8,
     #[serde(skip_serializing_if="Option::is_none")]
@@ -267,6 +270,8 @@ pub fn execute_factorized_json(raw:&[u8])->Result<String,FactorProtocolError> {
         histogram,
         results:batch.records.iter().map(record).collect(),
         peak_logical_state_bytes:batch.peak_logical_state_bytes,
+        projective_wire_splits:batch.projective_wire_splits,
+        projective_split_deferred:batch.projective_split_deferred,
         evidence_class:"simulation",
         qpu_hardware_jobs:0,
         factors,

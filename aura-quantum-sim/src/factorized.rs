@@ -7,9 +7,10 @@
 //! No SVD, truncation, approximation of entanglement, rank compression or claim
 //! to arbitrary-width globally entangled simulation. Arithmetic remains f64.
 //!
-//! There is a deliberately strict max component size. Measurements collapse
-//! the local factor and use the shared deterministic RNG. Measured components
-//! are *not* automatically split, so admission is conservative but sound.
+//! The component cap is strict. Projective Z measurement makes the measured
+//! coordinate *provably separable*; a budgeted tensor factorization can then
+//! free its wire for subsequent non-Clifford gates without truncation. On
+//! allocation denial the collapsed original component remains physically valid.
 //! This is standalone simulation, not QIR/Aura syntax or a QPU job.
 use crate::circuit::{Instruction, ShotRecord, TraceEntry, TraceKind};
 use crate::{Complex, Gate, SeededRng, SimError, Statevector, ENGINE_VERSION, NORM_TOLERANCE};
@@ -64,6 +65,8 @@ pub struct FactorState {
     factors:Vec<Factor>,
     budget_bytes:usize,
     peak_logical_bytes:usize,
+    projective_wire_splits:usize,
+    projective_split_deferred:usize,
 }
 impl FactorState {
     pub fn zero(qubits:usize,budget_bytes:usize)->Result<Self,FactorError> {
@@ -86,7 +89,10 @@ impl FactorState {
                 state:Statevector::zero(1,budget_bytes)?,
             });
         }
-        Ok(Self{qubits,factors,budget_bytes,peak_logical_bytes:bytes})
+        Ok(Self{
+            qubits,factors,budget_bytes,peak_logical_bytes:bytes,
+            projective_wire_splits:0,projective_split_deferred:0,
+        })
     }
     pub fn qubits(&self)->usize {self.qubits}
     pub fn factor_count(&self)->usize {self.factors.len()}
@@ -100,6 +106,11 @@ impl FactorState {
         self.factors.iter().map(|f|f.state.state_bytes()).sum()
     }
     pub fn peak_logical_bytes(&self)->usize {self.peak_logical_bytes}
+    /// Number of nontrivial component splits from actual projective Z outcomes.
+    pub fn projective_wire_splits(&self)->usize {self.projective_wire_splits}
+    /// Eligible splits skipped due to logical memory or fallible allocation.
+    /// The state remains collapsed and physically equivalent when deferred.
+    pub fn projective_split_deferred(&self)->usize {self.projective_split_deferred}
     fn check_wire(&self,q:usize)->Result<(),FactorError> {
         if q>=self.qubits {Err(FactorError::InvalidQubit{qubit:q,qubits:self.qubits})}
         else {Ok(())}
@@ -228,12 +239,82 @@ impl FactorState {
         let (owner,local)=self.locate(qubit);
         Ok(self.factors[owner].state.wire_probability(local,outcome)?)
     }
+    /// Projective Z yields |b> ⊗ |rest_b>; this is guaranteed rank-one,
+    /// independent of Schmidt tolerance. The conditional rest amplitudes
+    /// retain their entire complex phase, and original wire order is preserved
+    /// except for the extracted coordinate.
+    ///
+    /// The old factor and both replacement vectors coexist until a complete
+    /// atomic commit. If temporary allocation is unavailable, retaining the
+    /// collapsed but joined original component is always scientifically valid.
+    fn try_release_measured_wire(
+        &mut self, owner:usize, local:usize, outcome:bool,
+    )->Result<bool,FactorError> {
+        let width=self.factors[owner].wires.len();
+        if width<=1 {return Ok(false);}
+        let remaining_dim=1usize.checked_shl((width-1) as u32)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let new_bytes=remaining_dim.checked_mul(size_of::<Complex>())
+            .and_then(|v|v.checked_add(2*size_of::<Complex>()))
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let temporary=self.logical_state_bytes().checked_add(new_bytes)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if temporary>self.budget_bytes {return Ok(false);}
+        if self.factors.try_reserve(1).is_err() {return Ok(false);}
+
+        let mut remaining_wires=Vec::new();
+        if remaining_wires.try_reserve_exact(width-1).is_err() {return Ok(false);}
+        let mut measured_wires=Vec::new();
+        if measured_wires.try_reserve_exact(1).is_err() {return Ok(false);}
+        let measured_wire=self.factors[owner].wires[local];
+        for (i,&q) in self.factors[owner].wires.iter().enumerate() {
+            if i!=local {remaining_wires.push(q);}
+        }
+        measured_wires.push(measured_wire);
+
+        let mut amplitudes=Vec::new();
+        if amplitudes.try_reserve_exact(remaining_dim).is_err() {return Ok(false);}
+        let low_mask=(1usize<<local)-1;
+        for i in 0..remaining_dim {
+            let original_basis=(i&low_mask)|((i>>local)<<(local+1))
+                |((outcome as usize)<<local);
+            amplitudes.push(self.factors[owner].state.amplitude(original_basis)?);
+        }
+        let remaining=match Statevector::from_amplitudes(
+            width-1,amplitudes,self.budget_bytes,
+        ) {
+            Ok(v)=>v,
+            Err(SimError::AllocationFailed|SimError::BudgetExceeded)=>return Ok(false),
+            Err(e)=>return Err(e.into()),
+        };
+        let mut measured=match Statevector::zero(1,self.budget_bytes) {
+            Ok(v)=>v,
+            Err(SimError::AllocationFailed|SimError::BudgetExceeded)=>return Ok(false),
+            Err(e)=>return Err(e.into()),
+        };
+        if outcome {measured.apply(Gate::X(0))?;}
+
+        self.factors[owner]=Factor{wires:remaining_wires,state:remaining};
+        self.factors.push(Factor{wires:measured_wires,state:measured});
+        self.peak_logical_bytes=self.peak_logical_bytes.max(temporary);
+        self.projective_wire_splits+=1; // bounded by real projective operations
+        Ok(true)
+    }
+
     pub fn measure(&mut self,qubit:usize,rng:&mut SeededRng)
         ->Result<bool,FactorError>
     {
         self.check_wire(qubit)?;
         let (owner,local)=self.locate(qubit);
-        Ok(self.factors[owner].state.measure(local,rng)?)
+        let eligible=self.factors[owner].wires.len()>1;
+        // Match the reference simulator: one RNG draw per physical Z
+        // measurement, including deterministic outcomes. Factorization
+        // never samples a second time or changes the measured bit.
+        let outcome=self.factors[owner].state.measure(local,rng)?;
+        if eligible && !self.try_release_measured_wire(owner,local,outcome)? {
+            self.projective_split_deferred+=1;
+        }
+        Ok(outcome)
     }
     pub fn amplitude_bits(&self,bits:&[bool])->Result<Complex,FactorError> {
         if bits.len()!=self.qubits {
@@ -288,6 +369,10 @@ pub struct FactorBatch {
     /// Final state intentionally kept only for single-shot inspection.
     pub one_shot_state:Option<FactorState>,
     pub peak_logical_state_bytes:usize,
+    /// Cumulative successful measured-wire releases across all shots.
+    pub projective_wire_splits:usize,
+    /// Cumulative eligible releases deferred because allocations were denied.
+    pub projective_split_deferred:usize,
 }
 #[derive(Debug,Clone)]
 pub struct FactorCircuit {
@@ -377,6 +462,8 @@ impl FactorCircuit {
             .map_err(|_|FactorError::AllocationFailed)?;
         let mut single=None;
         let mut peak=0usize;
+        let mut total_splits=0usize;
+        let mut total_deferred=0usize;
         for _ in 0..shots {
             let mut state=FactorState::zero(self.qubits,state_budget)?;
             let mut bits=vec![None;self.classical_bits];
@@ -407,6 +494,10 @@ impl FactorCircuit {
                 }
             }
             peak=peak.max(state.peak_logical_bytes());
+            total_splits=total_splits.checked_add(state.projective_wire_splits())
+                .ok_or(FactorError::ArithmeticOverflow)?;
+            total_deferred=total_deferred.checked_add(state.projective_split_deferred())
+                .ok_or(FactorError::ArithmeticOverflow)?;
             records.push(ShotRecord{bits,trace});
             if shots==1 {single=Some(state);}
         }
@@ -415,6 +506,8 @@ impl FactorCircuit {
             records,
             one_shot_state:single,
             peak_logical_state_bytes:peak,
+            projective_wire_splits:total_splits,
+            projective_split_deferred:total_deferred,
         })
     }
 }
