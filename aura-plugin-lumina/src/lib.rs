@@ -1409,6 +1409,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
             let space = win.rl.is_key_pressed(KeyboardKey::KEY_SPACE);
+            // Sample modifiers BEFORE begin_drawing borrows the Raylib handle.
+            // A keyboard Button action may not use Ctrl/Alt/Super shortcuts.
+            let plain_button_action=!ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
             let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
@@ -1918,12 +1925,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             }
             // Keyboard buttons share the exact same host callback channel
             // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
-            let plain_action=!ctrl
-                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
-                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
-                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
-                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
-            let keyboard_click=if !tab && !escape && plain_action && (enter || space)
+            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
                 && win.focused_input.is_none(){win.focused_button}else{None};
             fb.clicked_callback_id=click_cb.or(keyboard_click);
 
