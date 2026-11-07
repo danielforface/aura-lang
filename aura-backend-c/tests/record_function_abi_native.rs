@@ -547,3 +547,89 @@ cell render_unicode(p: Point, scalar: char, marker: char) ->:
         }
     }
 }
+
+
+#[test]
+fn native_float_interpolation_matches_avm_ryu_like_decimal_display() {
+    // AVM display_value(Float) uses Rust f64::to_string; the former C
+    // printf("%f") changed 1.5 -> 1.500000, 0.1 -> 0.100000, and could
+    // lose all nonzero digits of tiny values. Test actual Aura source,
+    // nominal Record, two separately formatted f64 arguments and repeated
+    // use of the same source binding against Rust's Display oracle.
+    let source=r#"
+type Point = record { x: u32, y: u32 }
+cell aura_f64_display(n: u32) ->:
+    yield n
+cell render_float(p: Point, sample: f64, twin: f64) ->:
+    val stored: String = "Record={p}; sample={sample}; twin={twin}; again={sample}; percent=100%"
+    io.println(stored)
+    yield aura_f64_display(p.x)
+"#;
+    let ast=aura_parse::parse_source(source).expect("Float+Record Aura source parses");
+    Checker::new().check_program(&ast).expect("Float+Record source typechecks");
+    let original=lower_program(&ast).expect("real source lowers to typed IR");
+    validate_module(&original).expect("source SSA is valid");
+    let mut optimized=original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized SSA is valid");
+    let cases: [f64; 23]=[
+        0.0, -0.0, 0.1, -0.1, 1.5, -1.5, 1.0/3.0, 1e-40,
+        -1e-40, 1e40, 1e-8, 1e20, 9007199254740992.0,
+        std::f64::consts::PI, std::f64::consts::E,
+        f64::MIN_POSITIVE, f64::from_bits(1), f64::from_bits(2),
+        f64::MAX, f64::MIN, f64::EPSILON,
+        f64::INFINITY, f64::NEG_INFINITY,
+    ];
+    // NaN has explicit normalized case too; Rust produces "NaN".
+    let mut samples=cases.to_vec();
+    samples.push(f64::NAN);
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let c=emit_module(ir, None).expect("Float source emits C");
+        assert!(c.runtime_h.contains("aura_f64_display"),
+            "{label}: no Float display implementation");
+        assert!(c.module_c.contains("aura_cell_617572615f6636345f646973706c6179"),
+            "{label}: runtime helper collided with user Cell export");
+        let tmp=Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"),&c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"),&c.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"),concat!(
+            "#include <stdint.h>\n",
+            "#include <stdlib.h>\n",
+            "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+            "uint32_t render_float(aura_record_506f696e74, double, double);\n",
+            "int main(int argc, char** argv) {\n",
+            " if (argc != 3) return 2;\n",
+            " char *end = NULL;\n",
+            " double a = strtod(argv[1], &end); if (*end) return 3;\n",
+            " double b = strtod(argv[2], &end); if (*end) return 4;\n",
+            " aura_record_506f696e74 p={7u,13u};\n",
+            " return render_float(p,a,b)==7u ? 0 : 5;\n",
+            "}\n"
+        )).unwrap();
+        for opt in ["-O0","-O2"] {
+            let exe=tmp.0.join(format!("float_display_{label}_{}",&opt[1..]));
+            let build=Command::new("clang")
+                .args(["-std=gnu11","-Wall","-Werror",opt,"-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang available in CI");
+            assert!(build.status.success(),"{label}/{opt} C build: {}\n{}",
+                String::from_utf8_lossy(&build.stderr),c.module_c);
+            for sample in &samples {
+                let run=Command::new(&exe)
+                    .arg(sample.to_string())
+                    .arg("0.1")
+                    .output().expect("Native C executable runs");
+                assert!(run.status.success(),"{label}/{opt}: float {} native return: {}",
+                    sample,String::from_utf8_lossy(&run.stderr));
+                let expect=format!(
+                    "Record=<Point>; sample={}; twin=0.1; again={}; percent=100%\n",
+                    sample,sample
+                );
+                assert_eq!(run.stdout,expect.as_bytes(),
+                    "{label}/{opt}: Native F64 String interpolation differs from AVM's f64::to_string for {}",
+                    sample);
+            }
+        }
+    }
+}

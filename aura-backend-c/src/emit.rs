@@ -200,6 +200,87 @@ static inline const char* aura_unicode_char_tail(uint32_t scalar, char tail[4]) 
 
 "#);
 
+
+    // f64 interpolation must agree with AVM's Rust Display, not printf("%f")
+    // (six decimals, loss of precision and massive-number truncation).
+    // The shortest round-trippable decimal is expanded to fixed notation,
+    // matching Rust's plain-decimal Display for finite f64. Each printf
+    // argument receives its own temporary buffer (no global static slot).
+    // GNU11 compiler builtins avoid importing an entire math.h identifier
+    // namespace into user Cell exports.
+    out.push_str(r#"
+static inline const char* aura_f64_display(double value, char scratch[400]) {
+  if (__builtin_isnan(value)) return "NaN";
+  if (__builtin_isinf(value)) return __builtin_signbit(value) ? "-inf" : "inf";
+  if (value == 0.0) return __builtin_signbit(value) ? "-0" : "0";
+
+  char generated[64] = {0};
+  int roundtrip = 0;
+  for (int precision = 1; precision <= 17; ++precision) {
+    int size = snprintf(generated, sizeof(generated), "%.*g", precision, value);
+    if (size < 0 || (size_t)size >= sizeof(generated)) abort();
+    char* end = NULL;
+    double parsed = strtod(generated, &end);
+    if (end && *end == '\0' && parsed == value) {
+      roundtrip = 1;
+      break;
+    }
+  }
+  if (!roundtrip) abort();
+
+  const char* e = generated;
+  while (*e && *e != 'e' && *e != 'E') ++e;
+  if (*e == '\0') {
+    int n = snprintf(scratch, 400, "%s", generated);
+    if (n < 0 || n >= 400) abort();
+    return scratch;
+  }
+
+  int exponent = (int)strtol(e + 1, NULL, 10);
+  const char* src = generated;
+  int negative = 0;
+  if (*src == '-') { negative = 1; ++src; }
+  char digits[32];
+  int digit_count = 0;
+  int decimal_offset = -1;
+  while (src < e) {
+    if (*src == '.') {
+      decimal_offset = digit_count;
+    } else if (*src >= '0' && *src <= '9') {
+      if (digit_count >= (int)sizeof(digits)) abort();
+      digits[digit_count++] = *src;
+    } else {
+      abort();
+    }
+    ++src;
+  }
+  if (decimal_offset < 0) decimal_offset = digit_count;
+  int point = decimal_offset + exponent;
+  size_t out = 0;
+  if (negative) scratch[out++] = '-';
+#define AURA_F64_PUT(byte) do { \
+    if (out + 1 >= 400) abort(); \
+    scratch[out++] = (byte); \
+  } while (0)
+  if (point <= 0) {
+    AURA_F64_PUT('0');
+    AURA_F64_PUT('.');
+    for (int i = 0; i < -point; ++i) AURA_F64_PUT('0');
+    for (int i = 0; i < digit_count; ++i) AURA_F64_PUT(digits[i]);
+  } else if (point >= digit_count) {
+    for (int i = 0; i < digit_count; ++i) AURA_F64_PUT(digits[i]);
+    for (int i = digit_count; i < point; ++i) AURA_F64_PUT('0');
+  } else {
+    for (int i = 0; i < point; ++i) AURA_F64_PUT(digits[i]);
+    AURA_F64_PUT('.');
+    for (int i = point; i < digit_count; ++i) AURA_F64_PUT(digits[i]);
+  }
+  scratch[out] = '\0';
+#undef AURA_F64_PUT
+  return scratch;
+}
+
+"#);
     out.push_str("// Builtins used by main.aura\n");
     out.push_str("static inline Tensor io_load_tensor(const char* path) {\n");
     out.push_str("  (void)path;\n");
@@ -504,7 +585,7 @@ impl CNameMap {
             "free", "abort", "exit", "fwrite",
             "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
             "aura_unicode_scalar_checked", "aura_unicode_char_lead",
-            "aura_unicode_char_tail",
+            "aura_unicode_char_tail", "aura_f64_display",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -2314,7 +2395,9 @@ fn render_string_snapshot(
                     CType::I8 | CType::I16 | CType::I32 =>
                         Some(("%d", format!("(int)({c_name})"))),
                     CType::I64 => Some(("%lld", format!("(long long)({c_name})"))),
-                    CType::F64 => Some(("%f", format!("(double)({c_name})"))),
+                    CType::F64 => Some(("%s", format!(
+                        "aura_f64_display((double)({c_name}), (char[400]){{0}})"
+                    ))),
                     CType::Bool => Some(("%s", format!("(({c_name}) ? \"true\" : \"false\")"))),
                     CType::CString => Some(("%s", format!("({c_name})"))),
                     _ => None,
