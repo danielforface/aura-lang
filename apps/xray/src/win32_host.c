@@ -41,6 +41,16 @@ static uint64_t filetime_ticks(FILETIME t) {
     return x.QuadPart;
 }
 
+static void wait_until_monotonic_ms(uint64_t deadline_ms) {
+    /* Deadline-based sampling, no busy wait and no UTC wall-clock dependency. */
+    for (;;) {
+        uint64_t now_ms = GetTickCount64();
+        if (now_ms >= deadline_ms) return;
+        uint64_t remaining = deadline_ms - now_ms;
+        Sleep((DWORD)(remaining > 1000u ? 1000u : remaining));
+    }
+}
+
 static void json_string(FILE *f, const char *value) {
     fputc('"', f);
     for (const unsigned char *p = (const unsigned char*)value; *p; ++p) {
@@ -235,6 +245,7 @@ static void usage(FILE *out) {
           "  AuraXRay.exe --capture --seconds N --out FILE [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
+          "--seconds N schedules N samples across a full N-second window.\n"
           "Current limitations: no CPU rate, no ETW, no GUI, no root-cause proof.\n", out);
 }
 
@@ -290,17 +301,19 @@ int main(int argc, char **argv) {
         return 3;
     }
 
+    uint64_t started_ms = GetTickCount64();
     char started[40];
     utc_now(started, sizeof started);
     fprintf(out, "{\"type\":\"capture_start\",\"schema\":\"%s\",\"version\":\"%s\","
-                 "\"build\":\"%s\",\"utc\":\"%s\",\"seconds\":%u,"
+                 "\"build\":\"%s\",\"utc\":\"%s\",\"monotonic_ms\":%llu,\"seconds\":%u,"
                  "\"platform\":\"windows-x64\",\"source\":\"toolhelp32-psapi\","
                  "\"privacy\":\"%s\"}\n",
-                 XR_SCHEMA, XR_VERSION, XR_BUILD_SHA, started, seconds,
+                 XR_SCHEMA, XR_VERSION, XR_BUILD_SHA, started, (unsigned long long)started_ms, seconds,
                  include_names ? "process_names_opt_in" : "process_names_redacted");
 
     uint64_t count = 0, readable = 0, denied = 0, open_failed = 0, errors = 0;
     for (unsigned s = 1; s <= seconds; ++s) {
+        if (s > 1) wait_until_monotonic_ms(started_ms + 1000u * (uint64_t)(s - 1));
         SampleStats stats = {0};
         if (!collect_sample(out, s, include_names, &stats)) {
             fprintf(out, "{\"type\":\"error\",\"sample\":%u,\"status\":\"snapshot_failed\"}\n", s);
@@ -311,14 +324,22 @@ int main(int argc, char **argv) {
         }
         count += stats.seen; readable += stats.readable_memory;
         denied += stats.denied; open_failed += stats.open_failed; errors += stats.errors;
-        if (s < seconds) Sleep(1000);
     }
+
+    /* Complete the full N-second capture window; N samples begin at 0..N-1s. */
+    wait_until_monotonic_ms(started_ms + 1000u * (uint64_t)seconds);
+    uint64_t ended_ms = GetTickCount64();
+    uint64_t elapsed_ms = ended_ms - started_ms;
+    char finished[40];
+    utc_now(finished, sizeof finished);
 
     fprintf(out, "{\"type\":\"capture_end\",\"status\":\"complete\","
                  "\"samples\":%u,\"process_records\":%llu,\"readable_memory\":%llu,"
-                 "\"open_denied\":%llu,\"open_failed\":%llu,\"errors\":%llu}\n",
+                 "\"open_denied\":%llu,\"open_failed\":%llu,\"errors\":%llu,"
+                 "\"monotonic_ms\":%llu,\"elapsed_ms\":%llu,\"utc\":\"%s\"}\n",
                  seconds, (unsigned long long)count, (unsigned long long)readable,
-                 (unsigned long long)denied, (unsigned long long)open_failed, (unsigned long long)errors);
+                 (unsigned long long)denied, (unsigned long long)open_failed, (unsigned long long)errors,
+                 (unsigned long long)ended_ms, (unsigned long long)elapsed_ms, finished);
     if (fclose(out) != 0) {
         fputs("ERROR unable to flush capture\n", stderr);
         return 5;

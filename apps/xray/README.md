@@ -7,7 +7,7 @@
 - Enumerates live Windows processes with Toolhelp32 snapshots.
 - Reads working-set memory, cumulative read I/O and process creation time when access permits. Uses limited query rights only; does not request PROCESS_VM_READ.
 - Calls compiled Aura functions to normalize KiB to MiB and calculate 256-MiB memory and 64-MiB cumulative-I/O buckets.
-- Writes local JSONL capture with UTC timestamps, quality statuses, explicit permission errors and a build SHA. Sample summary distinguishes all process-open failures from actual access-denied failures.
+- Writes local JSONL capture with UTC/monotonic timestamps, actual elapsed duration, quality statuses, explicit permission errors and a build SHA. Sample summary distinguishes all process-open failures from actual access-denied failures.
 - Runs without admin, without network access, without installing drivers or services. Process names are **excluded by default**.
 - **Not included yet:** CPU-utilization rates, time-travel replay, cross-service causality, eBPF/ETW, GUI, remote collection, intervention, quantum tools or universal program proof.
 
@@ -33,7 +33,7 @@ Optionally allow process executable names in a sensitive local capture:
 - Capture schema: aura.xray.capture/1
 - Record types: capture_start, sample_start, process, sample_end, capture_end, error
 - Process identity: PID plus process_create_filetime when available. PID alone can be reused.
-- Time: UTC millisecond time and monotonic milliseconds for each sample; one-second sampling.
+- Time: UTC millisecond time and monotonic milliseconds for each sample; deadline-based one-second sampling. The capture_end record includes measured elapsed milliseconds and UTC time, spanning at least the requested N seconds.
 - Access limitations: unreadable fields encoded as JSON null, quality=partial and optional win32_error; **null never means zero**.
 - The I/O counters are cumulative and should **not** be interpreted as a per-second I/O rate.
 - Memory is current working-set size, not total committed private bytes or total system RAM.
