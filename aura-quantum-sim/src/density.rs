@@ -26,6 +26,7 @@ pub enum DensityError {
     DuplicateQubit(usize),
     InvalidProbability,
     InvalidDensity,
+    ImpossibleOutcome,
     Simulator(SimError),
 }
 
@@ -338,6 +339,95 @@ impl DensityMatrix {
                     }
                 }
                 self.permute(&swaps);
+            }
+        }
+        self.validate()
+    }
+
+
+    /// Born probability of a computational-basis Z outcome, summing the
+    /// selected diagonal. Values within finite-precision tolerance are
+    /// clamped to [0,1], rather than emitted as invalid probabilities.
+    pub fn wire_probability(
+        &self, qubit: usize, outcome: bool,
+    ) -> Result<f64, DensityError> {
+        self.validate()?;
+        let mask = self.mask(qubit)?;
+        let mut probability = 0.0;
+        for basis in 0..self.dimension {
+            if (basis & mask != 0) == outcome {
+                probability += self.elements[basis * self.dimension + basis].re;
+            }
+        }
+        Ok(probability.clamp(0.0, 1.0))
+    }
+
+    /// Select an ideal Z-instrument branch P rho P / Tr(P rho).
+    /// Impossible support is rejected without modifying rho. At extreme
+    /// underflow, the stored f64 density may lose physical tiny probabilities:
+    /// unlike the pure statevector path, this function cannot recover data
+    /// whose squared amplitudes already underflowed during construction.
+    pub fn postselect(
+        &mut self, qubit: usize, outcome: bool,
+    ) -> Result<(), DensityError> {
+        let probability = self.wire_probability(qubit, outcome)?;
+        if probability == 0.0 {
+            return Err(DensityError::ImpossibleOutcome);
+        }
+        let mask = self.mask(qubit)?;
+        for row in 0..self.dimension {
+            for col in 0..self.dimension {
+                let index = row * self.dimension + col;
+                if (row & mask != 0) == outcome
+                    && (col & mask != 0) == outcome
+                {
+                    // Divide the components directly: constructing 1/p can
+                    // overflow for representable tiny probabilities.
+                    self.elements[index].re /= probability;
+                    self.elements[index].im /= probability;
+                } else {
+                    self.elements[index] = Complex::ZERO;
+                }
+            }
+        }
+        self.validate()
+    }
+
+    /// Seeded projective Z measurement: return outcome and collapse the
+    /// density matrix. Every measurement consumes one SplitMix64 draw,
+    /// including when the outcome is deterministic.
+    pub fn measure(
+        &mut self,
+        qubit: usize,
+        rng: &mut crate::SeededRng,
+    ) -> Result<bool, DensityError> {
+        let probability = self.wire_probability(qubit, true)?;
+        let outcome = rng.next_f64() < probability;
+        self.postselect(qubit, outcome)?;
+        Ok(outcome)
+    }
+
+    /// Deterministic, unobserved CPTP qubit reset:
+    /// R(rho)=|0><0|_q tensor Tr_q(rho).
+    /// It does NOT sample a hidden branch, expose a measurement outcome or
+    /// advance an RNG. Other wires retain their reduced quantum coherence.
+    pub fn reset_unobserved(&mut self, qubit: usize) -> Result<(), DensityError> {
+        self.validate()?;
+        let mask = self.mask(qubit)?;
+        for r0 in 0..self.dimension {
+            if r0 & mask != 0 { continue; }
+            let r1 = r0 | mask;
+            for c0 in 0..self.dimension {
+                if c0 & mask != 0 { continue; }
+                let c1 = c0 | mask;
+                let i00 = r0 * self.dimension + c0;
+                let i01 = r0 * self.dimension + c1;
+                let i10 = r1 * self.dimension + c0;
+                let i11 = r1 * self.dimension + c1;
+                self.elements[i00] = self.elements[i00] + self.elements[i11];
+                self.elements[i01] = Complex::ZERO;
+                self.elements[i10] = Complex::ZERO;
+                self.elements[i11] = Complex::ZERO;
             }
         }
         self.validate()
