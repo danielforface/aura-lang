@@ -47,7 +47,7 @@ jobs:
           p=json.load(open("/tmp/pure.json"))
           n=json.load(open("/tmp/noisy.json"))
           s=json.load(open("/tmp/stabilizer.json"))
-          assert p["schema"]=="aura.quantum.result/1" and p["qpu_hardware_jobs"]==0
+          assert p["schema"]=="aura.quantum.circuit-result/1" and p["qpu_hardware_jobs"]==0
           assert n["schema"]=="aura.quantum.noisy-result/1" and n["qpu_hardware_jobs"]==0
           assert s["schema"]=="aura.quantum.stabilizer-result/1" and s["basis_probabilities"]==[.5,0,0,.5]
           print("X001_STANDALONE_CANDIDATE_REAL_CLI_PASS")
