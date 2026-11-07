@@ -643,9 +643,9 @@ fn record_string_fields_support_construct_get_copy_call_and_return() {
     // Mutating a non-scalar field remains explicitly rejected by Checker.
     let source=r#"
 type Tagged = record { title: String, code: u32 }
-cell make_tag(title: String) -> Tagged:
+cell make_tag(title: String) ->:
     yield Tagged { title: title, code: 7 }
-cell title_of(item: Tagged) -> String:
+cell title_of(item: Tagged) ->:
     yield item.title
 cell show_tag(item: Tagged) ->:
     io.println(item.title)
