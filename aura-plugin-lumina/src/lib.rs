@@ -10,6 +10,9 @@ mod layout;
 mod forms;
 
 #[cfg(any(feature = "raylib", test))]
+mod draft_retention;
+
+#[cfg(any(feature = "raylib", test))]
 mod text_input;
 
 #[cfg(any(feature = "raylib", test))]
@@ -344,6 +347,12 @@ struct LuminaWindow {
     /// once per window; later user blur/Tab/click must never be overridden.
     autofocus_decided: bool,
     input_sessions: HashMap<u64, FocusedTextInput>,
+    /// Opt-in, non-sensitive identities last present in the visible UI.
+    retention_active:HashMap<u64,draft_retention::Identity>,
+    /// No focus/IME ownership survives removal. The stored committed
+    /// EditSession + bounded Undo may be rebound only to the same callback,
+    /// logical key/form and nondecreasing host value_revision.
+    retained_drafts:HashMap<u64,RetainedDraft>,
     last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
@@ -362,6 +371,12 @@ struct FocusedTextInput {
     session: text_input::EditSession,
     scroll_x: f32,
     visual_affinity: Option<usize>,
+}
+#[cfg(feature="raylib")]
+struct RetainedDraft {
+    identity:draft_retention::Identity,
+    entry:FocusedTextInput,
+    bytes:usize,
 }
 
 /// Unknown explicit policies fail closed. Normal TextInput keeps phase-25
@@ -496,6 +511,70 @@ fn input_value_revisions(tree:&UiNode,plan:&layout::LayoutNode,order:&[layout::H
     let mut invalid=std::collections::HashSet::new();
     collect(tree,plan,&valid_ids,&mut result,&mut invalid);
     (result,invalid)
+}
+
+/// Retain user-authored drafts only when a previously eligible, explicitly
+/// keyed field is actually absent from the next render tree. Hidden/disabled
+/// fields, malformed/duplicate keys and changed logical identity must never
+/// turn into an implicit cache of private content.
+#[cfg(feature="raylib")]
+fn reconcile_retained_drafts(win:&mut LuminaWindow,
+    catalog:&draft_retention::Catalog) {
+    let prior=std::mem::replace(&mut win.retention_active,catalog.active.clone());
+    for (id,old) in &prior {
+        if catalog.active.get(id).is_some_and(|now|now.same_field(old)){
+            continue;
+        }
+        let active=win.focused_input.as_ref().is_some_and(|fi|fi.on_change==*id);
+        let entry=if active {
+            win.input_sessions.remove(id);
+            win.focused_input.take()
+        } else {
+            win.input_sessions.remove(id)
+        };
+        win.last_text_views.remove(id);
+        // A callback identity cannot retain two independent drafts.
+        win.retained_drafts.remove(id);
+        if catalog.present.contains(id){continue;}
+        let Some(mut entry)=entry else{continue;};
+        // Abandon live IME preedit, but preserve the committed text, caret,
+        // selection and undo/redo in the bounded route cache.
+        entry.session.abandon_composition();
+        entry.visual_affinity=None; // Run indices belong to a particular layout.
+        let bytes=entry.session.retained_bytes()
+            .saturating_add(entry.revision.retained_bytes());
+        let total=win.retained_drafts.values()
+            .fold(0usize,|sum,item|sum.saturating_add(item.bytes));
+        if entry.revision.version()!=Some(old.revision)
+            || !draft_retention::within_budget(
+                bytes,win.retained_drafts.len(),total) {
+            continue;
+        }
+        win.retained_drafts.insert(*id,RetainedDraft{
+            identity:old.clone(),entry,bytes,
+        });
+    }
+    for (id,now) in &catalog.active {
+        if prior.get(id).is_some_and(|old|old.same_field(now)){continue;}
+        // A different callback using the same logical key cannot inherit the
+        // old editor. The host must preserve callback ID to restore a draft.
+        win.retained_drafts.retain(|old_id,saved|
+            old_id==id || !saved.identity.same_field(now));
+        if win.focused_input.as_ref().is_some_and(|fi|fi.on_change==*id){
+            win.focused_input=None;
+        }
+        win.input_sessions.remove(id);
+        win.last_text_views.remove(id);
+        if let Some(saved)=win.retained_drafts.remove(id) {
+            if saved.identity.same_field(now) &&
+                now.revision>=saved.identity.revision {
+                win.input_sessions.insert(*id,saved.entry);
+            }
+        }
+    }
+    // A once-unmounted callback later reused by an invalid/sensitive widget
+    // may never revive old, potentially private, text on a future screen.
+    win.retained_drafts.retain(|id,_|!catalog.present.contains(id));
 }
 
 /// Keep local edits when same revision host values echo older locally
@@ -1336,6 +1415,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     cancelled_requests: HashMap::new(),
                     autofocus_decided: false,
                     input_sessions: HashMap::new(),
+                    retention_active:HashMap::new(),
+                    retained_drafts:HashMap::new(),
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
@@ -1469,6 +1550,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
             });
+            let draft_catalog=draft_retention::catalog(tree,&focus_order);
+            reconcile_retained_drafts(win,&draft_catalog);
             let keyboard_order=layout::keyboard_focus_order_with_blocked(
                 tree,&planned_layout,&focus_order,&cancel_pre.blocked);
             reconcile_input_sessions(win,&focus_order,&revisions);

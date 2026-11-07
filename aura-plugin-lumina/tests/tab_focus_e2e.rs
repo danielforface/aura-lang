@@ -677,3 +677,127 @@ fn native_x11_form_cancel_acknowledged_terminal_focus_and_ready_recovery(){
         "valid terminal acknowledgement has no synthetic Submit/Cancel callbacks");
     eprintln!("LUMINA_CANCEL_ACK_KEYBOARD_X11 host_terminal_no_callback=true submit_and_cancel_not_focusable=true unrelated_button=true stale_ack_metadata_rejects_ready=true explicit_ready_recovery=true aba_busy_revision_blocks=true new_revision_cancellable=true stale_completion_no_focus=true valid_completion_no_autoclick=true");
 }
+
+
+/// Genuine X11 route transitions use the actual render loop, not a fake
+/// injected editor state. The source props stay at old revision 1 throughout
+/// the first navigation cycle: only an opted-in retained EditSession can make
+/// the form valid and preserve Ctrl+Z after the route is reinserted.
+#[test]
+fn native_x11_route_draft_retention_validates_live_text_undo_and_host_rebase(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut screen=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","240"),
+            ("height","48"),("value","A"),("value_revision","1"),
+            ("retain_draft","route"),("draft_scope","window-session-1"),("draft_key","checkout.customer"),
+            ("form","checkout"),("required","true"),("min_graphemes","3"),
+            ("on_change","cb:401")],vec![]),
+        node("Button",&[("x","20"),("y","95"),("width","220"),
+            ("height","52"),("form_submit","checkout"),
+            ("on_click","cb:500"),("label","Complete")],vec![]),
+    ]);
+    let other=node("App",&[("bg","#121212")],vec![
+        node("Text",&[("x","20"),("y","20"),("text","Review route")],vec![]),
+        node("Button",&[("x","20"),("y","95"),("width","220"),
+            ("height","52"),("on_click","cb:800"),("label","Other")],vec![]),
+    ]);
+    frames(&plugin,&screen,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,360));
+    frames(&plugin,&screen,&mut ctx,3);
+    let id=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=id.lines().next().expect("native X11 editor");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"x",false),401,"Ax"));
+    assert!(has(&press(&plugin,&screen,&mut ctx,"y",false),401,"Axy"));
+    assert!(button_frames(&plugin,&other,&mut ctx,4).is_empty(),
+        "route removal must not send accidental callbacks");
+    // The original host props still say A@revision1, without a state echo.
+    assert!(button_frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&screen,&mut ctx,"Return"),vec![500],
+        "form validation must read the retained Axy draft, not stale host A");
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"z",false),401,"Axyz"),
+        "native committed draft survived full tree removal");
+    xdo(&["keydown","Control_L"]);
+    button_frames(&plugin,&screen,&mut ctx,3);
+    let undone=press(&plugin,&screen,&mut ctx,"z",false);
+    xdo(&["keyup","Control_L"]);
+    button_frames(&plugin,&screen,&mut ctx,3);
+    assert!(has(&undone,401,"Axy"),
+        "Undo history must survive route transitions: {undone:?}");
+
+    // A strictly higher authoritative host revision discards the cached edit
+    // lineage and restores a fresh undo boundary, even with the same key.
+    screen.children[0].set_prop("value","Host");
+    screen.children[0].set_prop("value_revision","2");
+    assert!(button_frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),401,"Hostq"),
+        "host revision 2 must win over retained revision 1");
+    xdo(&["keydown","Control_L"]);
+    button_frames(&plugin,&screen,&mut ctx,3);
+    let undo_host=press(&plugin,&screen,&mut ctx,"z",false);
+    xdo(&["keyup","Control_L"]);
+    button_frames(&plugin,&screen,&mut ctx,3);
+    assert!(has(&undo_host,401,"Host"),
+        "new host revision clears old route's undo snapshots: {undo_host:?}");
+    eprintln!("LUMINA_ROUTE_DRAFT_X11 retained_committed_draft=true form_reads_retained_value=true same_callback_key=true undo_across_unmount=true host_higher_revision_rebase=true no_stale_undo=true no_auto_focus_restore=true");
+}
+
+/// Reusing a callback ID for a different logical field or sensitive input
+/// must not resurrect another route's retained text.
+#[test]
+fn native_x11_route_draft_key_collision_sensitive_field_and_revision_downgrade(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#101820")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","260"),
+            ("height","48"),("value","M"),("value_revision","4"),
+            ("retain_draft","route"),("draft_scope","window-session-1"),("draft_key","account.public"),
+            ("on_change","cb:401")],vec![]),
+    ]);
+    let blank=node("App",&[("bg","#101820")],vec![
+        node("Text",&[("x","20"),("y","20"),("text","Route absent")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,360));
+    frames(&plugin,&root,&mut ctx,3);
+    let id=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=id.lines().next().expect("native X11 editor");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"x",false),401,"Mx"));
+    assert!(frames(&plugin,&blank,&mut ctx,4).is_empty());
+    root.children[0].set_prop("value_revision","3"); // Host regressed.
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"q",false),401,"Mq"),
+        "downgraded host revision must refuse restoration");
+    frames(&plugin,&blank,&mut ctx,4);
+    root.children[0].set_prop("draft_key","other-route.public");
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"z",false),401,"Mz"),
+        "same callback but different key cannot load prior route draft");
+    frames(&plugin,&blank,&mut ctx,4);
+    root.children[0].set_prop("draft_scope","window-session-2");
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"v",false),401,"Mv"),
+        "rotating host session scope must reject previous session draft");
+    frames(&plugin,&blank,&mut ctx,4);
+    root.children[0].set_prop("type","password");
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"w",false),401,"Mw"),
+        "sensitive input must never restore another retained route session");
+    frames(&plugin,&blank,&mut ctx,4);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"v",false),401,"Mv"),
+        "password field local edits must not persist across removal");
+    eprintln!("LUMINA_ROUTE_DRAFT_GUARDS_X11 host_revision_downgrade_refuses_restore=true different_draft_key_isolated=true callback_reuse_not_identity=true scope_rotation_rejects_old_draft=true sensitive_type_not_cached=true sensitive_unmount_discards=true");
+}

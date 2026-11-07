@@ -123,6 +123,16 @@ impl EditSession {
             preedit:None, last_composition_sequence:0,
             authority_epoch:0,rebase_generation:0 }
     }
+    /// Count all retained dynamic text, including Undo/Redo, before a route
+    /// can keep this session alive outside the visible widget tree.
+    pub(crate) fn retained_bytes(&self)->usize {
+        let dynamic=|items:&Vec<Snapshot>|items.iter()
+            .fold(0usize,|sum,s|sum.saturating_add(s.buffer.len()));
+        self.buffer.len()
+            .saturating_add(dynamic(&self.undo))
+            .saturating_add(dynamic(&self.redo))
+            .saturating_add(self.preedit.as_ref().map_or(0,|p|p.text.len()))
+    }
     pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
     pub(crate) fn rebase_generation(&self)->u64{self.rebase_generation}
     /// Shaped/BiDi GPU hit-testing must pass through this method rather
@@ -405,6 +415,19 @@ impl EditSession {
 #[cfg(test)]
 mod tests {
 
+    #[test]fn retained_size_accounts_for_committed_text_and_undo_redo(){
+        let mut s=EditSession::new("A".into());
+        assert_eq!(s.retained_bytes(),1);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("xy".into()))));
+        assert!(s.retained_bytes()>=4,
+            "live three-byte string plus previous one-byte snapshot");
+        assert!(s.apply(SessionAction::Undo));
+        assert!(s.retained_bytes()>=4,
+            "Redo also counts toward retained memory budget");
+        s.rebase_authority("host".into());
+        assert_eq!(s.retained_bytes(),4,
+            "host rebase must discard old undo/redo snapshots");
+    }
     #[test]fn real_engine_d_then_c_replacement_is_one_undo_not_two_edits(){
         let mut s=EditSession::new("ANCHORㄱ".into());
         let first=s.authority_epoch();

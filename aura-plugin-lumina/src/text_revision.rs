@@ -87,6 +87,10 @@ impl RevisionTracker {
         self.acknowledged_seq=0;
         self.bytes=0;
     }
+    /// Extra retained revision/echo payload outside the live render tree.
+    pub(crate) fn retained_bytes(&self)->usize {
+        self.last_seen.len().saturating_add(self.bytes)
+    }
     pub(crate) fn version(&self)->Option<u64>{self.version}
     pub(crate) fn echoed(&self)->&str{&self.last_seen}
     #[cfg(test)]
@@ -95,6 +99,16 @@ impl RevisionTracker {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test] fn retained_size_includes_bounded_echoes_and_drops_them_on_rebase(){
+    let mut revisions=RevisionTracker::new("A",Some(1));
+    assert_eq!(revisions.retained_bytes(),1);
+    revisions.record_local_edit("AB");
+    assert_eq!(revisions.retained_bytes(),3,
+        "host echo snapshot and locally emitted echo both count");
+    assert_eq!(revisions.observe("Host",Some(2)),Decision::Rebase);
+    assert_eq!(revisions.retained_bytes(),4,
+        "new authority clears pending echoes before caching");
+ }
  #[test] fn legacy_changed_prop_remains_authority(){
     let mut r=RevisionTracker::new("A",None);
     assert_eq!(r.observe("A",None),Decision::KeepDraft);
