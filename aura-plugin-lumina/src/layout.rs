@@ -346,6 +346,7 @@ pub(crate) fn button_control(node:&UiNode)->ButtonControl {
 fn button_actionable(node:&UiNode)->bool {
     prop(node,"disabled")!=Some("true")
         && button_control(node)!=ButtonControl::Invalid
+        && crate::forms::submit_state(node).actionable()
 }
 /// Conflicting selected options or callback IDs revoke the *entire* visible
 /// radio group. Never guess which host-owned selected value is authoritative.
@@ -621,6 +622,33 @@ pub(crate) fn radio_arrow_target(root:&UiNode,plan:&LayoutNode,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_form_button_blocks_underlay_pointer_and_exits_keyboard_order(){
+        let mut root=n("App",&[],vec![
+            n("Button",&[("x","20"),("y","20"),("width","170"),
+                ("height","55"),("on_click","cb:1")],vec![]),
+            n("Button",&[("x","30"),("y","25"),("width","140"),
+                ("height","45"),("on_click","cb:2"),
+                ("form_submit","signup"),("form_status","busy")],vec![]),
+            n("Button",&[("x","20"),("y","100"),("on_click","cb:3")],vec![]),
+        ]);
+        let plan=arrange(&root,Bounds::new(0.0,0.0,400.0,240.0));
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),None,
+            "busy foreground form button never clicks through to lower Button");
+        assert_eq!(keyboard_focus_order(&root,&plan,&[]),
+            vec![HitTarget::Button(1),HitTarget::Button(3)]);
+        root.children[1].set_prop("form_status","ready");
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),Some(HitTarget::Button(2)));
+        assert_eq!(keyboard_focus_order(&root,&plan,&[]),
+            vec![HitTarget::Button(1),HitTarget::Button(2),HitTarget::Button(3)]);
+        root.children[1].set_prop("form_status","error");
+        root.children[1].set_prop("form_error","Service temporary failure");
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),Some(HitTarget::Button(2)),
+            "explicit failed request may be retried by a new user click");
+        root.children[1].set_prop("form_error","bad\ninject");
+        assert_eq!(hit_test(&root,&plan,60.0,45.0),None);
+    }
 
     #[test]
     fn radio_group_strict_tokens_bounded_unicode_and_missing_group_fail_closed(){

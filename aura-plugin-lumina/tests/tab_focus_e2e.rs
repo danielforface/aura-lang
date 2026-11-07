@@ -422,3 +422,79 @@ fn native_x11_form_keyboard_submit_validation_and_host_rule_recovery(){
         "non-form actions must remain independent of form configuration errors");
     eprintln!("LUMINA_FORM_KEYBOARD_X11 submit_blocked=true first_error_focus=true second_error_repair=true session_draft_valid=true malformed_rule_fail_closed=true no_silent_autosubmit=true ordinary_button=true");
 }
+
+
+/// Only the host may make a one-of-N radio group valid or transition a Form
+/// Submit from busy to retryable server error. Real XTest uses keyboard only.
+#[test]
+fn native_x11_required_radio_then_form_busy_failure_and_retry_keyboard(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","235"),("height","48"),
+            ("form","order"),("control","radio"),("group","plan"),
+            ("checked","false"),("required","true"),("on_click","cb:101")],vec![]),
+        node("Button",&[("x","20"),("y","84"),("width","235"),("height","48"),
+            ("form","order"),("control","radio"),("group","plan"),
+            ("checked","false"),("on_click","cb:102")],vec![]),
+        node("Button",&[("x","20"),("y","158"),("width","235"),("height","54"),
+            ("form_submit","order"),("form_status","ready"),
+            ("on_click","cb:300"),("label","Submit")],vec![]),
+        node("Button",&[("x","315"),("y","158"),("width","210"),("height","54"),
+            ("on_click","cb:900"),("label","Independent")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,400));
+    frames(&plugin,&root,&mut ctx,3);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("actual X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Radio A
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Right"),vec![102]);
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Submit
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "radio activation sends selection intent, but without host checked no valid submit");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"space"),vec![101],
+        "failed submit focuses first invalid radio in mixed source order");
+    root.children[0].set_prop("checked","true");
+    assert!(button_frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Radio B
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Submit
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300]);
+
+    // Busy state revokes a focused Button and blocks keyboard reactivation,
+    // including after status changes back until a *new* user focus action.
+    root.children[2].set_prop("form_status","busy");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"space").is_empty());
+    root.children[2].set_prop("form_status","error");
+    root.children[2].set_prop("form_error","Retry from service");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "remote failed state must never auto-reactivate revoked focus");
+
+    // Explicit Tab walk to the retryable Submit (no synthetic auto-click).
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Radio A
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Radio B
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // Submit
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![300],
+        "new user activation retries only when server publishes error");
+    root.children[2].set_prop("form_error","bad\u{202E}error");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "unsafe remote bidi override must revoke Submit keyboard focus");
+    root.children[2].props.retain(|(key,_)|key!="form_error");
+    root.children[2].set_prop("form_status","ready");
+    assert!(button_frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "a repaired host state alone never steals focus back");
+    // Still must allow independent ordinary Button after invalid form.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![900],
+        "independent Button remains keyboard-accessible after form recovery");
+    eprintln!("LUMINA_FORM_ASYNC_KEYBOARD_X11 required_group_gates=true first_invalid_radio_focus=true host_checked_authority=true busy_revokes_focus=true failure_no_auto_retry=true explicit_retry=true bidi_error_fail_closed=true repair_no_focus_steal=true unrelated_button=true");
+}

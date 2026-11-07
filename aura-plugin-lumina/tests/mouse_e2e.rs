@@ -321,3 +321,78 @@ fn real_x11_form_submit_required_min_graphemes_error_border_and_first_focus(){
         "independent ordinary button remains functional");
     eprintln!("LUMINA_FORM_SUBMIT_X11 required_blocks=true min_graphemes_blocks=true first_invalid_focus=true committed_draft_authority=true error_border=true error_clears=true valid_callback_once=true independent_button=true");
 }
+
+
+/// Real X11 single-selection form + app-owned async submit lifecycle.
+/// Neither busy nor remote error status may manufacture another callback.
+#[test]
+fn real_x11_required_radio_form_busy_error_retry_and_native_pixels(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#101820")],vec![
+        node("Button",&[("x","20"),("y","20"),("width","245"),("height","50"),
+            ("control","radio"),("group","tier"),("form","checkout"),
+            ("required","true"),("checked","false"),
+            ("on_click","cb:101"),("label","Standard")],vec![]),
+        node("Button",&[("x","20"),("y","90"),("width","245"),("height","50"),
+            ("control","radio"),("group","tier"),("form","checkout"),
+            ("checked","false"),("on_click","cb:102"),("label","Plus")],vec![]),
+        node("Button",&[("x","20"),("y","220"),("width","240"),("height","60"),
+            ("on_click","cb:999"),("label","Behind")],vec![]),
+        node("Button",&[("x","20"),("y","220"),("width","240"),("height","60"),
+            ("form_submit","checkout"),("on_click","cb:300"),
+            ("form_status","ready"),("label","Place order")],vec![]),
+        node("Button",&[("x","315"),("y","220"),("width","200"),("height","55"),
+            ("on_click","cb:900"),("label","Independent")],vec![]),
+    ]);
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(plugin.diagnostic_resize_window(640,420));
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let wins=xdotool(&["search","--name","Aura Lumina Sentinel"]);
+    let id=wins.lines().next().expect("native X11 form");
+    let unchecked_border=plugin.diagnostic_capture_pixel(21.0,45.0).unwrap();
+    assert!(click(&plugin,&tree,&mut ctx,id,100,245).is_empty(),
+        "required Radio group must block normal Submit with no selection");
+    let invalid_border=plugin.diagnostic_capture_pixel(21.0,45.0).unwrap();
+    assert!(invalid_border.r>unchecked_border.r.saturating_add(60),
+        "native radio shows group validation error in pixels: {unchecked_border:?} -> {invalid_border:?}");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,60,45),vec![101]);
+    assert!(click(&plugin,&tree,&mut ctx,id,100,245).is_empty(),
+        "radio callback alone cannot mutate host-owned selected state");
+    tree.children[0].set_prop("checked","true");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(plugin.diagnostic_capture_pixel(21.0,45.0).unwrap(),unchecked_border,
+        "host selection clears the red radio border");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,100,245),vec![300]);
+    tree.children[3].set_prop("form_status","busy");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,100,245).is_empty(),
+        "in-flight Submit blocks repeat and underlying ordinary Button");
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,360,245),vec![900],
+        "independent Button can still work while another form is busy");
+
+    // The remote completion is an authoritative host transition.
+    tree.children[3].set_prop("form_status","error");
+    tree.children[3].set_prop("form_error","Gateway unavailable");
+    for _ in 0..4{render(&plugin,&tree,&mut ctx);}
+    let failed_stroke=plugin.diagnostic_capture_pixel(21.0,245.0).unwrap();
+    assert!(failed_stroke.r>failed_stroke.g.saturating_add(80),
+        "server error must be shown as red button stroke, not a silent failure: {failed_stroke:?}");
+    for _ in 0..5{
+        render(&plugin,&tree,&mut ctx);
+        assert_eq!(ctx.get::<UiRuntimeFeedback>().unwrap().clicked_callback_id,None,
+            "failure state cannot auto retry in absence of new physical user click");
+    }
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,100,245),vec![300],
+        "failed state permits a fresh explicit user retry");
+    tree.children[3].set_prop("form_error","bad\nmessage");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert!(click(&plugin,&tree,&mut ctx,id,100,245).is_empty(),
+        "malformed server message must fail closed without leaking to underlay");
+    tree.children[3].props.retain(|(key,_)|key!="form_error");
+    tree.children[3].set_prop("form_status","ready");
+    for _ in 0..3{render(&plugin,&tree,&mut ctx);}
+    assert_eq!(click(&plugin,&tree,&mut ctx,id,100,245),vec![300],
+        "valid authoritative ready after failed request restores Submit");
+    eprintln!("LUMINA_RADIO_ASYNC_FORM_X11 group_required_blocks=true radio_error_pixel=true host_selected_authority=true busy_no_double_send=true underlay_block=true remote_error_visual=true explicit_retry_only=true malformed_error_fail_closed=true independent_button=true");
+}

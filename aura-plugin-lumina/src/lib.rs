@@ -1962,24 +1962,28 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                 if win.attempted_forms.len()<32{
                                     win.attempted_forms.insert(form);
                                 }
-                                if let Some(first)=assessment.first_focusable_error(&eligible_fields){
-                                    if let Some(layout::HitTarget::TextInput{
-                                        on_change,on_submit,value})=focus_order.iter()
-                                        .find(|item|matches!(item,
-                                            layout::HitTarget::TextInput{on_change:id,..}
-                                                if *id==first)).cloned(){
+                                // Radio and TextInput failures compete in
+                                // actual source Tab order, not numeric callback ID.
+                                match assessment.first_focus_target(&keyboard_order){
+                                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
                                         win.focused_button=None;
                                         switch_input(win,Some((on_change,on_submit,value,
                                             revisions.get(&on_change).copied().flatten())));
                                         win.autofocus_decided=true;
-                                    }
+                                    },
+                                    Some(layout::HitTarget::Button(id))=>{
+                                        switch_input(win,None);
+                                        win.focused_button=Some(id);
+                                        win.autofocus_decided=true;
+                                    },
+                                    None=>{},
                                 }
                             }
                         }
                     }
                 }
             }
-            let mut form_errors:HashMap<u64,forms::FieldError>=HashMap::new();
+            let mut form_errors=forms::RenderErrors::default();
             let attempted:Vec<_>=win.attempted_forms.iter().cloned().collect();
             for form in attempted{
                 let assessment=forms::assess(tree,&planned_layout,&form,
@@ -1988,7 +1992,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     win.attempted_forms.remove(&form);
                 }else{
                     for (cb,reason) in assessment.errors{
-                        form_errors.insert(cb,reason);
+                        form_errors.text.insert(cb,reason);
+                    }
+                    for (cb,reason) in assessment.radio_errors{
+                        form_errors.radio.insert(cb,reason);
                     }
                 }
             }
@@ -2193,7 +2200,7 @@ fn render_children(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
-    form_errors: &HashMap<u64,forms::FieldError>,
+    form_errors: &forms::RenderErrors,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2220,7 +2227,7 @@ fn render_node(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
-    form_errors: &HashMap<u64,forms::FieldError>,
+    form_errors: &forms::RenderErrors,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2262,7 +2269,7 @@ fn paint_node<D: RaylibDraw>(
     focused_input: &Option<FocusedTextInput>,
     focused_button: Option<u64>,
     invalid_radio_groups: &std::collections::HashSet<String>,
-    form_errors: &HashMap<u64,forms::FieldError>,
+    form_errors: &forms::RenderErrors,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2394,7 +2401,7 @@ fn paint_node<D: RaylibDraw>(
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
             let on_change = parse_callback_id(prop_string(node, "on_change"));
-            let field_error = on_change.and_then(|id|form_errors.get(&id)).copied();
+            let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
             let border = if field_error.is_some(){
                 Color::new(235,76,89,255)
             }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
@@ -2546,8 +2553,10 @@ fn paint_node<D: RaylibDraw>(
         "Button" => {
             let rect = bounds;
             let control = layout::button_control(node);
+            let submit_state=forms::submit_state(node);
             let disabled = prop_string(node, "disabled") == Some("true")
                 || control == layout::ButtonControl::Invalid
+                || !submit_state.actionable()
                 || (matches!(control,layout::ButtonControl::Radio(_))
                     && prop_string(node,"group")
                         .is_some_and(|g|invalid_radio_groups.contains(g)));
@@ -2622,6 +2631,15 @@ fn paint_node<D: RaylibDraw>(
                 let ts=18;
                 let label_y=rect.y+(rect.height-ts as f32)/2.0;
                 d.draw_text(label,label_x as i32,label_y as i32,ts,label_color);
+                if let Some(reason)=parse_callback_id(prop_string(node,"on_click"))
+                    .and_then(|id|form_errors.radio.get(&id)).copied(){
+                    // Visual, clipped and local; no screen-reader role implied.
+                    d.draw_rectangle_lines_ex(rect,2.0,Color::new(235,76,89,255));
+                    if rect.width>=190.0 && rect.height>=35.0{
+                        d.draw_text(reason.label(),(rect.x+rect.width-118.0) as i32,
+                            (rect.y+3.0) as i32,10,Color::new(255,125,130,255));
+                    }
+                }
                 // Native keyboard focus is a visual hint, NOT semantic OS a11y.
                 if !disabled && parse_callback_id(prop_string(node,"on_click"))
                     .is_some_and(|id|focused_button==Some(id))
@@ -2636,7 +2654,9 @@ fn paint_node<D: RaylibDraw>(
             // Give users a visible state change without changing their theme props.
             let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };
             let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
-            let stroke = if disabled { Color::GRAY } else { Color::RAYWHITE };
+            let stroke=if matches!(submit_state,forms::SubmitState::Error(_)){
+                Color::new(235,76,89,255)
+            }else if disabled{Color::GRAY}else{Color::RAYWHITE};
 
             // 200ms click tween: never animate a disabled control.
             let mut bg = base_bg;
@@ -2677,13 +2697,28 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
-            let label = prop_string(node, "label").unwrap_or("Button");
+            let label=if matches!(submit_state,forms::SubmitState::Busy){
+                "Submitting..."
+            }else if matches!(submit_state,forms::SubmitState::Invalid){
+                "Invalid form state"
+            }else{prop_string(node,"label").unwrap_or("Button")};
             let ts = 20;
             // Simple centering with a rough width estimate.
             let est_w = (label.chars().count() as f32) * (ts as f32 * 0.6);
             let tx = rect.x + (rect.width - est_w) / 2.0;
-            let ty = rect.y + (rect.height - ts as f32) / 2.0;
-            d.draw_text(label, tx as i32, ty as i32, ts, fg);
+            let ty=if matches!(submit_state,forms::SubmitState::Error(_))
+                && rect.height>=46.0{rect.y+4.0}
+                else{rect.y+(rect.height-ts as f32)/2.0};
+            d.draw_text(label,tx as i32,ty as i32,ts,fg);
+            if let forms::SubmitState::Error(message)=submit_state{
+                // Only validated, bounded, host-authored status text. The
+                // scissor restricts pixels to this Button's visible bounds.
+                if rect.width>=130.0 && rect.height>=46.0{
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(255,125,130,255));
+                }
+            }
             // Inset optical ring for native keyboard/pointer Button focus.
             // This does not claim an OS accessibility focus tree.
             if !disabled && parse_callback_id(prop_string(node,"on_click"))
