@@ -1,0 +1,65 @@
+{
+  "schema": "aura.quantum.factorized-request/1",
+  "qubits": 4,
+  "classical_bits": 0,
+  "seed": 1234,
+  "shots": 1,
+  "max_memory_bytes": 16777216,
+  "inspect_amplitudes": true,
+  "inspect_factors": true,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 2
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 2,
+        "target": 3
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "swap",
+        "a": 1,
+        "b": 2
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cz",
+        "control": 0,
+        "target": 2
+      }
+    }
+  ]
+}
