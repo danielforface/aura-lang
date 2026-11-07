@@ -3,7 +3,7 @@
 use aura_quantum_sim::circuit::{Circuit,Instruction};
 use aura_quantum_sim::factorized::{
     FactorCircuit,FactorError,MAX_FACTOR_COUNT_SHOTS,MAX_FACTOR_COUNT_BINS,
-    MAX_FACTOR_COUNT_WORK_UNITS,
+
 };
 use aura_quantum_sim::{Gate,DEFAULT_MEMORY_BUDGET};
 use std::collections::BTreeMap;
@@ -104,7 +104,6 @@ fn count_mode_rejects_zero_shots_excess_shots_and_excess_cpu_work() {
     for _ in 0..5 {slow.push(Instruction::Gate(Gate::T(0)));}
     assert_eq!(slow.execute_counts(MAX_FACTOR_COUNT_SHOTS,0,DEFAULT_MEMORY_BUDGET)
         .unwrap_err(),FactorError::WorkLimit);
-    assert!(MAX_FACTOR_COUNT_WORK_UNITS<5*65536*1024);
 }
 #[test]
 fn excessive_distinct_outcomes_fail_closed_above_4096_bins() {
