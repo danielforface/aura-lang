@@ -19,7 +19,7 @@
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/1"
-#define XR_VERSION "0.1.0-xr01"
+#define XR_VERSION "0.1.1-xr01"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -70,6 +70,7 @@ typedef struct {
     unsigned long seen;
     unsigned long readable_memory;
     unsigned long denied;
+    unsigned long open_failed;
     unsigned long errors;
 } SampleStats;
 
@@ -102,7 +103,9 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
         int have_io = 0;
         int have_creation = 0;
 
-        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+        /* Windows 10/11 GetProcessMemoryInfo, GetProcessIoCounters and GetProcessTimes
+         * only need PROCESS_QUERY_LIMITED_INFORMATION. Never ask for VM_READ. */
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if (p != NULL) {
             PROCESS_MEMORY_COUNTERS pm;
             ZeroMemory(&pm, sizeof pm);
@@ -129,11 +132,14 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
             if (GetProcessTimes(p, &creation, &exit_time, &kernel, &user)) {
                 create_ticks = filetime_ticks(creation);
                 have_creation = 1;
+            } else if (!err) {
+                err = GetLastError();
             }
             CloseHandle(p);
         } else {
             err = GetLastError();
-            ++stats->denied;
+            ++stats->open_failed;
+            if (err == ERROR_ACCESS_DENIED) ++stats->denied;
         }
 
         fprintf(out, "{\"type\":\"process\",\"sample\":%u,\"pid\":%lu",
@@ -190,8 +196,8 @@ static int collect_sample(FILE *out, unsigned sample, int include_names, SampleS
         return 0;
     }
     fprintf(out, "{\"type\":\"sample_end\",\"sample\":%u,\"processes\":%lu,"
-                 "\"readable_memory\":%lu,\"open_denied\":%lu,\"errors\":%lu}\n",
-                 sample, stats->seen, stats->readable_memory, stats->denied, stats->errors);
+                 "\"readable_memory\":%lu,\"open_denied\":%lu,\"open_failed\":%lu,\"errors\":%lu}\n",
+                 sample, stats->seen, stats->readable_memory, stats->denied, stats->open_failed, stats->errors);
     return 1;
 }
 
@@ -293,7 +299,7 @@ int main(int argc, char **argv) {
                  XR_SCHEMA, XR_VERSION, XR_BUILD_SHA, started, seconds,
                  include_names ? "process_names_opt_in" : "process_names_redacted");
 
-    uint64_t count = 0, readable = 0, denied = 0, errors = 0;
+    uint64_t count = 0, readable = 0, denied = 0, open_failed = 0, errors = 0;
     for (unsigned s = 1; s <= seconds; ++s) {
         SampleStats stats = {0};
         if (!collect_sample(out, s, include_names, &stats)) {
@@ -304,15 +310,15 @@ int main(int argc, char **argv) {
             return 4;
         }
         count += stats.seen; readable += stats.readable_memory;
-        denied += stats.denied; errors += stats.errors;
+        denied += stats.denied; open_failed += stats.open_failed; errors += stats.errors;
         if (s < seconds) Sleep(1000);
     }
 
     fprintf(out, "{\"type\":\"capture_end\",\"status\":\"complete\","
                  "\"samples\":%u,\"process_records\":%llu,\"readable_memory\":%llu,"
-                 "\"open_denied\":%llu,\"errors\":%llu}\n",
+                 "\"open_denied\":%llu,\"open_failed\":%llu,\"errors\":%llu}\n",
                  seconds, (unsigned long long)count, (unsigned long long)readable,
-                 (unsigned long long)denied, (unsigned long long)errors);
+                 (unsigned long long)denied, (unsigned long long)open_failed, (unsigned long long)errors);
     if (fclose(out) != 0) {
         fputs("ERROR unable to flush capture\n", stderr);
         return 5;

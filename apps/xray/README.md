@@ -1,13 +1,13 @@
-# AURA X-RAY XR-01 — Windows x64 process observation
+# AURA X-RAY XR-01.1 — Windows x64 process observation
 
 **Status:** experimental native product slice; unmerged. This is a genuine Windows command-line program using a business-analysis module authored in **Aura Lang**, compiled to C by the repository's Aura compiler and linked with a minimal Win32 read-only adapter.
 
 ## What it actually does
 
 - Enumerates live Windows processes with Toolhelp32 snapshots.
-- Reads working-set memory, cumulative read I/O and process creation time when access permits.
+- Reads working-set memory, cumulative read I/O and process creation time when access permits. Uses limited query rights only; does not request PROCESS_VM_READ.
 - Calls compiled Aura functions to normalize KiB to MiB and calculate 256-MiB memory and 64-MiB cumulative-I/O buckets.
-- Writes local JSONL capture with UTC timestamps, quality statuses, explicit permission errors and a build SHA.
+- Writes local JSONL capture with UTC timestamps, quality statuses, explicit permission errors and a build SHA. Sample summary distinguishes all process-open failures from actual access-denied failures.
 - Runs without admin, without network access, without installing drivers or services. Process names are **excluded by default**.
 - **Not included yet:** CPU-utilization rates, time-travel replay, cross-service causality, eBPF/ETW, GUI, remote collection, intervention, quantum tools or universal program proof.
 
@@ -45,7 +45,7 @@ Workflow: .github/workflows/xray-windows.yml, on push to product/xray-windows-v0
 
 The workflow builds the Aura compiler from the exact source revision, compiles apps/xray/src/analysis.aura to generated C, links Win32 + stdlib + Aura output into dist/AuraXRay.exe, runs Aura semantic self-test and **real process snapshot** on windows-2022, verifies PE x64, records SHA256 and uploads a release artifact.
 
-**Do not treat code or a green PR check as a delivered EXE** without verified artifact upload. A successful artifact includes AuraXRay.exe, BUILD-MANIFEST.json and README.txt. The developer must report exact SHA, CI run ID, artifact file and limitations with every submitted build.
+**Release hardening XR-01.1:** CI also checks rejection of invalid durations and forbids overwriting an existing capture; Rust dependencies are cached even if a downstream runtime check fails.\n\n**Do not treat code or a green PR check as a delivered EXE** without verified artifact upload. A successful artifact includes AuraXRay.exe, BUILD-MANIFEST.json and README.txt. The developer must report exact SHA, CI run ID, artifact file and limitations with every submitted build.
 
 ## Development ownership
 

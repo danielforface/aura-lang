@@ -36,6 +36,8 @@ jobs:
 
       - name: Cache compiler dependencies for repeatable product pulses
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Print source and compiler versions
         run: |
@@ -106,6 +108,16 @@ jobs:
           if (@($p | Where-Object { $_.PSObject.Properties.Name -contains "process_name" }).Count -gt 0) { throw "Sensitive process names exposed by default" }
           $invalid = @($p | Where-Object { $null -ne $_.memory_quanta_256m -and $null -ne $_.working_set_mib -and $_.memory_quanta_256m -ne [math]::Floor($_.working_set_mib / 256) })
           if ($invalid.Count -gt 0) { throw "Aura classification differs from observed memory band" }
+          # Negative controls: reject invalid duration; never create the requested file.
+          $badOutput = Join-Path $env:RUNNER_TEMP "xray-invalid-duration.jsonl"
+          & "dist/AuraXRay.exe" --capture --seconds 0 --out $badOutput 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path $badOutput)) { throw "Zero-duration capture must fail without writing" }
+          # Negative control: refuse to overwrite an existing evidence file.
+          $original = (Get-FileHash "dist/ci-capture.jsonl" -Algorithm SHA256).Hash
+          & "dist/AuraXRay.exe" --capture --seconds 1 --out "dist/ci-capture.jsonl" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Existing capture must not be overwritten" }
+          if ((Get-FileHash "dist/ci-capture.jsonl" -Algorithm SHA256).Hash -ne $original) { throw "Evidence capture bytes changed despite overwrite refusal" }
+          Write-Host "XRAY_NEGATIVE_GATES_PASS no-overwrite and invalid duration"
           Write-Host "XRAY_WINDOWS_SMOKE_PASS process_records=$($p.Count) samples=2"
 
       - name: Validate architecture, SHA256 and release manifest
@@ -120,7 +132,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.1.0-xr01"
+            version = "0.1.1-xr01"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
