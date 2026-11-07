@@ -8,6 +8,7 @@
 //! All underlying engines validate each instruction and resource budget.
 //! Unknown/conflicting features fail before a quantum engine is invoked.
 use crate::json_protocol::{execute_json_bytes, ProtocolError};
+use crate::factorized_json::{execute_factorized_json, FactorProtocolError};
 use crate::noisy_json::{execute_noisy_json_bytes, NoisyProtocolError};
 use crate::stabilizer_json::{execute_stabilizer_json, StabilizerProtocolError};
 use crate::symbolic_json::{execute_symbolic_json, SymbolicProtocolError};
@@ -33,6 +34,7 @@ pub enum RequestedMode {
     Stabilizer,
     Density,
     ExactBranch,
+    Factorized,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +43,7 @@ pub enum Backend {
     Stabilizer,
     Density,
     Symbolic,
+    Factorized,
 }
 
 impl Backend {
@@ -50,6 +53,7 @@ impl Backend {
             Self::Stabilizer => "clifford_stabilizer",
             Self::Density => "noisy_density",
             Self::Symbolic => "exact_symbolic",
+            Self::Factorized => "factor_product",
         }
     }
     const fn schema(self) -> &'static str {
@@ -58,6 +62,7 @@ impl Backend {
             Self::Stabilizer => "aura.quantum.stabilizer-request/1",
             Self::Density => "aura.quantum.noisy-request/1",
             Self::Symbolic => "aura.quantum.symbolic-request/1",
+            Self::Factorized => "aura.quantum.factorized-request/1",
         }
     }
     const fn result_schema(self) -> &'static str {
@@ -66,6 +71,7 @@ impl Backend {
             Self::Stabilizer => "aura.quantum.stabilizer-result/1",
             Self::Density => "aura.quantum.noisy-result/1",
             Self::Symbolic => "aura.quantum.symbolic-result/1",
+            Self::Factorized => "aura.quantum.factorized-result/1",
         }
     }
 }
@@ -124,6 +130,12 @@ struct Request {
     inspect_probabilities: bool,
     #[serde(default)]
     inspect_final_density: bool,
+    #[serde(default)]
+    inspect_factors: bool,
+    #[serde(default)]
+    inspect_amplitudes: bool,
+    #[serde(default)]
+    inspect_basis: Option<Vec<bool>>,
     instructions: Vec<Value>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +261,28 @@ fn select(request: &Request) -> Result<DispatchDecision, DispatchError> {
         }
         Ok(())
     };
+    let no_factor_inspect=|| -> Result<(),DispatchError> {
+        if request.inspect_factors || request.inspect_amplitudes ||
+            request.inspect_basis.is_some() {
+            return Err(DispatchError::IncompatibleIntent(
+                "factor_inspection_requires_factorized"));
+        }
+        Ok(())
+    };
     match request.mode {
+        RequestedMode::Factorized => {
+            require_sample()?;
+            no_stabilizer_inspect()?;
+            no_density_inspect()?;
+            if feature.needs_density {
+                return Err(DispatchError::IncompatibleIntent(
+                    "factorized_no_noise_or_observed_reset"));
+            }
+            Ok(DispatchDecision {
+                backend:Backend::Factorized,
+                reason:"explicit_untruncated_disconnected_factors",
+            })
+        }
         RequestedMode::ExactBranch => {
             if request.seed.is_some() || request.shots.is_some() {
                 return Err(DispatchError::IncompatibleIntent(
@@ -261,11 +294,13 @@ fn select(request: &Request) -> Result<DispatchDecision, DispatchError> {
             }
             no_stabilizer_inspect()?;
             no_density_inspect()?;
+            no_factor_inspect()?;
             Ok(DispatchDecision {backend:Backend::Symbolic,
                 reason:"explicit_exact_algebraic_branch"})
         }
         RequestedMode::Density => {
             require_sample()?;
+            no_factor_inspect()?;
             if feature.needs_density && feature.forced_measurement {
                 return Err(DispatchError::IncompatibleIntent("noisy_forced_outcome_unsupported"));
             }
@@ -275,6 +310,7 @@ fn select(request: &Request) -> Result<DispatchDecision, DispatchError> {
         }
         RequestedMode::Statevector => {
             require_sample()?;
+            no_factor_inspect()?;
             no_density_inspect()?;
             no_stabilizer_inspect()?;
             if feature.needs_density {
@@ -285,6 +321,7 @@ fn select(request: &Request) -> Result<DispatchDecision, DispatchError> {
         }
         RequestedMode::Stabilizer => {
             require_sample()?;
+            no_factor_inspect()?;
             no_density_inspect()?;
             if feature.needs_density {
                 return Err(DispatchError::IncompatibleIntent("stabilizer_no_noise_or_observed_reset"));
@@ -299,18 +336,32 @@ fn select(request: &Request) -> Result<DispatchDecision, DispatchError> {
             let shots=require_sample()?;
             if feature.needs_density || request.inspect_final_density {
                 no_stabilizer_inspect()?;
+                no_factor_inspect()?;
                 return Ok(DispatchDecision {
                     backend:Backend::Density,
                     reason:"noise_or_density_tomography_requires_density",
                 });
             }
+            if feature.contains_t && request.qubits >
+                crate::json_protocol::MAX_QUBITS
+                || request.inspect_factors || request.inspect_amplitudes
+                || request.inspect_basis.is_some()
+            {
+                no_stabilizer_inspect()?;
+                return Ok(DispatchDecision {
+                    backend:Backend::Factorized,
+                    reason:"factorized_requested_or_nonclifford_exceeds_dense_width",
+                });
+            }
             if feature.contains_t {
                 no_stabilizer_inspect()?;
+                no_factor_inspect()?;
                 return Ok(DispatchDecision {
                     backend:Backend::Statevector,
                     reason:"non_clifford_requires_pure_statevector_for_sampling",
                 });
             }
+            no_factor_inspect()?;
             // When caller specifically requests tableau inspection, never
             // silently discard it by falling back to the pure solver.
             let can_stabilizer=request.qubits<=crate::stabilizer_json::MAX_CLI_QUBITS
@@ -346,6 +397,8 @@ fn downstream(backend:Backend, encoded:&[u8]) -> Result<String, DispatchError> {
             .map_err(|e:NoisyProtocolError|rejection(e.code(),e.to_string())),
         Backend::Symbolic=>execute_symbolic_json(encoded)
             .map_err(|e:SymbolicProtocolError|rejection(e.code(),e.to_string())),
+        Backend::Factorized=>execute_factorized_json(encoded)
+            .map_err(|e:FactorProtocolError|rejection(e.code(),e.to_string())),
     }
 }
 
@@ -369,6 +422,13 @@ fn forward_request(req:&Request, selected:Backend) -> Result<Vec<u8>,DispatchErr
         }
         Backend::Density=>{
             map.insert("inspect_final_density".to_owned(),json!(req.inspect_final_density));
+        }
+        Backend::Factorized=>{
+            map.insert("inspect_factors".to_owned(),json!(req.inspect_factors));
+            map.insert("inspect_amplitudes".to_owned(),json!(req.inspect_amplitudes));
+            if let Some(bits)=&req.inspect_basis {
+                map.insert("inspect_basis".to_owned(),json!(bits));
+            }
         }
         Backend::Statevector|Backend::Symbolic=>{}
     }

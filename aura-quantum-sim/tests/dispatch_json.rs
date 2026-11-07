@@ -278,6 +278,17 @@ fn too_large_resources_and_no_supported_numerical_backend_fail_closed(){
         .unwrap_err().code(),"backend_rejected");
     req=fixture("nonclifford");
     req["qubits"]=json!(16);
+    let routed=dispatch(&req);
+    assert_eq!(routed["selected_backend"],"factor_product");
+    assert_eq!(routed["engine_result"]["qubits"],16);
+    // A *connected* width-11 component would exceed the hard factor cap.
+    let mut ops=vec![json!({"op":"gate","gate":{"kind":"h","target":0}}),
+                     json!({"op":"gate","gate":{"kind":"t","target":0}})];
+    for q in 0..10 {
+        ops.push(json!({"op":"gate","gate":{"kind":"cx",
+                       "control":q,"target":q+1}}));
+    }
+    req["instructions"]=json!(ops);
     assert_eq!(execute_dispatch_json(&serde_json::to_vec(&req).unwrap())
         .unwrap_err().code(),"backend_rejected");
 }

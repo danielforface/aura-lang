@@ -142,7 +142,10 @@ def main(bins,fixtures):
         variant(mode="exact_branch"),
         variant(mode="statevector",instructions=[{"op":"reset_observed","qubit":0}]),
         variant(mode="stabilizer",instructions=[{"op":"gate","gate":{"kind":"t","target":0}}]),
-        variant(qubits=16,instructions=[{"op":"gate","gate":{"kind":"t","target":0}}]),
+        variant(qubits=16,instructions=([{"op":"gate","gate":{"kind":"h","target":0}},
+               {"op":"gate","gate":{"kind":"t","target":0}}]
+               + [{"op":"gate","gate":{"kind":"cx","control":q,"target":q+1}}
+                  for q in range(10)])),
         variant(instructions=[{"op":"if","bit":0,"equals":True,
             "gate":{"kind":"x","target":0},"action":{"kind":"gate","gate":{"kind":"x","target":0}}}]),
         variant(instructions=[{"op":"noise","channel":{"kind":"phase_flip",
