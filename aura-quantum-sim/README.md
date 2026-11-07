@@ -390,3 +390,22 @@ only **empirical parity**, not formal Q23 equivalence or a universal
 numeric bound. This is an experimental finite-width CPU oracle,
 NOT a universal high-performance Quantum runtime or a released
 Aura/QIR feature.
+
+
+## C-011 — Capability-first CPU quantum dispatcher
+
+A fifth executable, aura-quantum-auto-run, is a standalone *router*, not a new physical simulator. It chooses among the four already-tested Rust engines through a strict new experimental JSON schema: aura.quantum.dispatch-request/1 → aura.quantum.dispatch-result/1.
+
+- mode=auto + sampled Clifford gates → polynomial-memory stabilizer when the declared shot/width profile admits it.
+- mode=auto + T/non-Clifford sampled gates → bounded numerical pure Statevector.
+- mode=auto + CPTP noise / conditional noise / observed reset / tomography → bounded density matrix.
+- mode=exact_branch → exact signed-i128 Clifford+T symbolic oracle. Outcome must be explicitly selected; sampling/seed are forbidden.
+- mode=statevector, mode=stabilizer or mode=density → forced engine for direct comparisons.
+
+The dispatcher returns the selected backend, selection reason and complete unchanged engine_result JSON, not a new interpretation of quantum physics. Every engine validates the request and resource limits independently. No fallback after backend execution failure; no silent conversion between exact and approximate, stochastic and forced outcomes, or pure and noisy models. Unknown operations, impossible gates, inconsistent classical conditions, over-budget work, unauthorized hardware flags and incompatible profiles fail closed.
+
+Try: cargo run --manifest-path aura-quantum-sim/Cargo.toml --example dispatch_four_profiles
+Or pipe each fixtures/dispatch_*_v1.json to cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-auto-run.
+
+Tests: tests/dispatch_json.rs checks real CLI, all four modes, seed replay, nested result parity, invalid fields, fail-closed edge cases and no QPU use. The tools/check_dispatch_equivalence.py script invokes the actual dispatcher AND selected old engine binaries on 100 deterministic positive cases, comparing complete JSON results, and exercises 17 negative cases. No QIR, Aura source syntax, hardware, GPU or formal theorem claim. Independent existing Qiskit oracles and CPU scaling checks stay enabled. Limits remain those of the selected engine; envelope <=128 qubits, <=64 classical bits, <=512 instructions, <=256 KiB request, <=16 MiB response.
+
