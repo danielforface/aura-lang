@@ -59,7 +59,7 @@ jobs:
           if (!(Test-Path "build/analysis/module.c")) { throw "No generated module.c" }
           if (!(Test-Path "build/analysis/aura_runtime.h")) { throw "No generated aura_runtime.h" }
           $generated = Get-Content "build/analysis/module.c" -Raw
-          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score")) {
+          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact")) {
             $signature = '(?m)\buint32_t\s+' + [regex]::Escape($fn) + '\s*\('
             if (![regex]::IsMatch($generated, $signature)) {
               throw "Aura codegen ABI regression: $fn must return real uint32_t, not void or prototype"
@@ -81,6 +81,7 @@ jobs:
             "aura-stdlib/src/stdlib.c",
             "apps/xray/src/win32_host.c",
             "apps/xray/src/xr02_engine.c",
+            "apps/xray/src/xr03_explorer.c",
             "-lpsapi", "-o", "dist/AuraXRay.exe"
           )
           & $clang @flags
@@ -127,9 +128,31 @@ jobs:
           if ($checkScore.Count -gt 0) { throw "Aura activity scoring diverges from independent oracle" }
           if (!(Test-Path "dist/ci-report.html")) { throw "No offline field report" }
           $html = Get-Content "dist/ci-report.html" -Raw
-          if ($html.Length -lt 4500 -or !$html.Contains('id="filter"') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "HTML report missing real interactive features" }
+          if ($html.Length -lt 9000 -or !$html.Contains('id="filter"') -or !$html.Contains('id="metric"') -or !$html.Contains('id="matrix"') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "XR-03 evidence workbench missing required multi-axis features" }
           if ($html -match '(?i)(https?://|src="[^"]+\.js|process_name)') { throw "Offline report has unexpected external dependency or privacy leak" }
           Write-Host "XRAY_TEMPORAL_ORACLE_PASS vectors=$($vectors.Count) elapsed_ms=$($end[0].elapsed_ms) report_bytes=$($html.Length)"
+          # Replay the actual Windows runner capture, and reject any tampered score.
+          & "dist/AuraXRay.exe" --replay "dist/ci-capture.jsonl" --report "dist/ci-replay.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR03 offline replay of genuine Windows capture failed" }
+          $replay = Get-Content "dist/ci-replay.html" -Raw
+          if (!$replay.Contains("const baseline=null") -or !$replay.Contains("EVIDENCE")) { throw "XR03 replay workbench invalid" }
+          Copy-Item "dist/ci-capture.jsonl" "dist/ci-baseline.jsonl"
+          & "dist/AuraXRay.exe" --compare "dist/ci-baseline.jsonl" "dist/ci-capture.jsonl" --report "dist/ci-comparison.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR03 baseline vs candidate comparison failed" }
+          $comparison = Get-Content "dist/ci-comparison.html" -Raw
+          if (!$comparison.Contains("const baseline={")) { throw "XR03 comparison lacks baseline dataset" }
+          # Integrity canary: a syntactically valid but tampered score must fail closed.
+          $originalText = Get-Content "dist/ci-capture.jsonl" -Raw
+          $tampered = $originalText -replace '"activity_score":0','"activity_score":9999'
+          if ($tampered -eq $originalText) { throw "No score-zero canary to tamper with" }
+          [IO.File]::WriteAllText((Join-Path $PWD "dist/ci-tampered.jsonl"), $tampered)
+          & "dist/AuraXRay.exe" --replay "dist/ci-tampered.jsonl" --report "dist/ci-should-not-exist.html" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-should-not-exist.html")) { throw "XR03 accepted falsified process scores" }
+          # Corrupt JSON must also reject, without leaving an empty report file.
+          [IO.File]::WriteAllText((Join-Path $PWD "dist/ci-bad.jsonl"), "{invalid json")
+          & "dist/AuraXRay.exe" --replay "dist/ci-bad.jsonl" --report "dist/ci-bad-report.html" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-bad-report.html")) { throw "XR03 accepted invalid JSONL" }
+          Write-Host "XR03_REPLAY_COMPARE_ORACLE_PASS replay, comparison, tamper rejection, invalid JSON rejection"
           # Negative controls: reject invalid duration; never create the requested file.
           $badOutput = Join-Path $env:RUNNER_TEMP "xray-invalid-duration.jsonl"
           & "dist/AuraXRay.exe" --capture --seconds 0 --out $badOutput 2>$null
@@ -157,7 +180,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.2.0-xr02"
+            version = "0.3.0-xr03"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
@@ -166,11 +189,12 @@ jobs:
             binary_sha256 = $sha
             runtime_windows_smoke = "PASS"
             signing = "UNSIGNED_EXPERIMENTAL"
-            limitations = @("no native GUI","no ETW","no automatic fixes","no root-cause proof","activity score is heuristic","unsigned experimental")
+            limitations = @("no native Lumina GUI","no ETW","no automatic fixes","no root-cause proof","score is heuristic","untrusted input bounded","unsigned experimental")
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
-          Copy-Item "dist/ci-report.html" "dist/XR02-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-report.html" "dist/XR03-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-comparison.html" "dist/XR03-EXAMPLE-COMPARISON.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -181,7 +205,8 @@ jobs:
             dist/AuraXRay.exe
             dist/BUILD-MANIFEST.json
             dist/README.txt
-            dist/XR02-EXAMPLE-REPORT.html
+            dist/XR03-EXAMPLE-REPORT.html
+            dist/XR03-EXAMPLE-COMPARISON.html
           retention-days: 30
           if-no-files-found: error
 

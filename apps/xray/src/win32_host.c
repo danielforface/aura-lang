@@ -15,12 +15,13 @@
 #include <string.h>
 #include <limits.h>
 #include "xr02_engine.h"
+#include "xr03_explorer.h"
 
 #ifndef XR_BUILD_SHA
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.2.0-xr02"
+#define XR_VERSION "0.3.0-xr03"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -29,6 +30,9 @@ extern uint32_t xray_read_kib_per_sec(uint32_t delta_kib, uint32_t elapsed_ms);
 extern uint32_t xray_cpu_millicores(uint32_t delta_cpu_ms, uint32_t elapsed_ms);
 extern uint32_t xray_activity_score(uint32_t cpu_milli, uint32_t read_kib_s,
                                     uint32_t write_kib_s, uint32_t memory_growth_mib);
+extern uint32_t xray_cpu_impact(uint32_t cpu_milli);
+extern uint32_t xray_io_impact(uint32_t read_kib_s, uint32_t write_kib_s);
+extern uint32_t xray_memory_impact(uint32_t growth_mib);
 
 static void utc_now(char *out, size_t size) {
     SYSTEMTIME t;
@@ -306,31 +310,41 @@ static int self_test(void) {
         fputs("XRAY TEMPORAL CONTRACT FAIL: identity/counter/reset fixture\n",stderr);
         return 0;
     }
-    puts("AURA_CORE_CONTRACT_PASS 18 vectors; source=analysis.aura; backend=c");
+    if (xray_cpu_impact(1625)!=16 || xray_cpu_impact(999)!=9 ||
+        xray_io_impact(4096,2048)!=3 || xray_io_impact(0,0)!=0 ||
+        xray_memory_impact(306)!=612 || xray_memory_impact(0)!=0) {
+        fputs("XRAY EVIDENCE CONTRACT FAIL: decomposed Aura score components\n",stderr);
+        return 0;
+    }
+    puts("AURA_CORE_CONTRACT_PASS 24 vectors; source=analysis.aura; backend=c");
     puts("XRAY_TEMPORAL_CONTRACT_PASS baseline, rates, reset, PID reuse, unknown identity");
     return 1;
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-02 -- Native Windows Process Analysis\n"
+    fputs("AURA X-RAY XR-03 -- Multidimensional Evidence Workbench\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
           "  AuraXRay.exe --self-test\n"
           "  AuraXRay.exe --capture --seconds N --out FILE [--report REPORT.html] [--include-names]\n"
+          "  AuraXRay.exe --replay CAPTURE.jsonl --report WORKBENCH.html [--include-names]\n"
+          "  AuraXRay.exe --compare BASELINE.jsonl CANDIDATE.jsonl --report DIFF.html [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-02: identity-guarded CPU millicores, read/write KiB/s, memory deltas, Aura activity.\n"
-          "Optional offline HTML report; process names are opt-in only.\n"
+          "XR-03: Aura-scored evidence reconstruction, replay, multidimensional history and compare.\n"
+          "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
+          "Optional offline workbench; process names are opt-in only.\n"
           "Limitations: no ETW, no automatic fixes, no causal/root-cause proof.\n", out);
 }
 
 int main(int argc, char **argv) {
     if (argc == 1) { usage(stdout); return 0; }
-    int capture = 0, include_names = 0;
+    int capture = 0, include_names = 0, mode = 0;
     unsigned seconds = 0;
     const char *out_path = NULL, *report_path = NULL;
+    const char *input_path = NULL, *baseline_path = NULL;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--help") == 0 && argc == 2) {
@@ -346,6 +360,12 @@ int main(int argc, char **argv) {
             return self_test() ? 0 : 2;
         }
         if (strcmp(argv[i], "--capture") == 0) { capture = 1; continue; }
+        if (strcmp(argv[i], "--replay") == 0 && i+1 < argc && !mode) {
+            mode = 1; input_path = argv[++i]; continue;
+        }
+        if (strcmp(argv[i], "--compare") == 0 && i+2 < argc && !mode) {
+            mode = 2; baseline_path = argv[++i]; input_path = argv[++i]; continue;
+        }
         if (strcmp(argv[i], "--include-names") == 0) { include_names = 1; continue; }
         if (strcmp(argv[i], "--seconds") == 0 && i+1 < argc) {
             const char *v = argv[++i];
@@ -368,6 +388,34 @@ int main(int argc, char **argv) {
         }
         fprintf(stderr, "ERROR unknown or incomplete option: %s\n", argv[i]);
         return 2;
+    }
+
+    if (mode) {
+        if (capture || seconds || out_path || !input_path || !input_path[0] ||
+            !report_path || !report_path[0] ||
+            strcmp(report_path,input_path)==0 ||
+            (baseline_path && (strcmp(report_path,baseline_path)==0 ||
+                               strcmp(baseline_path,input_path)==0))) {
+            fputs("ERROR replay/compare requires new --report path and distinct input files\n",stderr);
+            return 2;
+        }
+        FILE *report=NULL;
+        if (fopen_s(&report,report_path,"wx")!=0 || !report) {
+            fputs("ERROR report file already exists or cannot be created\n",stderr);
+            return 3;
+        }
+        char diagnostics[240]={0};
+        int ok=xr03_render(report,input_path,baseline_path,include_names,
+                           diagnostics,sizeof diagnostics);
+        if (fclose(report)!=0) ok=0;
+        if (!ok) {
+            remove(report_path);
+            fprintf(stderr,"XRAY_REPLAY_REJECTED %s\n",diagnostics[0]?diagnostics:"report write failed");
+            return 4;
+        }
+        printf("AURA_XRAY_EVIDENCE_OK mode=%s input=%s report=%s source=validated_capture2 aura=compiled\n",
+               mode==2?"compare":"replay",input_path,report_path);
+        return 0;
     }
 
     if (!capture || !out_path || !out_path[0] || !seconds) {
@@ -452,8 +500,10 @@ int main(int argc, char **argv) {
         return 5;
     }
     if (report) {
-        int ok = xr_write_html(report,analyzer,XR_BUILD_SHA,seconds,elapsed_ms,
-                               denied,open_failed,include_names);
+        char diagnostics[240]={0};
+        int ok = xr03_render(report,out_path,NULL,include_names,
+                             diagnostics,sizeof diagnostics);
+        if (!ok) fprintf(stderr,"XRAY_REPORT_INVALID %s\n",diagnostics);
         if (fclose(report)!=0) ok=0;
         if (!ok) {
             remove(report_path);

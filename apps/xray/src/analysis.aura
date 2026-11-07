@@ -33,3 +33,15 @@ cell xray_cpu_millicores(delta_cpu_ms: u32, elapsed_ms: u32):
 # Only called on complete, identity-validated comparable vectors.
 cell xray_activity_score(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_mib: u32):
     yield (cpu_milli / 100) + (read_kib_s / 2048) + (write_kib_s / 2048) + (growth_mib * 2)
+
+# XR-03 evidence decomposition. These terms are ACTUAL AURA product logic,
+# not reimplemented by the offline HTML viewer or the Windows adapter.
+cell xray_cpu_impact(cpu_milli: u32):
+    yield cpu_milli / 100
+
+cell xray_io_impact(read_kib_s: u32, write_kib_s: u32):
+    yield (read_kib_s / 2048) + (write_kib_s / 2048)
+
+# growth_mib validated and bounded <= 16384 by the native caller.
+cell xray_memory_impact(growth_mib: u32):
+    yield growth_mib * 2
