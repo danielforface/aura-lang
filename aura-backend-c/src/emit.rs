@@ -153,6 +153,53 @@ fn emit_runtime_h() -> String {
     out.push_str("  }\n");
     out.push_str("}\n\n");
 
+    // Aura char is a Unicode scalar, not a byte. The public C char ABI
+    // stores it in uint32_t; printf's %c alone would truncate non-ASCII,
+    // and %s alone cannot preserve U+0000. Encode one lead byte with %c
+    // plus an optional null-terminated UTF-8 tail with %s. C99/C11 block
+    // compound literals provide invocation-lifetime storage for each tail.
+    out.push_str(r#"
+// Converts only Unicode scalar values. Invalid foreign C callers fail
+// closed rather than printing ill-formed UTF-8 or normalizing surrogates.
+static inline uint32_t aura_unicode_scalar_checked(uint32_t scalar) {
+  if (scalar > 0x10FFFFu || (scalar >= 0xD800u && scalar <= 0xDFFFu)) {
+    fprintf(stderr, "invalid Aura char Unicode scalar U+%08X\n", (unsigned)scalar);
+    fflush(stderr);
+    abort();
+  }
+  return scalar;
+}
+
+static inline int aura_unicode_char_lead(uint32_t scalar) {
+  scalar = aura_unicode_scalar_checked(scalar);
+  if (scalar <= 0x7Fu) return (int)scalar;
+  if (scalar <= 0x7FFu) return (int)(0xC0u | (scalar >> 6));
+  if (scalar <= 0xFFFFu) return (int)(0xE0u | (scalar >> 12));
+  return (int)(0xF0u | (scalar >> 18));
+}
+
+static inline const char* aura_unicode_char_tail(uint32_t scalar, char tail[4]) {
+  scalar = aura_unicode_scalar_checked(scalar);
+  if (scalar <= 0x7Fu) {
+    tail[0] = '\0';
+  } else if (scalar <= 0x7FFu) {
+    tail[0] = (char)(0x80u | (scalar & 0x3Fu));
+    tail[1] = '\0';
+  } else if (scalar <= 0xFFFFu) {
+    tail[0] = (char)(0x80u | ((scalar >> 6) & 0x3Fu));
+    tail[1] = (char)(0x80u | (scalar & 0x3Fu));
+    tail[2] = '\0';
+  } else {
+    tail[0] = (char)(0x80u | ((scalar >> 12) & 0x3Fu));
+    tail[1] = (char)(0x80u | ((scalar >> 6) & 0x3Fu));
+    tail[2] = (char)(0x80u | (scalar & 0x3Fu));
+    tail[3] = '\0';
+  }
+  return tail;
+}
+
+"#);
+
     out.push_str("// Builtins used by main.aura\n");
     out.push_str("static inline Tensor io_load_tensor(const char* path) {\n");
     out.push_str("  (void)path;\n");
@@ -456,6 +503,8 @@ impl CNameMap {
             "printf", "fprintf", "puts", "malloc", "calloc", "realloc",
             "free", "abort", "exit", "fwrite",
             "AURA_RANGE_CHECK_U32", "AURA_RANGE_CHECK_U64",
+            "aura_unicode_scalar_checked", "aura_unicode_char_lead",
+            "aura_unicode_char_tail",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -2242,6 +2291,21 @@ fn render_string_snapshot(
                 replaced_any = true;
             }
             Some(CapturedStringSlot::Scalar(ct, c_name)) => {
+                // A Char can encode to one-to-four UTF-8 bytes, including
+                // the NUL scalar. Emit two real variadic arguments rather
+                // than hiding a comma inside one argument string.
+                if *ct == CType::Char {
+                    format_string.push_str("%c%s");
+                    arguments.push(format!(
+                        "aura_unicode_char_lead((uint32_t)({c_name}))"
+                    ));
+                    arguments.push(format!(
+                        "aura_unicode_char_tail((uint32_t)({c_name}), (char[4]){{0}})"
+                    ));
+                    replaced_any = true;
+                    cursor = close + 1;
+                    continue;
+                }
                 let replacement = match *ct {
                     CType::U8 | CType::U16 | CType::U32 =>
                         Some(("%u", format!("(unsigned int)({c_name})"))),

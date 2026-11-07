@@ -449,3 +449,101 @@ cell pass_saved(number: u32) ->:
         }
     }
 }
+
+
+#[test]
+fn native_unicode_char_interpolation_uses_exact_utf8_and_rejects_invalid_scalars() {
+    // Q03-001 real Aura source: the AVM displays its Char value as the
+    // Unicode scalar, not as a truncated 8-bit printf character or its
+    // decimal codepoint. Exercise NUL, percent, ASCII, all UTF-8 lengths,
+    // surrogate edges and supplementary-plane limits under strict native C.
+    let source = r#"
+type Point = record { x: u32, y: u32 }
+cell aura_unicode_char_lead(n: u32) ->:
+    yield n
+cell validate_reserved_name() ->:
+    yield aura_unicode_char_lead(37)
+cell render_unicode(p: Point, scalar: char, marker: char) ->:
+    val stored: String = "Record={p}; scalar={scalar}; marker={marker}; repeated={scalar}"
+    io.println(stored)
+    yield p.x
+"#;
+    let ast = aura_parse::parse_source(source).expect("Unicode char source parses");
+    Checker::new().check_program(&ast).expect("Unicode char and nominal Record typecheck");
+    let original = lower_program(&ast).expect("real source lowers into typed SSA");
+    validate_module(&original).expect("source IR validates");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized SSA validates");
+
+    // Include NUL byte (which printf %s alone cannot emit), percent (which
+    // may not become a format directive), multi-byte and edge scalars.
+    let valid = [
+        0u32, 0x25, 0x7F, 0x80, 0x7FF, 0x800, 0x05D0,
+        0xD7FF, 0xE000, 0xFFFF, 0x10000, 0x1F642, 0x10FFFF,
+    ];
+    let invalid = [0xD800u32, 0xDFFF, 0x110000, 0xFFFF_FFFF];
+
+    for (label, ir) in [("source", &original), ("optimized", &optimized)] {
+        let c = emit_module(ir, None).expect("Unicode char source emits native C");
+        assert!(c.runtime_h.contains("aura_unicode_scalar_checked"),
+            "{label}: Unicode scalar guard is missing");
+        assert!(c.module_c.contains("aura_unicode_char_tail"),
+            "{label}: native interpolation must encode UTF-8");
+        // A user's Cell that happens to collide with a new runtime helper
+        // must be C-mangled, while its original Aura Call still works.
+        assert!(c.module_c.contains("aura_cell_617572615f756e69636f64655f636861725f6c656164"),
+            "{label}: reserved helper export collides with user Cell");
+        let tmp = Scratch::new();
+        fs::write(tmp.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+        fs::write(tmp.0.join("module.c"), &c.module_c).unwrap();
+        fs::write(tmp.0.join("driver.c"), concat!(
+            "#include <stdint.h>\n",
+            "#include <stdlib.h>\n",
+            "typedef struct { uint32_t aura_f_78; uint32_t aura_f_79; } aura_record_506f696e74;\n",
+            "uint32_t render_unicode(aura_record_506f696e74, uint32_t, uint32_t);\n",
+            "uint32_t validate_reserved_name(void);\n",
+            "int main(int argc, char** argv) {\n",
+            " if (argc != 2 || validate_reserved_name() != 37u) return 2;\n",
+            " uint32_t scalar = (uint32_t)strtoul(argv[1], NULL, 0);\n",
+            " aura_record_506f696e74 p = {7u,13u};\n",
+            " return render_unicode(p, scalar, 0x25u) == 7u ? 0 : 3;\n",
+            "}\n"
+        )).unwrap();
+
+        for opt in ["-O0", "-O2"] {
+            let exe = tmp.0.join(format!("record_unicode_char_{label}_{}", &opt[1..]));
+            let built = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", opt, "-I"])
+                .arg(&tmp.0).arg(tmp.0.join("module.c"))
+                .arg(tmp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Clang installed for Native CI");
+            assert!(built.status.success(),
+                "{label}/{opt}: C source or helper ABI failed: {}\n{}",
+                String::from_utf8_lossy(&built.stderr), c.module_c);
+            for scalar in valid {
+                let run = Command::new(&exe).arg(format!("0x{scalar:X}"))
+                    .output().expect("native Unicode executable runs");
+                assert!(run.status.success(),
+                    "{label}/{opt} U+{scalar:04X} failed: {}",
+                    String::from_utf8_lossy(&run.stderr));
+                let ch = char::from_u32(scalar).expect("test valid Unicode scalar");
+                let want = format!(
+                    "Record=<Point>; scalar={ch}; marker=%; repeated={ch}\n"
+                );
+                assert_eq!(run.stdout, want.as_bytes(),
+                    "{label}/{opt}: native UTF-8 differs from char display U+{scalar:04X}");
+            }
+            for scalar in invalid {
+                let run = Command::new(&exe).arg(format!("0x{scalar:X}"))
+                    .output().expect("native invalid-char executable runs");
+                assert!(!run.status.success(),
+                    "{label}/{opt}: invalid scalar U+{scalar:08X} accepted");
+                assert!(String::from_utf8_lossy(&run.stderr)
+                    .contains("invalid Aura char Unicode scalar"),
+                    "{label}/{opt}: invalid scalar did not fail closed: {}",
+                    String::from_utf8_lossy(&run.stderr));
+            }
+        }
+    }
+}
