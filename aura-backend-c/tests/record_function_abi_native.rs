@@ -1,6 +1,11 @@
 //! Q03-001 Record function ABI: source-level Record return, by-value parameter,
  //! cross-cell call, and native strict C11 O0/O2 executable cross-check.
  //! This test was introduced while the C backend explicitly rejected Record ABI.
+// Keep the checked signed-division Record ABI regression inside the Native
+// suite already executed by the required Q03 GitHub Actions gate.
+#[path = "record_i64_division_native.rs"]
+mod checked_i64_record_division;
+
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{run_oracle_entry, validate_module, InstKind, OracleConfig, OracleValue, Type};
