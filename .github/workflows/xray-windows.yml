@@ -34,6 +34,9 @@ jobs:
       - name: Configure native MSVC linker and Windows SDK
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Cache compiler dependencies for repeatable product pulses
+        uses: Swatinem/rust-cache@v2
+
       - name: Print source and compiler versions
         run: |
           Write-Host "SOURCE_SHA $env:GITHUB_SHA"
