@@ -1,0 +1,75 @@
+name: X007 Actual Combined A and B Full Workspace Gate
+on:
+  push:
+    branches: [integration/x007-ab-full-workspace]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: x007-ab-full-workspace
+  cancel-in-progress: true
+jobs:
+  real-entire-workspace:
+    name: Actual full locked workspace plus Z3 and Native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install supported native workspace prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify exact frozen source provenance and lock metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "27244bca700a9307747d1a79edf831c11cba493d"
+          test "$(git rev-parse HEAD:aura-plugin-lumina)" = "f0771c2c986adca7b3ebfb64ee7c6547081ff0da"
+          test "$(git rev-parse HEAD:Cargo.lock)" = "bf778c997ed575e323cde39863ae8c4d3b5c5b30"
+          test "$(git rev-parse HEAD:.github/workflows/lumina-viewport-headless.yml)" = "bce25dd3c30ba302b87fa86b636f87f4414c4686"
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          echo X007_SOURCE_AND_LOCK_PROVENANCE_PASS
+      - name: Entire unmodified native-free Cargo workspace test suite including Debug
+        env:
+          AURA_DIFFERENTIAL_REQUIRE_C: "1"
+        run: cargo test --workspace --locked --no-default-features
+      - name: Real Z3 compiler profile on same A plus B workspace
+        run: cargo check --locked -p aura --no-default-features --features z3
+      - name: Explicit original Debug no-Z3 Rust tests without weakening acceptance
+        run: cargo test --locked -p aura --no-default-features --test debug_protocol_smoke -- --nocapture
+      - name: Verify actual public Aura binary fail-closed subprocess
+        run: |
+          cargo build --locked -p aura --no-default-features
+          python3 tools/integration/x006_avm_debug_contract.py --binary target/debug/aura
+      - name: Full trusted source workspace qualified, not main or release
+        run: echo X007_AB_FULL_WORKSPACE_Z3_TRUST_PASS
+
+  actual-lumina-window-e2e:
+    name: Current B actual native X11 and full window interaction on current A
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      IBUS_USE_PORTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install original X11/IBus/GL graphical dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config \
+            libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core \
+            fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul \
+            fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
+      - uses: Swatinem/rust-cache@v2
+      - name: Native Raylib library with normal IBus diagnostics isolated
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --lib
+      - name: Real mouse pointer rendered forms read-only and grapheme caps
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
+      - name: Real keyboard/tab/drafts/blur native X11 events
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test tab_focus_e2e -- --nocapture --test-threads=1
+      - name: X11 native interaction success on combined source only
+        run: echo X007_AB_REAL_LUMINA_X11_PASS

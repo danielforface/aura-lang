@@ -1,0 +1,17 @@
+# X-007 — A+B full-workspace native integration trial
+
+**Integration-only non-merging branch:** `integration/x007-ab-full-workspace`, parent **A #57** exact `27244bca700a9307747d1a79edf831c11cba493d`. Replaces B's full `aura-plugin-lumina/` tree with the **identical B #106** `985684aafad92b8cf7922385c5f83cf67725489c` tree `f0771c2c986adca7b3ebfb64ee7c6547081ff0da`. Reconciles full B lock blob `bf778c997ed575e323cde39863ae8c4d3b5c5b30`, copies exact B source-contract fixture workflow `bce25dd3c30ba302b87fa86b636f87f4414c4686`. Both owner source trees immutable and their PRs Draft. Root `Cargo.toml` identical and all original A package versions unchanged in B lock.
+
+## Failure fixed by producer; no integration trust bypass
+
+[X-005 original full Workspace CI #42460915599](https://github.com/danielforface/aura-lang/actions/runs/42460915599) correctly failed `aura/tests/debug_protocol_smoke.rs` old `out.status.success()` while AVM under disabled Z3 returned `verified=false`. [A PR #57 review](https://github.com/danielforface/aura-lang/pull/57#issuecomment-6726205685) requested an owner fix. Agent A actually updated `aura/tests/debug_protocol_smoke.rs` in its owned branch; new blob `598c899a085e0b7579d0b63d9548ff957bbbaa21` requires nonzero exit and explicit no-Z3 gate refusal, still validates JSON hello/perf events and malformed command, and adds no-Debug transport regression. Native AVM `verified=false` remains intact. This is semantic proof honesty, not a skip of the original test.
+
+[X-006 current-source consumer CI #42516723550](https://github.com/danielforface/aura-lang/actions/runs/42516723550) **2/2 actual SUCCESS** at `563920906d0df543d302551c98e8921a22c62cb8` (older A and B snapshots), including public CLI no-Z3 fail-closed external subprocess, Core/IR/Native, real Z3 compiler check, and real window X11. **This is scoped evidence only**, not full Workspace qualification of newer commits.
+
+## X-007 actual acceptance (must be observed, not assumed)
+
+CI `.github/workflows/x007-ab-full-workspace.yml` on the new isolated branch runs full **unchanged** `cargo test --workspace --locked --no-default-features` with the existing C differential requirement; real `aura` Z3 feature check; original now-corrected Rust `debug_protocol_smoke` test; independent external public Aura no-Z3 debug contract; and full B Raylib native unit + real X11 mouse/keyboard tests. Verified Git provenance assertions and Cargo `--locked` prevent silently mixing source or modifying lock resolution. **No source tests removed and no production files rewritten**, only X-owned workflow, note and immutable X external Python consumer from X-006 `38a605327c264fa4c2a573b24df6f2e249378300`.
+
+This is a very broad cross-lane **source compatibility and CI gate**, not a main/release guarantee. D4 ownership/ancestor DAG remains unresolved; central PROGRESS/HANDOFF/EVIDENCE remain serialized and untouched; signed result, mutable SSA, source String equality and new XR-08 data types still need producer/consumer contracts as applicable. Quantum #108 is not included. Core #115 Ubuntu24 CI mitigation, governance #114 and Quantum #111 remain independent Drafts, all unmerged.
+
+If CI fails, record exact source/fixture/test failure; no automatic blame, and do not weaken verification, disable tests or modify owner code. All main adoption and release require maintainer signoff.
