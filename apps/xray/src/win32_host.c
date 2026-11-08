@@ -22,7 +22,7 @@
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.6.0-xr06"
+#define XR_VERSION "0.7.0-xr07"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -45,6 +45,17 @@ extern uint32_t xray06_memory_remaining(uint32_t previous,uint32_t growth,uint32
 extern uint32_t xray06_memory_phase(uint32_t previous,uint32_t remaining,uint32_t age,uint32_t evidence_ok);
 extern uint32_t xray06_signal_dimensions(uint32_t cpu,uint32_t read,uint32_t write,uint32_t growth);
 extern uint32_t xray06_evidence_grade(uint32_t comparable,uint32_t raw,uint32_t contiguous);
+extern uint32_t xray07_cpu_threshold(uint32_t policy);
+extern uint32_t xray07_io_threshold(uint32_t policy);
+extern uint32_t xray07_memory_threshold(uint32_t policy);
+extern uint32_t xray07_cpu_min_samples(uint32_t policy);
+extern uint32_t xray07_io_min_samples(uint32_t policy);
+extern uint32_t xray07_cpu_next(uint32_t prev,uint32_t cpu,uint32_t comparable,uint32_t adjacent,uint32_t policy);
+extern uint32_t xray07_io_next(uint32_t prev,uint32_t read,uint32_t write,uint32_t comparable,uint32_t adjacent,uint32_t policy);
+extern uint32_t xray07_memory_gate(uint32_t growth,uint32_t policy);
+extern uint32_t xray07_signal_dimensions(uint32_t cpu,uint32_t read,uint32_t write,uint32_t growth,uint32_t policy);
+extern uint32_t xray07_coincidence_gate(uint32_t dimensions,uint32_t policy);
+extern uint32_t xray07_policy_support(uint32_t sensitive,uint32_t standard,uint32_t strict);
 
 static void utc_now(char *out, size_t size) {
     SYSTEMTIME t;
@@ -375,6 +386,34 @@ static int self_test(void) {
         return 0;
     }
     puts("AURA_CORE_CONTRACT_PASS 24 vectors; source=analysis.aura; backend=c");
+    if(xray07_cpu_threshold(0)!=500 || xray07_cpu_threshold(1)!=700 ||
+       xray07_cpu_threshold(2)!=950 || xray07_io_threshold(0)!=8192 ||
+       xray07_io_threshold(1)!=16384 || xray07_io_threshold(2)!=32768 ||
+       xray07_memory_threshold(0)!=16384 ||
+       xray07_memory_threshold(1)!=32768 ||
+       xray07_memory_threshold(2)!=65536 ||
+       xray07_cpu_min_samples(0)!=2 || xray07_cpu_min_samples(2)!=4 ||
+       xray07_io_min_samples(1)!=1 || xray07_io_min_samples(2)!=2 ||
+       xray07_cpu_next(2,800,1,1,1)!=3 ||
+       xray07_cpu_next(2,800,1,1,2)!=0 ||
+       xray07_cpu_next(4096,950,1,1,2)!=4096 ||
+       xray07_io_next(1,0,20000,1,1,1)!=2 ||
+       xray07_io_next(1,0,20000,1,1,2)!=0 ||
+       xray07_memory_gate(32767,1)!=0 ||
+       xray07_memory_gate(32768,1)!=1 ||
+       xray07_memory_gate(65535,2)!=0 ||
+       xray07_signal_dimensions(800,20000,40000,35000,1)!=3 ||
+       xray07_signal_dimensions(800,20000,40000,35000,2)!=0 ||
+       xray07_coincidence_gate(2,1)!=1 ||
+       xray07_coincidence_gate(2,2)!=0 ||
+       xray07_coincidence_gate(3,2)!=1 ||
+       xray07_policy_support(1,1,1)!=3 ||
+       xray07_policy_support(1,0,1)!=2 ||
+       !xr05_self_test()) {
+        fputs("XRAY XR07 AURA POLICY FAIL: state, thresholds or sensitivity regression\n",stderr);
+        return 0;
+    }
+    puts("AURA_XR07_POLICY_PASS sensitive/standard/strict, all thresholds, recurrence, provenance");
     puts("AURA_XR06_STATE_PASS recurrence, memory phases, signal coincidence, provenance");
     puts("AURA_XR05_CASEBOOK_PASS memory pulse/retraction, CPU streak, transfer surge, gap/reuse isolation");
     puts("XRAY_TEMPORAL_CONTRACT_PASS baseline, rates, reset, PID reuse, unknown identity");
@@ -382,19 +421,20 @@ static int self_test(void) {
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-06 -- Aura Temporal State Engine and Headless Casebook\n"
+    fputs("AURA X-RAY XR-07 -- Compiled Aura Policy Engine and Evidence Witnesses\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
           "  AuraXRay.exe --self-test\n"
           "  AuraXRay.exe --capture --seconds N --out FILE [--report REPORT.html] [--include-names]\n"
           "  AuraXRay.exe --replay CAPTURE.jsonl --report WORKBENCH.html [--include-names]\n"
-          "  AuraXRay.exe --explain CAPTURE.jsonl --out CASES.json\n"
+          "  AuraXRay.exe --explain CAPTURE.jsonl --out CASES.json [--policy sensitive|standard|strict]\n"
+          "  AuraXRay.exe --sweep CAPTURE.jsonl --out SWEEP.json\n"
           "  AuraXRay.exe --compare BASELINE.jsonl CANDIDATE.jsonl --report DIFF.html [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-06: Aura-compiled temporal recurrence, memory phases and evidence grade.\n"
+          "XR-07: three native Aura policy interpretations, source witnesses and policy sweep.\n"
           "Reconstructs source deltas when raw counters are available; legacy /2 remains readable.\n"
           "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
           "Offline casebook/replay/compare and topology; process names are opt-in only.\n"
@@ -403,7 +443,8 @@ static void usage(FILE *out) {
 
 int main(int argc, char **argv) {
     if (argc == 1) { usage(stdout); return 0; }
-    int capture = 0, include_names = 0, mode = 0;
+    int capture = 0, include_names = 0, mode = 0, policy_supplied = 0;
+    unsigned policy = 1; /* standard by default, backward-compatible */
     unsigned seconds = 0;
     const char *out_path = NULL, *report_path = NULL;
     const char *input_path = NULL, *baseline_path = NULL;
@@ -427,6 +468,20 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--explain") == 0 && i+1 < argc && !mode) {
             mode = 3; input_path = argv[++i]; continue;
+        }
+        if (strcmp(argv[i], "--sweep") == 0 && i+1 < argc && !mode) {
+            mode = 4; input_path = argv[++i]; continue;
+        }
+        if (strcmp(argv[i], "--policy") == 0 && i+1 < argc && !policy_supplied) {
+            const char *label=argv[++i];
+            if(strcmp(label,"sensitive")==0)policy=0;
+            else if(strcmp(label,"standard")==0)policy=1;
+            else if(strcmp(label,"strict")==0)policy=2;
+            else {
+                fputs("ERROR policy must be sensitive, standard or strict\n",stderr);
+                return 2;
+            }
+            policy_supplied=1;continue;
         }
         if (strcmp(argv[i], "--compare") == 0 && i+2 < argc && !mode) {
             mode = 2; baseline_path = argv[++i]; input_path = argv[++i]; continue;
@@ -455,6 +510,30 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (mode==4) {
+        if (capture || seconds || report_path || include_names || policy_supplied ||
+            !input_path || !input_path[0] || !out_path || !out_path[0] ||
+            strcmp(out_path,input_path)==0) {
+            fputs("ERROR --sweep requires input and NEW distinct --out; policy is fixed to all three\n",stderr);
+            return 2;
+        }
+        FILE *json=NULL;
+        if(fopen_s(&json,out_path,"wx")!=0 || !json){
+            fputs("ERROR sweep output already exists or cannot be created\n",stderr);
+            return 3;
+        }
+        char diagnostics[240]={0};
+        int ok=xr03_export_sweep(json,input_path,diagnostics,sizeof diagnostics);
+        if(fclose(json)!=0)ok=0;
+        if(!ok){
+            remove(out_path);
+            fprintf(stderr,"XRAY_SWEEP_REJECTED %s\n",diagnostics[0]?diagnostics:"output write failed");
+            return 4;
+        }
+        printf("AURA_XRAY_SWEEP_OK profiles=3 input=%s output=%s engine=aura_policy\n",
+               input_path,out_path);
+        return 0;
+    }
     if (mode==3) {
         if (capture || seconds || report_path || include_names || !input_path ||
             !input_path[0] || !out_path || !out_path[0] ||
@@ -468,7 +547,7 @@ int main(int argc, char **argv) {
             return 3;
         }
         char diagnostics[240]={0};
-        int ok=xr03_export_cases(json,input_path,diagnostics,sizeof diagnostics);
+        int ok=xr03_export_cases(json,input_path,policy,diagnostics,sizeof diagnostics);
         if(fclose(json)!=0)ok=0;
         if(!ok){
             remove(out_path);
@@ -495,7 +574,7 @@ int main(int argc, char **argv) {
         }
         char diagnostics[240]={0};
         int ok=xr03_render(report,input_path,baseline_path,include_names,
-                           diagnostics,sizeof diagnostics);
+                           policy,diagnostics,sizeof diagnostics);
         if (fclose(report)!=0) ok=0;
         if (!ok) {
             remove(report_path);
@@ -507,6 +586,10 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (capture && policy_supplied && !report_path) {
+        fputs("ERROR --policy on a live capture requires an HTML --report\n",stderr);
+        return 2;
+    }
     if (!capture || !out_path || !out_path[0] || !seconds) {
         fputs("ERROR --capture requires --seconds N and --out FILE\n", stderr);
         return 2;
@@ -591,7 +674,7 @@ int main(int argc, char **argv) {
     if (report) {
         char diagnostics[240]={0};
         int ok = xr03_render(report,out_path,NULL,include_names,
-                             diagnostics,sizeof diagnostics);
+                             policy,diagnostics,sizeof diagnostics);
         if (!ok) fprintf(stderr,"XRAY_REPORT_INVALID %s\n",diagnostics);
         if (fclose(report)!=0) ok=0;
         if (!ok) {

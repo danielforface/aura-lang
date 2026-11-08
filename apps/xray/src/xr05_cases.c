@@ -12,7 +12,16 @@
 #include <string.h>
 #include <limits.h>
 
-extern uint32_t xray_burst_gate(uint32_t growth_kib);
+extern uint32_t xray07_cpu_threshold(uint32_t policy);
+extern uint32_t xray07_io_threshold(uint32_t policy);
+extern uint32_t xray07_memory_threshold(uint32_t policy);
+extern uint32_t xray07_cpu_min_samples(uint32_t policy);
+extern uint32_t xray07_io_min_samples(uint32_t policy);
+extern uint32_t xray07_cpu_next(uint32_t prior,uint32_t cpu,uint32_t comparable,uint32_t adjacent,uint32_t policy);
+extern uint32_t xray07_io_next(uint32_t prior,uint32_t read,uint32_t write,uint32_t comparable,uint32_t adjacent,uint32_t policy);
+extern uint32_t xray07_memory_gate(uint32_t growth,uint32_t policy);
+extern uint32_t xray07_signal_dimensions(uint32_t cpu,uint32_t read,uint32_t write,uint32_t growth,uint32_t policy);
+extern uint32_t xray07_coincidence_gate(uint32_t dimensions,uint32_t policy);
 extern uint32_t xray06_cpu_streak_next(uint32_t prior,uint32_t cpu,uint32_t comparable,uint32_t adjacent);
 extern uint32_t xray06_io_streak_next(uint32_t prior,uint32_t read,uint32_t write,uint32_t comparable,uint32_t adjacent);
 extern uint32_t xray06_memory_remaining(uint32_t previous,uint32_t growth,uint32_t reduction);
@@ -50,16 +59,20 @@ static uint8_t grade(uint8_t raw,uint8_t continuity){
 }
 static void flush_run(XR05Casebook *book,uint32_t kind,uint32_t streak,
                       uint32_t start,uint32_t last,uint32_t peak_sample,uint32_t peak,
-                      uint32_t pid,uint64_t creation,uint8_t raw){
-    if(!streak || (kind==2 && streak<3))return;
+                      uint32_t pid,uint64_t creation,uint8_t raw,unsigned policy){
+    if(!streak)return;
+    uint32_t min_samples=kind==2?xray07_cpu_min_samples(policy):
+                                  xray07_io_min_samples(policy);
+    if(streak<min_samples)return;
     XR05Case c={0};
     c.kind=kind;c.pid=pid;c.creation=creation;
     c.start=start;c.end=last;c.peak_sample=peak_sample;c.peak_value=peak;
     c.raw_verified=raw;c.grade=grade(raw,1);
     append(book,c);
 }
-int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
-    if(!book || (!input&&n) || n>XR05_MAX_INPUT)return 0;
+int xr05_build_cases_policy(const XR05Observation *input,size_t n,
+                           unsigned policy,XR05Casebook *book){
+    if(!book || (!input&&n) || n>XR05_MAX_INPUT || policy>2)return 0;
     memset(book,0,sizeof(*book));
     if(!n)return 1;
     XR05Observation *v=(XR05Observation*)malloc(n*sizeof(*v));
@@ -80,8 +93,8 @@ int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
             if(!e->comparable)continue;
             uint32_t pos=0,neg=0;
             if(!magnitude(e->delta_kib,&pos,&neg))continue;
-            uint32_t dimensions=xray06_signal_dimensions(e->cpu,e->read,e->write,pos);
-            if(dimensions>=2){
+            uint32_t dimensions=xray07_signal_dimensions(e->cpu,e->read,e->write,pos,policy);
+            if(xray07_coincidence_gate(dimensions,policy)){
                 XR05Case c={0};
                 c.kind=4;c.pid=e->pid;c.creation=e->creation;
                 c.start=e->sample;c.end=e->sample;c.peak_sample=e->sample;
@@ -89,7 +102,7 @@ int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
                 c.grade=grade(c.raw_verified,1);
                 append(book,c);
             }
-            if(!xray_burst_gate(pos))continue;
+            if(!xray07_memory_gate(pos,policy))continue;
             XR05Case c={0};
             c.kind=1;c.pid=e->pid;c.creation=e->creation;
             c.start=e->sample;c.end=e->sample;c.peak_sample=e->sample;
@@ -143,16 +156,16 @@ int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
             uint32_t comparable=e->comparable?1u:0u;
             uint32_t adjacent=(prior_sample!=0 && prior_sample<UINT32_MAX &&
                                e->sample==prior_sample+1u)?1u:0u;
-            uint32_t next_cpu=xray06_cpu_streak_next(cpu_state,e->cpu,comparable,adjacent);
-            uint32_t next_io=xray06_io_streak_next(io_state,e->read,e->write,comparable,adjacent);
+            uint32_t next_cpu=xray07_cpu_next(cpu_state,e->cpu,comparable,adjacent,policy);
+            uint32_t next_io=xray07_io_next(io_state,e->read,e->write,comparable,adjacent,policy);
             if(cpu_state && (!adjacent || !next_cpu)){
                 flush_run(book,2,cpu_state,cpu_start,cpu_last,cpu_peak_at,cpu_peak,
-                          e->pid,e->creation,cpu_raw);
+                          e->pid,e->creation,cpu_raw,policy);
                 cpu_state=0;cpu_raw=1;
             }
             if(io_state && (!adjacent || !next_io)){
                 flush_run(book,3,io_state,io_start,io_last,io_peak_at,io_peak,
-                          e->pid,e->creation,io_raw);
+                          e->pid,e->creation,io_raw,policy);
                 io_state=0;io_raw=1;
             }
             if(next_cpu){
@@ -171,13 +184,17 @@ int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
             cpu_state=next_cpu;io_state=next_io;prior_sample=e->sample;
         }
         flush_run(book,2,cpu_state,cpu_start,cpu_last,cpu_peak_at,cpu_peak,
-                  v[i].pid,v[i].creation,cpu_raw);
+                  v[i].pid,v[i].creation,cpu_raw,policy);
         flush_run(book,3,io_state,io_start,io_last,io_peak_at,io_peak,
-                  v[i].pid,v[i].creation,io_raw);
+                  v[i].pid,v[i].creation,io_raw,policy);
         i=end;
     }
     free(v);
     return 1;
+}
+
+int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
+    return xr05_build_cases_policy(input,n,1,book);
 }
 
 int xr05_self_test(void){
@@ -224,5 +241,12 @@ int xr05_self_test(void){
            c->peak_value==20000)transfer++;
         if(c->pid==44 && c->kind==4 && c->start==2 && c->peak_value==3)compound++;
     }
-    return pulse==1 && pending==1 && cpu==1 && transfer==1 && compound==1;
+    if(pulse!=1 || pending!=1 || cpu!=1 || transfer!=1 || compound!=1)return 0;
+    XR05Casebook sensitive,strict;
+    if(!xr05_build_cases_policy(v,sizeof(v)/sizeof(v[0]),0,&sensitive) ||
+       !xr05_build_cases_policy(v,sizeof(v)/sizeof(v[0]),2,&strict) ||
+       sensitive.count<=book.count || strict.count>=book.count ||
+       strict.truncated || sensitive.truncated)return 0;
+    if(xr05_build_cases_policy(v,sizeof(v)/sizeof(v[0]),3,&strict))return 0;
+    return 1;
 }

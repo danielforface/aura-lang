@@ -1,6 +1,6 @@
 # AURA X-RAY XR-03 — multidimensional offline evidence workbench
 
-**Version 0.6.0-xr06 · Windows x64 · unsigned experimental · local only**
+**Version 0.7.0-xr07 · Windows x64 · unsigned experimental · local only**
 
 XR-03 evolves the Windows process analyzer into an **importable, comparable, self-contained investigation system**. It is a real Windows EXE built with the repository's Aura C backend. Nine application-domain functions (normalization, rate calculations, activity scoring and CPU/IO/memory impact) are authored in Aura Lang and generated directly from apps/xray/src/analysis.aura. Win32 API collection, 64-bit identity checks and bounded storage are handled in C, not falsely described as fully Aura. The OS adapter does not modify process state.
 
@@ -62,7 +62,7 @@ Product ownership is limited to apps/xray/ and its scoped Windows workflow; othe
 
 User hardware verified the previous product with 2,123 process records, 1,901 complete rate vectors, ten full samples over 10.015 seconds, and no reported collector errors. XR-02 Replay had 2,195 records, 1,966 vectors and 10.016 seconds. Independent Chromium tests of Live/Replay/Compare HTML found working interactions and no JS exceptions or external requests. These results do not demonstrate better overall performance between different workload snapshots.
 
-**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.6.0-xr06. Parent PID is a **hint**, not an independently verified ancestral identity.
+**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.7.0-xr07. Parent PID is a **hint**, not an independently verified ancestral identity.
 
 **Import/replay evidence:** In XR-04 captures the offline importer rechecks every complete process score against the original CPU/IO raw counters, exact monotonic inter-sample clock intervals, identity and working-set deltas. Old XR-02/XR-03 captures lack those counters and continue to open with an explicitly marked **legacy score-only validation**. This consistency check is NOT a signature and cannot prove that adversarially rewritten captures are authentic. Data loss, counter rollback and unsupported input are not quietly turned into zero.
 
@@ -197,3 +197,75 @@ trusted observation grouping**; the next-state and provenance decisions
 come from Aura. Full language-native process stream storage, typed
 record ABI and native UI require separate compiler/runtime work and are
 not claimed to exist yet.
+
+## XR-07 — Aura Evidence Policy Engine + portable source witnesses
+
+**Production behavior:** Every policy decision is now compiled from **31 Aura
+cells** in `src/analysis.aura`, including 11 XR-07 cells for all policy
+thresholds, CPU/I/O recurrence, simultaneous pressure, source decision
+boundaries and support counts. The C code is still the bounded Windows/JSON
+adapter and orchestrates identity-safe observation windows; no false
+whole-program Aura claim is made. ABI remains the already qualified C
+backend for unsigned `u32` results. There is NO compiler modification
+or cross-agent ABI request in this candidate.
+
+### Three transparent, compiled Aura policies
+
+| Policy | CPU millicores (one core) | Consecutive CPU | Process I/O KiB/s | Consecutive I/O | Working-set growth KiB | Co-occurring dimensions |
+|---|---:|---:|---:|---:|---:|---:|
+| sensitive | 500 | 2 | 8192 | 1 | 16384 | 2 |
+| standard | 700 | 3 | 16384 | 1 | 32768 | 2 |
+| strict | 950 | 4 | 32768 | 2 | 65536 | 3 |
+
+All values are returned by the Aura-compiled code, not independently
+implemented in C. Memory retraction remains >=50% of the observed burst
+within up to three consecutive comparable samples. **Standard** deliberately
+matches XR-06 exactly, including the original user evidence: PID 7140
+memory S2-S3 / CPU S5-S10; PID 13408 write transfer S7. Alternate
+policies explore **threshold sensitivity**, not different source truth.
+Sensitive findings are not assumed true; strict nonfindings are not
+evidence that a workload is healthy.
+
+### New user-facing commands (Windows PowerShell)
+
+    .\AuraXRay.exe --explain capture-xr04.jsonl --out xr07-standard.json
+    .\AuraXRay.exe --explain capture-xr04.jsonl --policy strict --out xr07-strict.json
+    .\AuraXRay.exe --replay capture-xr04.jsonl --policy sensitive --report xr07-sensitive.html
+    .\AuraXRay.exe --sweep capture-xr04.jsonl --out xr07-policy-sweep.json
+
+The new **`--sweep`** parses/validates the capture *once* and runs
+three independent compiled Aura policy interpretations over the same
+verified observations. Returns `aura.xray.policy_sweep/1`: exact build
+provenance, each threshold vector, independent case lists, and
+`policy_support` for cases seen as the same kind, same PID+creation
+identity, and overlapping sample windows in the three policies. Support
+is a **count 1-3**, NOT a calibrated confidence, cryptographic proof
+or causal judgement.
+
+The existing `--explain` now emits additive `aura.xray.casebook/1`
+fields: selected `policy`, Aura-derived `thresholds`, and for each
+case a bounded `witnesses` list. Each witness contains the actual
+same-identity source observation and original sample number with CPU,
+I/O, memory-delta, score, and source-verification status. Unknown
+baseline values are JSON null, NOT fabricated zero. The `--replay`
+HTML explicitly displays selected policy thresholds so findings cannot
+be mistaken for policy-independent claims. No new network use or process
+privileges are introduced.
+
+### Boundaries / acceptance
+
+The Windows collector is Win32/C, bounded strict source parser is C,
+policy orchestrator and JSON writer are C, and browser UI is HTML/JS.
+The classifications, recurrence transitions, compound predicates,
+thresholds and cross-policy support values execute AURA-generated
+native functions. Full native Aura file I/O, record layout, dynamic
+collection and Windows GUI still await reviewed compiler/runtime
+contracts with Agent A and X; this release does **not** pretend otherwise.
+
+Limits: 30 capture samples, 16k case input records, 512 cases per
+interpretation (fail closed on overflow for headless export), and bounded
+witness rows. All local report paths must be *new* and names are always
+redacted in JSON. The strict counter replay detects internal
+inconsistency, not cryptographically authenticated capture origin.
+Policy output cannot diagnose malware, a memory leak, root cause, or
+physical disk throughput. Private user files are never included in CI.

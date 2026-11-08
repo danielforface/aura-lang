@@ -24,5 +24,8 @@ typedef struct {
     uint32_t count,truncated;
 } XR05Casebook;
 int xr05_build_cases(const XR05Observation *src,size_t n,XR05Casebook *out);
+/* 0=sensitive, 1=standard, 2=strict; interpretation thresholds compiled Aura. */
+int xr05_build_cases_policy(const XR05Observation *src,size_t n,
+                          unsigned policy,XR05Casebook *out);
 int xr05_self_test(void);
 #endif

@@ -323,3 +323,41 @@ No automatic Merge, no shared compiler or other-agent path mutation.
 in the offline UI; no native Lumina UI, ETW, malware/root-cause label,
 systemwide physical RAM or device I/O inference. Exact provenance is from
 source observations, not from an invented runtime proof.
+
+## 26. XR-07 / Native Aura policy and proof-carrying observation explanations
+
+**Problem:** XR-06's hard-coded source gates yield the same three user
+cases, but without exposing how their conclusions change under
+alternative, transparent thresholds. The JSON casebook omits the source
+samples needed to independently review each case; manual reconciliation
+requires separately locating events in HTML. A stability claim without
+matched source witnesses would be unscientific.
+
+**Production change (D0 product only, D1 read-only backend):** 11 new
+Aura domain functions control threshold selection and three sensitivity
+models, recurrence, coincident-signal adjudication and per-case
+cross-policy support (total 31 Aura cells). C orchestrates safe PID +
+creation identity and sample windows, as a platform/ABI adapter. Same
+validated capture is parsed once for all interpretations; cannot change
+source counters or silently repair malformed JSONL. JSON adds each
+case's original sampled witnesses and policy thresholds, and introduces
+`aura.xray.policy_sweep/1`. HTML now labels Aura policy. Standard
+version is XR-06 compatible. No claim of native Aura OS or HTML.
+
+**Real acceptance:** user XR-06 casebook + matching HTML confirmed 2,153
+process records, 1,928 exact source rechecks and exactly three cases
+(PID7140 memory pulse/retraction S2-3, CPU S5-10; PID13408 IO S7).
+This is true user-hardware XR-06 replay acceptance, not evidence yet of
+XR-07 acceptance. XR-07 native Windows must pass exact SHA CI:
+31 generated C symbols, linked functional self-test with all three
+policies, live collector, strict import, standard explain, strict
+explain, sensitive HTML, 3-policy sweep, tampered-source fail-closed,
+existing-path rejection, no private names, and artifact hash/PE check.
+External laptop test remains pending.
+
+**Scientific interpretation:** “policy support” counts overlapping
+same-identity case patterns across three deliberately different
+thresholds. It is not statistical confidence or a causal claim;
+non-triggering is not an assurance that no anomaly exists. No
+autonomous merge, no other agent-owned source changes or shared ABI
+modification.

@@ -124,3 +124,66 @@ cell xray06_signal_dimensions(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32,
 # Input bits are proven 0/1 by the C evidence adapter.
 cell xray06_evidence_grade(comparable: u32, raw_verified: u32, contiguous: u32):
     yield comparable * (1 + raw_verified * (1 + contiguous))
+
+
+# XR-07 / AURA POLICY ENGINE — the user can test how conclusions depend on
+# transparent thresholds WITHOUT silently changing source measurements.
+# Policy 0=sensitive, 1=standard (XR-06 compatible), 2=strict.
+# Adapter proves policy <=2, previous <=4096, comparable/adjacent are bits.
+# All thresholds, streak gates and co-signal decisions run in Aura.
+# No safety/security verdict or causality is inferred from the policy.
+
+cell xray07_cpu_threshold(policy: u32):
+    yield 500 + (200 * policy) + (50 * (policy / 2))
+
+cell xray07_io_threshold(policy: u32):
+    yield 8192 * (1 + policy + (policy / 2))
+
+cell xray07_memory_threshold(policy: u32):
+    yield 16384 * (1 + policy + (policy / 2))
+
+cell xray07_cpu_min_samples(policy: u32):
+    yield 2 + policy
+
+cell xray07_io_min_samples(policy: u32):
+    yield 1 + (policy / 2)
+
+cell xray07_cpu_next(previous: u32, cpu_milli: u32, comparable: u32, adjacent: u32, policy: u32):
+    val threshold: u32 = 500 + (200 * policy) + (50 * (policy / 2))
+    val active: u32 = 1 - (1 / ((cpu_milli / threshold) + 1))
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * active
+
+cell xray07_io_next(previous: u32, read_kib_s: u32, write_kib_s: u32, comparable: u32, adjacent: u32, policy: u32):
+    val threshold: u32 = 8192 * (1 + policy + (policy / 2))
+    val r: u32 = 1 - (1 / ((read_kib_s / threshold) + 1))
+    val w: u32 = 1 - (1 / ((write_kib_s / threshold) + 1))
+    val active: u32 = r + w - (r * w)
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * active
+
+cell xray07_memory_gate(growth_kib: u32, policy: u32):
+    val threshold: u32 = 16384 * (1 + policy + (policy / 2))
+    yield 1 - (1 / ((growth_kib / threshold) + 1))
+
+cell xray07_signal_dimensions(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_kib: u32, policy: u32):
+    val cpu_min: u32 = 500 + (200 * policy) + (50 * (policy / 2))
+    val io_min: u32 = 8192 * (1 + policy + (policy / 2))
+    val memory_min: u32 = 16384 * (1 + policy + (policy / 2))
+    val c: u32 = 1 - (1 / ((cpu_milli / cpu_min) + 1))
+    val r: u32 = 1 - (1 / ((read_kib_s / io_min) + 1))
+    val w: u32 = 1 - (1 / ((write_kib_s / io_min) + 1))
+    val io: u32 = r + w - (r * w)
+    val m: u32 = 1 - (1 / ((growth_kib / memory_min) + 1))
+    yield c + io + m
+
+# For strict: all THREE source dimensions must concur in the same process
+# observation. Other policies require at least TWO; coincidence != causation.
+cell xray07_coincidence_gate(dimensions: u32, policy: u32):
+    val threshold: u32 = 2 + (policy / 2)
+    yield 1 - (1 / ((dimensions / threshold) + 1))
+
+
+# Count how many independently rerun policy profiles contain an overlapping
+# same-identity, same-kind observation. NOT a confidence probability.
+# Adapter proves each support bit is zero or one.
+cell xray07_policy_support(sensitive: u32, standard: u32, strict: u32):
+    yield sensitive + standard + strict

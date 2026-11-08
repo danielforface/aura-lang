@@ -59,7 +59,7 @@ jobs:
           if (!(Test-Path "build/analysis/module.c")) { throw "No generated module.c" }
           if (!(Test-Path "build/analysis/aura_runtime.h")) { throw "No generated aura_runtime.h" }
           $generated = Get-Content "build/analysis/module.c" -Raw
-          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact", "xray_burst_gate", "xray_recovery_gate", "xray_cpu_hot_gate", "xray_cpu_streak_gate", "xray_transfer_surge_gate", "xray06_cpu_streak_next", "xray06_io_streak_next", "xray06_memory_remaining", "xray06_memory_phase", "xray06_signal_dimensions", "xray06_evidence_grade")) {
+          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact", "xray_burst_gate", "xray_recovery_gate", "xray_cpu_hot_gate", "xray_cpu_streak_gate", "xray_transfer_surge_gate", "xray06_cpu_streak_next", "xray06_io_streak_next", "xray06_memory_remaining", "xray06_memory_phase", "xray06_signal_dimensions", "xray06_evidence_grade", "xray07_cpu_threshold", "xray07_io_threshold", "xray07_memory_threshold", "xray07_cpu_min_samples", "xray07_io_min_samples", "xray07_cpu_next", "xray07_io_next", "xray07_memory_gate", "xray07_signal_dimensions", "xray07_coincidence_gate", "xray07_policy_support")) {
             $signature = '(?m)\buint32_t\s+' + [regex]::Escape($fn) + '\s*\('
             if (![regex]::IsMatch($generated, $signature)) {
               throw "Aura codegen ABI regression: $fn must return real uint32_t, not void or prototype"
@@ -92,8 +92,8 @@ jobs:
       - name: Execute generated Aura semantic vectors and real Windows capture
         run: |
           $selfTest = (& "dist/AuraXRay.exe" --self-test | Out-String)
-          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS')) {
-             throw "XR06 compiled-Aura temporal state contract failed"
+          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS') -or !$selfTest.Contains('AURA_XR07_POLICY_PASS')) {
+             throw "XR07 compiled-Aura policy and state contract failed"
           }
           Write-Host $selfTest
           $version = (& "dist/AuraXRay.exe" --version | Out-String).Trim()
@@ -246,6 +246,67 @@ jobs:
           if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-tampered-casebook.json")) {
              throw "XR06 accepted raw-counter tampering or left invalid JSON"
           }
+          # XR-07: the same immutable, exact source is evaluated by three real
+          # Aura policy models. This tests the observed CLI, not just C fixtures.
+          & "dist/AuraXRay.exe" --sweep "dist/ci-capture.jsonl" --out "dist/ci-policy-sweep.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 full native policy sweep failed" }
+          $sweep = Get-Content "dist/ci-policy-sweep.json" -Raw | ConvertFrom-Json
+          $profiles = @($sweep.profiles)
+          if ($sweep.schema -ne 'aura.xray.policy_sweep/1' -or
+              $sweep.source_build -ne $env:GITHUB_SHA -or
+              $sweep.observations -ne $p.Count -or
+              $profiles.Count -ne 3 -or
+              $profiles[0].policy -ne 'sensitive' -or
+              $profiles[1].policy -ne 'standard' -or
+              $profiles[2].policy -ne 'strict') {
+              throw "XR07 source metadata or three policy profiles malformed"
+          }
+          if ($profiles[0].thresholds.cpu_millicores -ne 500 -or
+              $profiles[1].thresholds.cpu_millicores -ne 700 -or
+              $profiles[2].thresholds.cpu_millicores -ne 950 -or
+              $profiles[2].thresholds.transfer_kib_s -ne 32768 -or
+              $profiles[2].thresholds.memory_growth_kib -ne 65536) {
+              throw "XR07 policy sweep does not report compiled Aura thresholds"
+          }
+          foreach($profile in $profiles){
+              if($profile.case_count -ne @($profile.cases).Count) {
+                 throw "XR07 case count is not the count of generated cases"
+              }
+              foreach($c in $profile.cases){
+                  if ($null -eq $c.witnesses -or $c.policy_support -lt 1 -or
+                      $c.policy_support -gt 3) {
+                      throw "XR07 policy case missing source witnesses or support count"
+                  }
+              }
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --policy strict --out "dist/ci-strict-casebook.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 strict explain failed" }
+          $strict = Get-Content "dist/ci-strict-casebook.json" -Raw | ConvertFrom-Json
+          if ($strict.policy -ne 'strict' -or $strict.thresholds.cpu_millicores -ne 950) {
+              throw "XR07 --explain did not use the chosen Aura policy"
+          }
+          & "dist/AuraXRay.exe" --replay "dist/ci-capture.jsonl" --policy sensitive --report "dist/ci-sensitive.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 sensitive HTML replay failed" }
+          $sensitiveHtml = Get-Content "dist/ci-sensitive.html" -Raw
+          if (!$sensitiveHtml.Contains('"policy":"sensitive"') -or
+              !$sensitiveHtml.Contains('id="caseRows"')) {
+              throw "XR07 report did not preserve policy provenance"
+          }
+          & "dist/AuraXRay.exe" --sweep "dist/ci-capture.jsonl" --out "dist/ci-policy-sweep.json" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "XR07 sweep overwrote existing output" }
+          & "dist/AuraXRay.exe" --sweep "dist/ci-rate-tampered.jsonl" --out "dist/ci-fake-sweep.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-fake-sweep.json")) {
+              throw "XR07 sweep accepted tampered input"
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --policy unknown --out "dist/ci-invalid-policy.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-invalid-policy.json")) {
+              throw "XR07 allowed unsupported policy"
+          }
+          $sweepRaw=Get-Content "dist/ci-policy-sweep.json" -Raw
+          if($sweepRaw -match '(?i)(process_name|cmdline|path_to_exe|https?://)'){
+              throw "XR07 sweep leaks private process metadata or external links"
+          }
+          Write-Host "XR07_AURA_POLICY_SWEEP_PASS three compiled profiles, source witnesses, replay, bad-input rejection"
           Write-Host "XR06_HEADLESS_CASEBOOK_PASS schema, source counters, privacy, no-overwrite, tamper rejection"
           Write-Host "XR04_RAW_COUNTER_ORACLE_PASS full rates, topology, tampered-rate rejection"
           Write-Host "XR03_REPLAY_COMPARE_ORACLE_PASS replay, comparison, tamper rejection, invalid JSON rejection"
@@ -276,7 +337,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.6.0-xr06"
+            version = "0.7.0-xr07"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
@@ -289,8 +350,8 @@ jobs:
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
-          Copy-Item "dist/ci-report.html" "dist/XR06-EXAMPLE-REPORT.html"
-          Copy-Item "dist/ci-comparison.html" "dist/XR06-EXAMPLE-COMPARISON.html"
+          Copy-Item "dist/ci-report.html" "dist/XR07-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-comparison.html" "dist/XR07-EXAMPLE-COMPARISON.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -302,8 +363,10 @@ jobs:
             dist/BUILD-MANIFEST.json
             dist/README.txt
             dist/ci-casebook.json
-            dist/XR06-EXAMPLE-REPORT.html
-            dist/XR06-EXAMPLE-COMPARISON.html
+            dist/ci-policy-sweep.json
+            dist/ci-strict-casebook.json
+            dist/XR07-EXAMPLE-REPORT.html
+            dist/XR07-EXAMPLE-COMPARISON.html
           retention-days: 30
           if-no-files-found: error
 

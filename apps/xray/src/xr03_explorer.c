@@ -19,6 +19,12 @@
 extern uint32_t xray_cpu_impact(uint32_t);
 extern uint32_t xray_io_impact(uint32_t,uint32_t);
 extern uint32_t xray_memory_impact(uint32_t);
+extern uint32_t xray07_cpu_threshold(uint32_t);
+extern uint32_t xray07_io_threshold(uint32_t);
+extern uint32_t xray07_memory_threshold(uint32_t);
+extern uint32_t xray07_cpu_min_samples(uint32_t);
+extern uint32_t xray07_io_min_samples(uint32_t);
+extern uint32_t xray07_policy_support(uint32_t,uint32_t,uint32_t);
 
 #define XR3_MAX_LINES 135000u
 #define XR3_MAX_EVENTS 16000u
@@ -55,6 +61,7 @@ typedef struct {
     unsigned kept, truncated, actual_samples;
     uint64_t source_rate_verified;
     unsigned raw_precision;
+    unsigned policy;
     XR05Casebook *casebook;
 } XR3Run;
 
@@ -194,7 +201,8 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
             }
             run->raw_precision=(strncmp(run->version,"0.4.",4)==0 ||
                                 strncmp(run->version,"0.5.",4)==0 ||
-                                strncmp(run->version,"0.6.",4)==0);
+                                strncmp(run->version,"0.6.",4)==0 ||
+                                strncmp(run->version,"0.7.",4)==0);
             if(run->raw_precision){
                 raw_prev=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
                 raw_curr=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
@@ -450,7 +458,9 @@ static void jsonquote(FILE *f,const char *s){
 /* Cases are assembled AFTER full capture validation and do not mutate or
  * reinterpret the source JSONL. No unscored or unverified samples are
  * substituted. The actual decision gates are Aura-generated functions. */
-static int xr3_prepare_cases(XR3Run *r){
+static int xr3_prepare_cases(XR3Run *r,unsigned policy){
+    if(policy>2)return 0;
+    r->policy=policy;
     r->casebook=(XR05Casebook*)calloc(1,sizeof(*r->casebook));
     if(!r->casebook)return 0;
     XR05Observation *v=(XR05Observation*)calloc(r->kept?r->kept:1,sizeof(*v));
@@ -468,7 +478,7 @@ static int xr3_prepare_cases(XR3Run *r){
         v[i].write=e->write;
         v[i].delta_kib=e->delta_kib;
     }
-    int ok=xr05_build_cases(v,r->kept,r->casebook);
+    int ok=xr05_build_cases_policy(v,r->kept,policy,r->casebook);
     free(v);
     return ok;
 }
@@ -478,14 +488,20 @@ static void emitrun(FILE *f,const XR3Run *r){
               "\"derived\":%llu,\"denied\":%llu,\"failed\":%llu,"
               "\"errors\":%llu,\"unknown\":%llu,\"reuse\":%llu,"
               "\"reset\":%llu,\"capacity\":%llu,\"truncated\":%u,"
-              "\"rawPrecision\":%u,\"rateVerified\":%llu,\"build\":",
+              "\"rawPrecision\":%u,\"rateVerified\":%llu,"
+              "\"policy\":\"%s\",\"policyThresholds\":{\"cpu\":%u,\"io\":%u,"
+              "\"memory\":%u,\"cpuMinSamples\":%u,\"ioMinSamples\":%u},\"build\":",
               r->seconds,(unsigned long long)r->elapsed_ms,
               (unsigned long long)r->records,(unsigned long long)r->derived,
               (unsigned long long)r->denied,(unsigned long long)r->open_failed,
               (unsigned long long)r->errors,(unsigned long long)r->unknown,
               (unsigned long long)r->reuse,(unsigned long long)r->reset,
               (unsigned long long)r->capacity,r->truncated,r->raw_precision,
-              (unsigned long long)r->source_rate_verified);
+              (unsigned long long)r->source_rate_verified,
+              r->policy==0?"sensitive":r->policy==1?"standard":"strict",
+              xray07_cpu_threshold(r->policy),xray07_io_threshold(r->policy),
+              xray07_memory_threshold(r->policy),
+              xray07_cpu_min_samples(r->policy),xray07_io_min_samples(r->policy));
     jsonquote(f,r->sha);
     fputs(",\"samples\":[",f);
     for(unsigned i=1;i<=r->samples;i++){
@@ -527,8 +543,8 @@ static void emitrun(FILE *f,const XR3Run *r){
 }
 
 int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
-                int include_names,char *error,size_t cap){
-    if(!out||!candidate_path){xr3_error(error,cap,"missing output or input",0);return 0;}
+                int include_names,unsigned policy,char *error,size_t cap){
+    if(!out||!candidate_path||policy>2){xr3_error(error,cap,"missing input or unsupported policy",0);return 0;}
     XR3Run *candidate=(XR3Run*)calloc(1,sizeof(XR3Run));
     XR3Run *baseline=baseline_path?(XR3Run*)calloc(1,sizeof(XR3Run)):NULL;
     if(!candidate||(baseline_path&&!baseline)){
@@ -536,8 +552,8 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
     }
     int ok=parsefile(candidate_path,candidate,include_names,error,cap);
     if(ok&&baseline)ok=parsefile(baseline_path,baseline,include_names,error,cap);
-    if(ok)ok=xr3_prepare_cases(candidate);
-    if(ok&&baseline)ok=xr3_prepare_cases(baseline);
+    if(ok)ok=xr3_prepare_cases(candidate,policy);
+    if(ok&&baseline)ok=xr3_prepare_cases(baseline,policy);
     if(!ok){
         if(error&&cap&&!error[0])xr3_error(error,cap,"failed to build bounded evidence cases",0);
         free(candidate->casebook);free(candidate->events);free(candidate);
@@ -578,7 +594,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           ".alert{border-left:2px solid var(--amber);padding:10px 14px;margin:9px 0;background:#192330;border-radius:5px;font-size:12px}"
           ".footer{padding-top:25px;margin-top:40px;border-top:1px solid var(--edge);color:var(--muted);font-size:12px}"
           ".hidden{display:none!important}</style></head><body><div class=\"frame\">"
-          "<header><div class=\"row\"><div><div class=\"brand\">AURA / COMPILED TEMPORAL ENGINE / XR-06</div>"
+          "<header><div class=\"row\"><div><div class=\"brand\">AURA / NATIVE POLICY & EVIDENCE ENGINE / XR-07</div>"
           "<h1>X-RAY <b>workbench</b></h1>"
           "<p>Temporal evidence you can interrogate. Identical sample times for each metric. Source: Windows Toolhelp32 / PSAPI / GetProcessTimes.</p>"
           "</div><div><span class=\"tag\">OFFLINE · VERIFIED INPUT</span><p class=\"small\">NO NETWORK · NO TELEMETRY UPLOAD</p></div></div>"
@@ -648,7 +664,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"panel\" style=\"margin-top:16px\"><div class=\"k\">CURRENT vs BASELINE</div><div id=\"compareCards\"></div>"
           "<p class=\"small\">Comparisons use aggregate observed distributions, not presumed process identity across captures or causal conclusions.</p>"
           "</div></aside></div>"
-          "<div class=\"footer\">AURA ENGINE: twenty compiled u32 cells, including six XR-06 temporal state machines. "
+          "<div class=\"footer\">AURA ENGINE: thirty-one compiled u32 cells. Policy interpretation, recurrence, coincidence and evidence grades are Aura-compiled. "
           "Input validation is local and fail-closed; no external libraries. SOURCE: WINDOWS · NO NETWORK · NO EXTERNAL ASSETS."
           "<p>Build provenance is embedded in the capture, not silently inferred from this report.</p></div></div>"
           "<script>'use strict';const candidate=",out);
@@ -672,6 +688,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "candidate.rawPrecision?'Recomputed from raw Windows counters':'Score consistency only; raw counters unavailable'),"
           "tile('Process open failures',n(candidate.failed),'Denied '+candidate.denied),"
           "tile('Truncated UI rows',n(candidate.truncated),'All input rows verified'),"
+          "tile('Aura policy',candidate.policy,'CPU ≥'+n(candidate.policyThresholds.cpu)+'m · IO ≥'+n(candidate.policyThresholds.io)+'KiB/s'),"
           "tile('Aura evidence cases',n(candidate.cases.length),"
           "'Patterns with exact process identity · '+n(candidate.caseTruncated)+' beyond case budget')); "
           "$('comparisonLegend').hidden=!baseline;$('runSelect').options[1].disabled=!baseline;"
@@ -768,8 +785,10 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "const subtitle=c[0]===1?(memoryPhases[c[9]]+"
           "(c[9]===2?'; observed net retraction '+n(c[7])+' KiB':'')+"
           "'. This does not establish a leak or its absence.'):"
-          "c[0]===2?'Aura recurrence counted >=3 consecutive CPU-hot samples.':"
-          "c[0]===3?'One Aura recurrence episode reached >=16,384 KiB/s. May include non-disk I/O.':"
+          "c[0]===2?'Aura recurrence counted ≥'+n(r.policyThresholds.cpuMinSamples)+"
+          "' consecutive samples at ≥'+n(r.policyThresholds.cpu)+' millicores.':"
+          "c[0]===3?'Aura recurrence measured transfer ≥'+n(r.policyThresholds.io)+"
+          "' KiB/s over ≥'+n(r.policyThresholds.ioMinSamples)+' consecutive sample(s); not necessarily disk.':"
           "'At least two measured dimensions coincided in one complete sample; no causal inference.';"
           "const grades=['unknown','complete vector','raw-counter reverified',"
           "'raw-counter verified with uninterrupted episode'];"
@@ -792,7 +811,9 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "const kind=Number($('caseType').value)||0,q=$('caseFilter').value.trim();"
           "const cases=(r.cases||[]).filter(c=>(!kind||c[0]===kind)&&(!q||String(c[1]).includes(q)));"
           "$('caseCount').textContent=n(cases.length)+' matching case(s) · '+n(r.cases.length)+"
-          "' bounded cases · '+n(r.caseTruncated||0)+' additional cases omitted';"
+          "' bounded cases · '+n(r.caseTruncated||0)+' additional cases omitted · '+r.policy.toUpperCase()+"
+          "' AURA POLICY (CPU ≥'+n(r.policyThresholds.cpu)+'m / transfer ≥'+"
+          "n(r.policyThresholds.io)+'KiB/s / memory ≥'+n(r.policyThresholds.memory)+'KiB)';"
           "const rows=$('caseRows');rows.replaceChildren();"
           "for(const c of cases.slice(0,200)){const tr=document.createElement('tr');"
           "const values=['PID '+c[1],caseNames[c[0]],'S'+c[3]+(c[4]!==c[3]?'–S'+c[4]:''),"
@@ -830,14 +851,84 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
  * casebook as replay. No process names or raw private counters are exported.
  * A partial casebook is rejected, rather than claimed comprehensive.
  */
-int xr03_export_cases(FILE *out,const char *path,char *error,size_t cap){
-    if(!out || !path || !path[0]){
+
+/* One source-anchored, privacy-safe case explanation. Witnesses are original
+ * fully validated observations, never inferred counter values. */
+static void xr3_write_case(FILE *out,const XR3Run *r,const XR05Case *c,
+                           int policy_support){
+    const char *kind=c->kind==1?"memory_pulse":
+                     c->kind==2?"cpu_streak":
+                     c->kind==3?"io_transfer_episode":"coincident_signals";
+    const char *phase=c->kind!=1?"not_applicable":
+                      c->phase==1?"pending":
+                      c->phase==2?"retracted":
+                      c->phase==3?"window_expired":
+                      c->phase==4?"interrupted":"unknown";
+    fprintf(out,"{\"kind\":\"%s\",\"identity\":{\"pid\":%u,"
+                "\"creation_filetime\":\"%llu\"},"
+                "\"sample_start\":%u,\"sample_end\":%u,\"peak_sample\":%u,"
+                "\"peak_value\":%u,\"retracted_kib\":%u,\"phase\":\"%s\","
+                "\"raw_verified\":%s,\"evidence_grade\":%u",
+            kind,c->pid,(unsigned long long)c->creation,
+            c->start,c->end,c->peak_sample,c->peak_value,
+            c->recovered_kib,phase,c->raw_verified?"true":"false",
+            (unsigned)c->grade);
+    if(policy_support>=0)fprintf(out,",\"policy_support\":%d",policy_support);
+    fputs(",\"witnesses\":[",out);
+    int witness=0,truncated=0;
+    uint32_t lo=c->start>1?c->start-1:c->start;
+    uint32_t hi=c->end<r->samples?c->end+1:c->end;
+    for(unsigned k=0;k<r->kept;k++){
+        const XR3Event *e=&r->events[k];
+        if(e->pid!=c->pid||e->creation!=c->creation||
+           e->sample<lo||e->sample>hi)continue;
+        if(witness>=32){truncated=1;continue;}
+        if(witness++)fputc(',',out);
+        fprintf(out,"{\"sample\":%u,\"activity_score\":",e->sample);
+        if(e->has_score)fprintf(out,"%u",e->score);else fputs("null",out);
+        fputs(",\"cpu_millicores\":",out);
+        if(e->has_score)fprintf(out,"%u",e->cpu);else fputs("null",out);
+        fputs(",\"read_kib_s\":",out);
+        if(e->has_score)fprintf(out,"%u",e->read);else fputs("null",out);
+        fputs(",\"write_kib_s\":",out);
+        if(e->has_score)fprintf(out,"%u",e->write);else fputs("null",out);
+        fputs(",\"working_set_delta_kib\":",out);
+        if(e->has_score)fprintf(out,"%lld",(long long)e->delta_kib);
+        else fputs("null",out);
+        fprintf(out,",\"raw_verified\":%s,\"quality\":",
+                e->rate_reverified?"true":"false");
+        jsonquote(out,e->delta_quality);
+        fputc('}',out);
+    }
+    fprintf(out,"],\"witness_truncated\":%s}",truncated?"true":"false");
+}
+static void xr3_write_policy(FILE *out,unsigned p){
+    fprintf(out,"\"policy\":\"%s\",\"thresholds\":{\"cpu_millicores\":%u,"
+                "\"transfer_kib_s\":%u,\"memory_growth_kib\":%u,"
+                "\"cpu_consecutive_samples\":%u,\"io_consecutive_samples\":%u}",
+            p==0?"sensitive":p==1?"standard":"strict",
+            xray07_cpu_threshold(p),xray07_io_threshold(p),
+            xray07_memory_threshold(p),
+            xray07_cpu_min_samples(p),xray07_io_min_samples(p));
+}
+static int xr3_case_same_pattern(const XR05Case *c,const XR05Casebook *book){
+    for(unsigned k=0;k<book->count;k++){
+        const XR05Case *other=&book->items[k];
+        if(other->kind==c->kind&&other->pid==c->pid&&
+           other->creation==c->creation&&
+           c->start<=other->end&&other->start<=c->end)return 1;
+    }
+    return 0;
+}
+
+int xr03_export_cases(FILE *out,const char *path,unsigned policy,char *error,size_t cap){
+    if(!out || !path || !path[0] || policy>2){
         xr3_error(error,cap,"missing casebook output or input",0);return 0;
     }
     XR3Run *r=(XR3Run*)calloc(1,sizeof(*r));
     if(!r){xr3_error(error,cap,"casebook allocation failed",0);return 0;}
     int ok=parsefile(path,r,0,error,cap);
-    if(ok)ok=xr3_prepare_cases(r);
+    if(ok)ok=xr3_prepare_cases(r,policy);
     if(ok && (r->truncated || r->casebook->truncated || r->kept!=r->records)){
         xr3_error(error,cap,"casebook record capacity insufficient for complete export",0);
         ok=0;
@@ -849,8 +940,9 @@ int xr03_export_cases(FILE *out,const char *path,char *error,size_t cap){
     fprintf(out,"{\"schema\":\"aura.xray.casebook/1\",\"source_schema\":\"aura.xray.capture/2\","
                 "\"source_build\":");
     jsonquote(out,r->sha);
-    fprintf(out,",\"engine\":\"aura-compiled-state-machine/1\","
-                "\"seconds\":%u,\"elapsed_ms\":%llu,\"observations\":%llu,"
+    fputs(",\"engine\":\"aura-compiled-policy-state-machine/2\",",out);
+    xr3_write_policy(out,policy);
+    fprintf(out,",\"seconds\":%u,\"elapsed_ms\":%llu,\"observations\":%llu,"
                 "\"comparable_vectors\":%llu,\"verified_raw_vectors\":%llu,"
                 "\"source_precision\":\"%s\",\"cases\":[",
                 r->seconds,(unsigned long long)r->elapsed_ms,
@@ -858,26 +950,8 @@ int xr03_export_cases(FILE *out,const char *path,char *error,size_t cap){
                 (unsigned long long)r->source_rate_verified,
                 r->raw_precision?"exact_counter_verified":"legacy_score_only");
     for(unsigned i=0;i<r->casebook->count;i++){
-        const XR05Case *c=&r->casebook->items[i];
-        const char *kind=c->kind==1?"memory_pulse":
-                         c->kind==2?"cpu_streak":
-                         c->kind==3?"io_transfer_episode":"coincident_signals";
-        const char *phase=c->kind!=1?"not_applicable":
-                          c->phase==1?"pending":
-                          c->phase==2?"retracted":
-                          c->phase==3?"window_expired":
-                          c->phase==4?"interrupted":"unknown";
         if(i)fputc(',',out);
-        fprintf(out,"{\"kind\":\"%s\",\"identity\":{\"pid\":%u,"
-                    "\"creation_filetime\":\"%llu\"},"
-                    "\"sample_start\":%u,\"sample_end\":%u,"
-                    "\"peak_sample\":%u,\"peak_value\":%u,"
-                    "\"retracted_kib\":%u,\"phase\":\"%s\","
-                    "\"raw_verified\":%s,\"evidence_grade\":%u}",
-                    kind,c->pid,(unsigned long long)c->creation,
-                    c->start,c->end,c->peak_sample,c->peak_value,
-                    c->recovered_kib,phase,c->raw_verified?"true":"false",
-                    (unsigned)c->grade);
+        xr3_write_case(out,r,&r->casebook->items[i],-1);
     }
     fputs("],\"scope\":\"observed_pattern_only_not_causation\","
           "\"complete_case_scope\":true,\"truncated_cases\":0}\n",out);
@@ -885,4 +959,65 @@ int xr03_export_cases(FILE *out,const char *path,char *error,size_t cap){
     if(!success)xr3_error(error,cap,"casebook output write failed",0);
     free(r->casebook);free(r->events);free(r);
     return success;
+}
+
+
+/* Source is parsed once and each of three Aura policies runs over precisely
+ * the same validated event vector. No policy can silently repair source data.
+ * Policy support counts explicit overlapping same-identity, same-kind cases,
+ * not statistical confidence or cross-process causality. */
+int xr03_export_sweep(FILE *out,const char *path,char *error,size_t cap){
+    if(!out||!path||!path[0]){
+        xr3_error(error,cap,"missing policy sweep source/output",0);return 0;
+    }
+    XR3Run *r=(XR3Run*)calloc(1,sizeof(*r));
+    if(!r){xr3_error(error,cap,"sweep allocation failed",0);return 0;}
+    XR05Casebook *books[3]={NULL,NULL,NULL};
+    int ok=parsefile(path,r,0,error,cap);
+    if(ok && (r->truncated||r->kept!=r->records)){
+        xr3_error(error,cap,"policy sweep must cover every validated observation",0);
+        ok=0;
+    }
+    for(unsigned p=0;p<3&&ok;p++){
+        ok=xr3_prepare_cases(r,p);
+        if(ok && r->casebook->truncated){
+            xr3_error(error,cap,"policy case budget exceeded",0);ok=0;
+        }
+        books[p]=r->casebook;
+        r->casebook=NULL;
+    }
+    if(ok){
+        fputs("{\"schema\":\"aura.xray.policy_sweep/1\","
+              "\"engine\":\"aura-native-policy-engine/1\","
+              "\"source_schema\":\"aura.xray.capture/2\","
+              "\"source_build\":",out);
+        jsonquote(out,r->sha);
+        fprintf(out,",\"observations\":%llu,\"verified_raw_vectors\":%llu,"
+                    "\"policy_support_not_probability\":true,\"profiles\":[",
+                (unsigned long long)r->records,
+                (unsigned long long)r->source_rate_verified);
+        for(unsigned p=0;p<3;p++){
+            if(p)fputc(',',out);
+            r->casebook=books[p];
+            fputc('{',out);xr3_write_policy(out,p);
+            fprintf(out,",\"case_count\":%u,\"cases\":[",books[p]->count);
+            for(unsigned k=0;k<books[p]->count;k++){
+                if(k)fputc(',',out);
+                const XR05Case *c=&books[p]->items[k];
+                unsigned support=xray07_policy_support(
+                    (uint32_t)xr3_case_same_pattern(c,books[0]),
+                    (uint32_t)xr3_case_same_pattern(c,books[1]),
+                    (uint32_t)xr3_case_same_pattern(c,books[2]));
+                xr3_write_case(out,r,c,(int)support);
+            }
+            fputs("]}",out);
+        }
+        fputs("],\"scope\":\"observed_patterns_only_not_causation\","
+              "\"complete_case_scope\":true}\n",out);
+        if(ferror(out)){xr3_error(error,cap,"policy sweep write failed",0);ok=0;}
+    }
+    r->casebook=NULL;
+    for(unsigned p=0;p<3;p++)if(books[p])free(books[p]);
+    free(r->events);free(r);
+    return ok;
 }
