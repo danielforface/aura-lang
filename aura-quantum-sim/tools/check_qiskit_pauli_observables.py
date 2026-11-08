@@ -254,3 +254,15 @@ if __name__=="__main__":
         tomography_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c020-channel-tomography-qiskit.json"),
     )
+    # C-021 scientific gate for REAL Rust final-register conditional
+    # postselection, selected-only result and separate strict v1 protocol.
+    from check_qiskit_conditioned_tomography import main as conditional_oracle
+    conditional_binary = crate / "target/release/aura-quantum-conditioned-tomography-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-conditioned-tomography-run",
+    ],check=True,timeout=180)
+    conditional_oracle(
+        conditional_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c021-conditioned-tomography-qiskit.json"),
+    )
