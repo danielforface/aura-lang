@@ -74,8 +74,15 @@ fn must_refuse(mixed_scalar: bool, reason: &str) {
     match emit_module(&ir, None) {
         Ok(c) => panic!("unqualified Record Phi wrongly emitted C artifact: {}", c.module_c),
         Err(e) => assert!(
-            e.message.contains("Record Phi") && e.message.contains(reason),
-            "expected Record Phi {reason} diagnostic; got {e}"
+            // A loop-capable nominal type prepass can now discover the
+            // malformed Phi's Record-versus-scalar contradiction before the
+            // final per-incoming Phi declaration check. Both diagnostics are
+            // fail-closed and must explicitly identify the type boundary.
+            (e.message.contains("Record Phi") && e.message.contains(reason))
+                || (mixed_scalar
+                    && e.message.contains("Record SSA")
+                    && e.message.contains("conflicts with scalar type")),
+            "expected explicit nominal Record/scalar Phi refusal ({reason}); got {e}"
         ),
     }
 }
