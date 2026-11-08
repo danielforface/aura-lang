@@ -132,6 +132,28 @@ fn emit_runtime_h() -> String {
     // From aura-stdlib (linked by the CLI when running the C backend).
     out.push_str("void aura_io_println(const char* s);\n\n");
 
+    // The qualified native String ABI is a non-null NUL-terminated UTF-8
+    // pointer. Pointer identity is NOT Aura value equality.
+    out.push_str(r#"
+static inline bool aura_string_content_equal(const char* left, const char* right) {
+  if (!left || !right) {
+    fputs("Aura String comparison rejected: null native String\n", stderr);
+    fflush(stderr);
+    abort();
+  }
+  const unsigned char* a = (const unsigned char*)left;
+  const unsigned char* b = (const unsigned char*)right;
+  while (*a && *b) {
+    if (*a != *b) return false;
+    ++a;
+    ++b;
+  }
+  return *a == *b;
+}
+
+"#);
+
+
     out.push_str("// ---- Aura runtime (prototype) ----\n\n");
     out.push_str("typedef struct Tensor { uint32_t id; } Tensor;\n\n");
 
@@ -653,7 +675,7 @@ impl CNameMap {
             "aura_unicode_char_tail", "aura_f64_display",
             "aura_f64_from_bits",
             "aura_i32_from_wrapped_bits", "aura_i64_from_wrapped_bits",
-            "aura_i64_div_checked",
+            "aura_i64_div_checked", "aura_string_content_equal",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -1962,6 +1984,17 @@ fn emit_function(
                         .ok_or_else(|| CBackendError {
                             message: format!("untyped right operand v{} in binary instruction", right.0),
                         })?;
+                    // A deferred interpolation String is still a template in
+                    // this native ABI, not the value already computed by AVM.
+                    if matches!(*op, BinOp::Eq | BinOp::Ne)
+                        && left_type == CType::CString && right_type == CType::CString
+                        && (string_literals.get(left).is_some_and(StringSnapshot::has_substitutions)
+                            || string_literals.get(right).is_some_and(StringSnapshot::has_substitutions))
+                    {
+                        return Err(CBackendError {
+                            message: "unqualified interpolated String equality: value not materialized in C ABI".into(),
+                        });
+                    }
                     let (ct, expr_s) = emit_binop(*op, left_type, right_type, &ln, &rn)?;
                     out.push_str("  ");
                     out.push_str(map_ctype_decl(ct));
@@ -2776,6 +2809,21 @@ fn emit_binop(
     op: BinOp, lhs_type: CType, rhs_type: CType, l: &str, r: &str,
 ) -> Result<(CType, String), CBackendError> {
     use BinOp::*;
+    // Strings must compare by UTF-8 value, not C pointer identity. The
+    // existing ABI does not qualify pointer ordering or mixed String types.
+    if lhs_type == CType::CString || rhs_type == CType::CString {
+        if lhs_type != CType::CString || rhs_type != CType::CString
+            || !matches!(op, Eq | Ne)
+        {
+            return Err(CBackendError {
+                message: format!("unqualified C String binary operation: {op:?} {lhs_type:?} vs {rhs_type:?}"),
+            });
+        }
+        let equal = format!("aura_string_content_equal({l}, {r})");
+        return Ok((CType::Bool, if matches!(op, Ne) {
+            format!("!({equal})")
+        } else { equal }));
+    }
     // The IR presently carries no explicit per-instruction result type.
     // Do not use C's implicit mixed-type conversions or fabricate U32:
     // the supported arithmetic subset requires matching numeric operands.

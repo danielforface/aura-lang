@@ -972,6 +972,9 @@ fn eval_binary(op: BinOp, l: &OracleValue, r: &OracleValue) -> Result<OracleValu
         (Le, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a <= b)),
         (Ge, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::Bool(a >= b)),
 
+        // AVM already compares materialized String values by content.
+        (Eq, OracleValue::String(a), OracleValue::String(b)) => Ok(OracleValue::Bool(a == b)),
+        (Ne, OracleValue::String(a), OracleValue::String(b)) => Ok(OracleValue::Bool(a != b)),
         (Eq, OracleValue::Bool(a), OracleValue::Bool(b)) => Ok(OracleValue::Bool(a == b)),
         (Ne, OracleValue::Bool(a), OracleValue::Bool(b)) => Ok(OracleValue::Bool(a != b)),
 

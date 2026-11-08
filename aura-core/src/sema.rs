@@ -2354,6 +2354,14 @@ impl Checker {
                         Ok(inferred)
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                        // AVM String equality is by value. Qualify only Eq/Ne;
+                        // String ordering and mixed comparisons stay rejected.
+                        if matches!(op, BinOp::Eq | BinOp::Ne)
+                            && base_type(&lt) == &Type::String
+                            && base_type(&rt) == &Type::String
+                        {
+                            return Ok(Type::Bool);
+                        }
                         if !is_u32_like(&lt) || !is_u32_like(&rt) {
                             return Err(SemanticError {
                                 message: format!(
