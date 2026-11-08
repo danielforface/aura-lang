@@ -33,6 +33,13 @@ pub const FACTORIZED_COUNTS_RESULT_SCHEMA:&str="aura.quantum.factorized-counts-r
 pub const MAX_FACTOR_WORK_UNITS: usize = 128 * 1024 * 1024;
 pub const FACTORIZED_PROFILE: &str = "local-disconnected-factor-statevector-f64-untruncated/1";
 pub const FACTORIZED_RESULT_SCHEMA: &str = "aura.quantum.factorized-result/1";
+/// Independent analytic expectation API, not a stochastic measurement result.
+pub const OBSERVABLE_RESULT_SCHEMA:&str="aura.quantum.observable-result/1";
+pub const MAX_PAULI_TERMS:usize=64;
+pub const MAX_PAULI_TERM_WORK_UNITS:usize=16_777_216;
+pub const MAX_ABS_PAULI_COEFFICIENT:f64=10_000.0;
+/// Logical output charge per term in addition to its ASCII Pauli word.
+pub const PAULI_TERM_LOGICAL_OVERHEAD:usize=128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactorError {
@@ -41,6 +48,9 @@ pub enum FactorError {
     InvalidQubit { qubit: usize, qubits: usize },
     DuplicateQubit(usize),
     InvalidBasisWidth { expected: usize, got: usize },
+    InvalidPauliSymbol { wire:usize, symbol:u8 },
+    InvalidPauliCoefficient,
+    InvalidPauliTermCount,
     TooManyInstructions,
     ZeroShots,
     TooManyShots,
@@ -442,6 +452,73 @@ impl FactorState {
     pub fn basis_probability(&self,bits:&[bool])->Result<f64,FactorError> {
         Ok(self.amplitude_bits(bits)?.norm_squared())
     }
+    /// Direct analytic expectation of a Pauli word in the PRESENT pure state.
+    ///
+    /// Word position 0 acts on global q0 (LSB), including across prior SWAPs.
+    /// Each local factor is small (<=10 wires). The state is a tensor product,
+    /// so <P> is the product of exact local <psi_f|P_f|psi_f> sums.
+    ///
+    /// For Y, the input ket bit 0 maps to i|1> and bit 1 to -i|0>;
+    /// the bra is conjugated AFTER the mapped basis coordinate. The
+    /// resulting real number is floating-point numerical evidence, not
+    /// infinite-precision exact arithmetic or stochastic Born sampling.
+    pub fn expectation_pauli(&self,word:&str)->Result<f64,FactorError> {
+        let symbols=word.as_bytes();
+        if symbols.len()!=self.qubits {
+            return Err(FactorError::InvalidBasisWidth{
+                expected:self.qubits,got:symbols.len(),
+            });
+        }
+        // Strict ASCII only; otherwise invalid inputs do not silently
+        // reinterpret a Pauli as identity or a multibyte Unicode letter.
+        for (wire,&symbol) in symbols.iter().enumerate() {
+            if !matches!(symbol,b'I'|b'X'|b'Y'|b'Z') {
+                return Err(FactorError::InvalidPauliSymbol{wire,symbol});
+            }
+        }
+        let minus_one=Complex::new(-1.0,0.0);
+        let mut expectation=1.0f64;
+        for factor in &self.factors {
+            factor.state.validate()?;
+            let mut local=Complex::ZERO;
+            let dimension=1usize<<factor.wires.len();
+            for ket in 0..dimension {
+                let mut bra=ket;
+                let mut phase=Complex::ONE;
+                for (position,&wire) in factor.wires.iter().enumerate() {
+                    let bit=(ket>>position)&1!=0;
+                    match symbols[wire] {
+                        b'I'=>{},
+                        b'X'=>{bra^=1usize<<position;},
+                        b'Y'=>{
+                            bra^=1usize<<position;
+                            phase=phase*if bit {Complex::NEG_I}else{Complex::I};
+                        },
+                        b'Z'=>{if bit {phase=phase*minus_one;}},
+                        _=>unreachable!("every Pauli character prevalidated"),
+                    }
+                }
+                let amp=factor.state.amplitude(ket)?;
+                let bra_amp=factor.state.amplitude(bra)?;
+                let bra_conjugate=Complex::new(bra_amp.re,-bra_amp.im);
+                local=local+(bra_conjugate*phase)*amp;
+            }
+            if !local.re.is_finite()||!local.im.is_finite(){
+                return Err(FactorError::Simulator(SimError::NonFiniteAmplitude));
+            }
+            // Every Pauli string is Hermitian; nontrivial imaginary
+            // residuals or |expectation|>1 indicate numerical corruption.
+            if local.im.abs()>NORM_TOLERANCE
+                ||local.re.abs()>1.0+NORM_TOLERANCE {
+                return Err(FactorError::Simulator(SimError::NotNormalized));
+            }
+            expectation*=local.re;
+        }
+        if !expectation.is_finite()||expectation.abs()>1.0+NORM_TOLERANCE {
+            return Err(FactorError::Simulator(SimError::NotNormalized));
+        }
+        Ok(expectation)
+    }
 }
 #[derive(Debug,Clone,PartialEq)]
 pub struct FactorMetadata {
@@ -505,6 +582,31 @@ pub struct FactorCounts {
 }
 /// Internal shared state/measurement/optional-trace kernel output.
 type OneShotExecution=(FactorState,Vec<Option<bool>>,Vec<TraceEntry>);
+/// A bounded real-coefficient Pauli term; paulis are ASCII and q0-first.
+#[derive(Debug,Clone,PartialEq)]
+pub struct PauliTerm {
+    pub paulis:String,
+    pub coefficient:f64,
+}
+/// Real analytic expectation of each requested term (no measurement shots).
+#[derive(Debug,Clone,PartialEq)]
+pub struct PauliEstimate {
+    pub paulis:String,
+    pub coefficient:f64,
+    pub expectation:f64,
+    pub contribution:f64,
+}
+#[derive(Debug,Clone)]
+pub struct ObservableBatch {
+    pub metadata:FactorMetadata,
+    /// A single observed instrument branch; this is NOT an average over
+    /// every possible intermediate measurement outcome.
+    pub shot:ShotRecord,
+    pub estimates:Vec<PauliEstimate>,
+    pub weighted_sum:f64,
+    pub peak_logical_state_bytes:usize,
+    pub observable_logical_reserved_bytes:usize,
+}
 #[derive(Debug,Clone)]
 pub struct FactorCircuit {
     qubits:usize,
@@ -747,6 +849,85 @@ impl FactorCircuit {
             projective_split_deferred:deferred,
             product_preserving_two_wire_gates:product_gates,
             retained_shot_records:0,
+        })
+    }
+    /// Analytic Pauli Hamiltonian energy on ONE sampled final pure state.
+    ///
+    /// If a circuit contains Measure/Reset/If, its returned expectation
+    /// is CONDITIONAL on the single actual seeded measurement trajectory.
+    /// This is NOT a mixed-state average or multi-shot energy estimate.
+    /// Pauli evaluations themselves never consume RNG or collapse state.
+    pub fn execute_observables(
+        &self,terms:&[PauliTerm],seed:u64,budget:usize,
+    )->Result<ObservableBatch,FactorError> {
+        if terms.is_empty()||terms.len()>MAX_PAULI_TERMS {
+            return Err(FactorError::InvalidPauliTermCount);
+        }
+        let work=terms.len().checked_mul(self.qubits)
+            .and_then(|n|n.checked_mul(1usize<<MAX_FACTOR_QUBITS))
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        if work>MAX_PAULI_TERM_WORK_UNITS {
+            return Err(FactorError::WorkLimit);
+        }
+        for term in terms {
+            if !term.coefficient.is_finite()
+                ||term.coefficient.abs()>MAX_ABS_PAULI_COEFFICIENT {
+                return Err(FactorError::InvalidPauliCoefficient);
+            }
+            if term.paulis.len()!=self.qubits {
+                return Err(FactorError::InvalidBasisWidth{
+                    expected:self.qubits,got:term.paulis.len(),
+                });
+            }
+            for (wire,&symbol) in term.paulis.as_bytes().iter().enumerate() {
+                if !matches!(symbol,b'I'|b'X'|b'Y'|b'Z') {
+                    return Err(FactorError::InvalidPauliSymbol{wire,symbol});
+                }
+            }
+        }
+        // Reserve a small explicit logical output allowance in the same
+        // per-run budget; do not promise that this estimates malloc/RSS.
+        let per_term=self.qubits.checked_add(PAULI_TERM_LOGICAL_OVERHEAD)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let reserved=terms.len().checked_mul(per_term)
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let state_budget=budget.checked_sub(reserved).ok_or(
+            FactorError::BudgetExceeded{
+                required_bytes:reserved,budget_bytes:budget
+            }
+        )?;
+        let mut execution=self.execute_shots(1,seed,state_budget)?;
+        let state=execution.one_shot_state.as_ref()
+            .ok_or(FactorError::ArithmeticOverflow)?;
+        let mut estimates=Vec::new();
+        estimates.try_reserve_exact(terms.len())
+            .map_err(|_|FactorError::AllocationFailed)?;
+        let mut weighted_sum=0.0;
+        for term in terms {
+            let expectation=state.expectation_pauli(&term.paulis)?;
+            let contribution=term.coefficient*expectation;
+            if !contribution.is_finite() {
+                return Err(FactorError::InvalidPauliCoefficient);
+            }
+            weighted_sum+=contribution;
+            if !weighted_sum.is_finite() {
+                return Err(FactorError::InvalidPauliCoefficient);
+            }
+            estimates.push(PauliEstimate{
+                paulis:term.paulis.clone(),
+                coefficient:term.coefficient,
+                expectation,contribution,
+            });
+        }
+        let mut metadata=execution.metadata;
+        metadata.schema=OBSERVABLE_RESULT_SCHEMA;
+        Ok(ObservableBatch{
+            metadata,
+            shot:execution.records.remove(0),
+            estimates,
+            weighted_sum,
+            peak_logical_state_bytes:execution.peak_logical_state_bytes,
+            observable_logical_reserved_bytes:reserved,
         })
     }
 }
