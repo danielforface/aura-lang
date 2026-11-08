@@ -3,7 +3,7 @@
 // accessibility focus order, assistive technologies, IME or BiDi semantics.
 use std::process::Command;
 use aura_nexus::{AuraPlugin,NexusContext,UiNode,UiRuntimeFeedback,UiTextInputEvent};
-use aura_plugin_lumina::AuraLuminaPlugin;
+use aura_plugin_lumina::{AuraLuminaPlugin,CompositionEvent};
 
 fn node(kind:&str,props:&[(&str,&str)],children:Vec<UiNode>)->UiNode {
     let mut x=UiNode::new(kind);
@@ -1042,4 +1042,97 @@ fn native_x11_capacity_notice_never_overrides_newer_host_revision(){
     assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),401,"Authoritativeq"),
         "new host value wins and remains editable");
     eprintln!("LUMINA_ROUTE_CAPACITY_REBASE_X11 newer_host_revision_suppresses_warning=true no_stale_local_replay=true editable_authoritative_value=true other_fields_retained=true");
+}
+
+
+/// Real X11 keyboard navigation and authoritative runtime policy transitions.
+/// Unlike disabled inputs, native read-only TextInput keeps its cursor/focus
+/// available while every local edit/submit and composition transaction is
+/// rejected before it can change EditSession or emit UiRuntimeFeedback.
+#[test]
+fn native_x11_read_only_textinput_ime_undo_focus_and_host_rebase(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","250"),("height","48"),
+            ("radius","0"),("value","Locked"),("value_revision","1"),
+            ("read_only","true"),("on_change","cb:901"),("on_submit","cb:911")],vec![]),
+        node("TextInput",&[("x","20"),("y","102"),("width","250"),("height","48"),
+            ("radius","0"),("value","Open"),("value_revision","1"),
+            ("on_change","cb:902"),("on_submit","cb:912")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,360));
+    frames(&plugin,&root,&mut ctx,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=windows.lines().next().expect("real native X11 window");
+    xdo(&["windowfocus","--sync",win]);
+    let locked_border=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    let editable_border=plugin.diagnostic_capture_pixel(21.0,122.0).unwrap();
+    assert!(locked_border.b>editable_border.b.saturating_add(75),
+        "native readonly state must be visibly distinguished: {locked_border:?}, {editable_border:?}");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // readonly focus
+    for k in ["q","BackSpace","Delete","Return","Left","Right"]{
+        assert!(press(&plugin,&root,&mut ctx,k,false).is_empty(),
+            "readonly must never send any edit or on_submit callback: {k}");
+    }
+    xdo(&["keydown","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    for k in ["a","z","y"]{
+        assert!(press(&plugin,&root,&mut ctx,k,false).is_empty(),
+            "select/Undo/Redo in readonly cannot change value: {k}");
+    }
+    xdo(&["keyup","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    assert!(plugin.submit_composition_event(CompositionEvent::Start{
+        callback_id:901,sequence:1}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Update{
+        callback_id:901,sequence:2,text:"אב".into(),caret:2}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Commit{
+        callback_id:901,sequence:3,text:"שלום".into()}));
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty(),
+        "explicit adapter cannot insert preedit into a read-only session");
+    assert!(plugin.diagnostic_composition(901).is_none());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // editable
+    let typed=press(&plugin,&root,&mut ctx,"x",false);
+    assert!(has(&typed,902,"Openx"),"normal sibling remains editable: {typed:?}");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty()); // readonly wraps
+    root.children[0].set_prop("read_only","false");
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let enabled=press(&plugin,&root,&mut ctx,"q",false);
+    assert!(has(&enabled,901,"Lockedq"),"Host unlocks without focus theft: {enabled:?}");
+    assert!(plugin.submit_composition_event(CompositionEvent::Start{
+        callback_id:901,sequence:10}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Update{
+        callback_id:901,sequence:11,text:"אב".into(),caret:2}));
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(plugin.diagnostic_composition(901).is_some(),
+        "writable field supports normal composition");
+    root.children[0].set_prop("read_only","true");
+    assert!(plugin.submit_composition_event(CompositionEvent::Commit{
+        callback_id:901,sequence:12,text:"אב".into()}));
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty(),
+        "mid-composition lock must discard queued CommitText");
+    assert!(plugin.diagnostic_composition(901).is_none(),
+        "locking revokes transient preedit without committing");
+    assert!(press(&plugin,&root,&mut ctx,"z",false).is_empty());
+    root.children[0].set_prop("value","Server");
+    root.children[0].set_prop("value_revision","2");
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty(),
+        "Host may authoritatively replace read-only content");
+    root.children[0].set_prop("read_only","false");
+    assert!(frames(&plugin,&root,&mut ctx,2).is_empty());
+    let changed=press(&plugin,&root,&mut ctx,"r",false);
+    assert!(has(&changed,901,"Serverr"),
+        "new Host value wins over old preedit and local echo: {changed:?}");
+    root.children[0].set_prop("read_only","invalid");
+    assert!(frames(&plugin,&root,&mut ctx,2).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"p",false).is_empty(),
+        "malformed policy fails closed");
+    root.children[0].set_prop("read_only","false");
+    root.children[0].props.push(("read_only".into(),"false".into()));
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"p",false).is_empty(),
+        "ambiguous duplicate readonly policy fails closed");
+    eprintln!("LUMINA_READ_ONLY_X11 focusable=true visible_blue_native_border=true no_mutation_or_submit=true no_undo_redo=true bridge_preedit_rejected=true normal_sibling_editable=true host_unlock=true lock_cancels_live_preedit=true new_host_revision_rebases=true malformed_and_duplicate_fail_closed=true");
 }

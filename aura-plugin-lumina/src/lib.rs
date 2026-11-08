@@ -13,6 +13,9 @@ mod forms;
 mod draft_retention;
 
 #[cfg(any(feature = "raylib", test))]
+mod input_policy;
+
+#[cfg(any(feature = "raylib", test))]
 mod text_input;
 
 #[cfg(any(feature = "raylib", test))]
@@ -390,7 +393,7 @@ struct RetainedDraft {
 /// behavior; this is NOT a complete password/secure-memory widget.
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn native_surrounding_policy_allows(node:&UiNode)->bool{
-    if node.kind!="TextInput"{return false;}
+    if !input_policy::edit_mode(node).editable(){return false;}
     for key in ["type","input_type"]{
         if prop_string(node,key).is_some_and(|value|
             !matches!(value,"text"|"search"|"email"|"number"|"url"|"tel")){
@@ -1745,6 +1748,20 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     win.autofocus_decided=true;
                 }
             }
+            // Resolve the Host-authored native-only input edit policy after
+            // value reconciliation AND same-frame pointer, Tab, autofocus. Read-only is focusable
+            // for selection/navigation but can never emit local edits.
+            let focused_edit_mode=win.focused_input.as_ref()
+                .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                .map(|(node,_)|input_policy::edit_mode(node))
+                .unwrap_or(input_policy::EditMode::Invalid);
+            if focused_edit_mode.locked(){
+                if let Some(fi)=win.focused_input.as_mut(){
+                    // Transitioning during preedit cancels it atomically,
+                    // before queued CommitText or native replacement is read.
+                    fi.session.abandon_composition();
+                }
+            }
             // Linux opt-in: forward sampled native Raylib keyboard semantics
             // into REAL libibus. GLFW chars supply Unicode keysyms, while named
             // keys use documented X11 keysyms; unknown hardware scancodes are
@@ -1911,6 +1928,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // Never emit callbacks for preedit updates or cancellation.
             let mut composition_consumed=false;
             for event in pending_composition {
+                if focused_edit_mode.locked(){continue;}
                 let Some(fi)=win.focused_input.as_mut() else{continue;};
                 if event.target()!=fi.on_change{continue;}
                 use CompositionEvent::*;
@@ -1951,6 +1969,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // are checked again AFTER reconciliation and other queued events.
             #[cfg(target_os="linux")]
             for replacement in native_replacements {
+                if focused_edit_mode.locked(){continue;}
                 let Some(fi)=win.focused_input.as_mut()else{continue;};
                 if fi.on_change!=replacement.callback_id{continue;}
                 if let Some(changed)=fi.session.replace_surrounding_if_snapshot(
@@ -2012,12 +2031,14 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                     }
                     let mut changed=false;
-                    if undo {changed|=fi.session.apply(SessionAction::Undo);}
-                    if redo {changed|=fi.session.apply(SessionAction::Redo);}
-                    if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
-                    if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
-                    if !ctrl && !typed.is_empty() {
-                        changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                    if focused_edit_mode.editable(){
+                        if undo {changed|=fi.session.apply(SessionAction::Undo);}
+                        if redo {changed|=fi.session.apply(SessionAction::Redo);}
+                        if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
+                        if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
+                        if !ctrl && !typed.is_empty() {
+                            changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                        }
                     }
                     if changed {
                         fi.visual_affinity=None;
@@ -2026,7 +2047,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
                         });
                     }
-                    if enter {
+                    if enter && focused_edit_mode.editable() {
                         if let Some(cb)=fi.on_submit {
                             fb.text_input_events.push(UiTextInputEvent {
                                 callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
@@ -2036,9 +2057,19 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }
             }
             #[cfg(target_os="linux")]
-            if let (Some(bus),Some(fi))=
-                (win.native_ibus.as_mut(),win.focused_input.as_ref()){
-                let _=sync_native_ibus_context(bus,fi);
+            {
+                // Never send readonly OR sensitive values into a live IME
+                // context on the post-edit sync path; use the SAME gate as
+                // initial helper focus/key delivery.
+                let authorized=win.focused_input.as_ref()
+                    .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                    .is_some_and(|(node,_)|native_surrounding_policy_allows(node));
+                if authorized {
+                    if let (Some(bus),Some(fi))=
+                        (win.native_ibus.as_mut(),win.focused_input.as_ref()){
+                        let _=sync_native_ibus_context(bus,fi);
+                    }
+                }
             }
             // The first real user-authored edit dismisses the informational
             // warning; focus/Tab alone never hides it. These callbacks are
@@ -2606,6 +2637,7 @@ fn paint_node<D: RaylibDraw>(
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
             let on_change = parse_callback_id(prop_string(node, "on_change"));
+            let edit_mode=input_policy::edit_mode(node);
             let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
             let draft_lost = field_error.is_none()
                 && on_change.is_some_and(|id|draft_warnings.contains(&id));
@@ -2613,6 +2645,10 @@ fn paint_node<D: RaylibDraw>(
                 Color::new(235,76,89,255)
             }else if draft_lost{
                 Color::new(242,166,54,255)
+            }else if edit_mode==input_policy::EditMode::ReadOnly {
+                Color::new(98,158,226,255)
+            }else if edit_mode==input_policy::EditMode::Invalid {
+                Color::new(235,76,89,255)
             }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
@@ -2659,6 +2695,16 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_text("Draft not retained",
                     (rect.x+rect.width-123.0) as i32,(rect.y+3.0) as i32,
                     10,Color::new(255,188,83,255));
+            } else if edit_mode.locked() && rect.width>=155.0
+                && rect.height>=36.0 {
+                let (label,colour)=if edit_mode==input_policy::EditMode::ReadOnly{
+                    ("Read only",Color::new(146,196,244,255))
+                }else{
+                    ("Invalid input mode",Color::new(255,125,130,255))
+                };
+                d.draw_text(label,
+                    (rect.x+rect.width-123.0) as i32,(rect.y+3.0) as i32,
+                    10,colour);
             }
 
             return;

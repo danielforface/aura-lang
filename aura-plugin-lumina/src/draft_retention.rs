@@ -139,9 +139,9 @@ fn valid_key(key:&str)->bool {
         !key.chars().any(|c|c.is_control()||
             matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
 }
-const IDENTITY_PROPS:[&str;10]=["retain_draft","draft_scope","draft_key",
+const IDENTITY_PROPS:[&str;11]=["retain_draft","draft_scope","draft_key",
     "on_change","value_revision","form","type","input_type","sensitive",
-    "surrounding_text"];
+    "surrounding_text","read_only"];
 fn duplicates_identity_props(node:&UiNode)->bool{
     IDENTITY_PROPS.iter().any(|key|
         node.props.iter().filter(|(k,_)|k.as_str()==*key).take(2).count()>1)
@@ -175,6 +175,7 @@ fn callback(node:&UiNode)->Option<u64>{
 /// surrounding-text policy cannot be retained in long-lived native memory.
 pub(crate) fn identity(node:&UiNode)->Option<Identity>{
     if node.kind!="TextInput" || duplicates_identity_props(node)
+        || crate::input_policy::edit_mode(node)==crate::input_policy::EditMode::Invalid
         || prop(node,"retain_draft")!=Some("route"){return None;}
     let scope=prop(node,"draft_scope").filter(|s|valid_key(s))?;
     let key=prop(node,"draft_key").filter(|s|valid_key(s))?;
@@ -427,6 +428,22 @@ mod tests{
             callback:c.callback,last_focus:c.last_focus,
             bytes:c.bytes,identity:c.identity,
         }).collect::<Vec<_>>()),chosen);
+    }
+    #[test]
+    fn read_only_retains_only_with_unambiguous_valid_host_policy(){
+        let mut input=field(&[]);
+        input.set_prop("read_only","true");
+        assert!(identity(&input).is_some(),
+            "read_only does not mean disabled or secret");
+        input.set_prop("read_only","false");
+        assert!(identity(&input).is_some());
+        input.set_prop("read_only","unknown");
+        assert!(identity(&input).is_none(),
+            "ambiguous edit policy cannot qualify private drafts");
+        input.set_prop("read_only","true");
+        input.props.push(("read_only".into(),"false".into()));
+        assert!(identity(&input).is_none(),
+            "duplicate edit policy disqualifies route draft retention");
     }
     #[test]
     fn root_scope_rotation_is_explicit_and_strictly_single_valued(){

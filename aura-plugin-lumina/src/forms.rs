@@ -320,6 +320,8 @@ pub(crate) fn assess(root:&UiNode,plan:&LayoutNode,form:&str,
             let id=callback(node,"on_change");
             let physically_visible=plan.is_some_and(|p|!p.bounds.intersect(p.clip).is_empty());
             let usable=physically_visible && prop(node,"disabled")!=Some("true")
+                && crate::input_policy::edit_mode(node)
+                    !=crate::input_policy::EditMode::Invalid
                 && id.is_some_and(|cb|eligible.contains(&cb));
             if !usable {out.unavailable=true;}
             if let Some(cb)=id{
@@ -441,6 +443,43 @@ mod tests{
             _=>None,
         }).collect()
     }
+    #[test]
+    fn readonly_field_remains_valid_for_required_form_submission(){
+        let mut tree=n("App",&[],vec![
+            n("TextInput",&[("x","20"),("y","20"),("width","240"),
+                ("height","46"),("form","checkout"),("on_change","cb:10"),
+                ("value","Host data"),("required","true"),
+                ("read_only","true")],vec![]),
+        ]);
+        let p=plan(&tree);
+        let expected=eligible(&tree,&p);
+        let mut values=HashMap::new();values.insert(10,"Host data".to_owned());
+        assert!(assess(&tree,&p,"checkout",&values,&expected).valid(),
+            "read_only is focusable and immutable, not an unavailable field");
+        tree.children[0].set_prop("value"," ");
+        values.insert(10," ".into());
+        let assessed=assess(&tree,&plan(&tree),"checkout",&values,&expected);
+        assert!(!assessed.valid(),"Host read_only value still obeys validation");
+    }
+    #[test]
+    fn malformed_readonly_field_fails_closed_for_form_submission(){
+        let mut tree=n("App",&[],vec![
+            n("TextInput",&[("x","20"),("y","20"),("width","240"),
+                ("height","46"),("form","checkout"),("on_change","cb:10"),
+                ("value","Host data"),("required","true"),
+                ("read_only","maybe")],vec![]),
+        ]);
+        let mut values=HashMap::new();values.insert(10,"Host data".to_owned());
+        let p=plan(&tree);
+        assert!(!assess(&tree,&p,"checkout",&values,&eligible(&tree,&p)).valid(),
+            "unknown policy must not submit invalid form");
+        tree.children[0].set_prop("read_only","false");
+        assert!(assess(&tree,&p,"checkout",&values,&eligible(&tree,&p)).valid());
+        tree.children[0].props.push(("read_only".into(),"true".into()));
+        assert!(!assess(&tree,&p,"checkout",&values,&eligible(&tree,&p)).valid(),
+            "ambiguous duplicate policy must fail closed");
+    }
+
     #[test]
     fn cancelled_submit_does_not_reenable_click_and_cancel_props_fail_closed(){
         let mut root=n("App",&[],vec![
