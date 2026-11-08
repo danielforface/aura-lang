@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # provenance uses HEAD^; keep original source parent locally available
+          fetch-depth: 0 # trust-check all A ancestry, robust to later integration-only commits
       - uses: dtolnay/rust-toolchain@stable
       - name: Install supported native workspace prerequisites
         run: |
@@ -27,7 +27,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "27244bca700a9307747d1a79edf831c11cba493d"
+          git cat-file -e "27244bca700a9307747d1a79edf831c11cba493d^{commit}"
+          git merge-base --is-ancestor "27244bca700a9307747d1a79edf831c11cba493d" HEAD
           test "$(git rev-parse HEAD:aura-plugin-lumina)" = "f0771c2c986adca7b3ebfb64ee7c6547081ff0da"
           test "$(git rev-parse HEAD:Cargo.lock)" = "bf778c997ed575e323cde39863ae8c4d3b5c5b30"
           test "$(git rev-parse HEAD:.github/workflows/lumina-viewport-headless.yml)" = "bce25dd3c30ba302b87fa86b636f87f4414c4686"
