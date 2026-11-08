@@ -1233,3 +1233,92 @@ fn native_x11_live_max_graphemes_ime_host_rebase_and_sibling_isolation(){
         "ambiguous duplicate cap fails closed");
     eprintln!("LUMINA_LIVE_GRAPHEME_CAP_X11 keyboard_overflow_rejected=true selection_replacement=true uax29_zwj_ime_commit_atomic=true rejected_commit_no_undo=true native_undo_redo=true host_oversize_preserved=true delete_over_limit=true sibling_unlimited=true zero_cap=true malformed_and_duplicate_fail_closed=true");
 }
+
+
+/// Real X11/XTest opt-in early form validation; the Host's value_revision
+/// and actual EditSession buffer are authoritative, never projected preedit.
+/// No error before the user leaves a field; a successful edit clears it,
+/// Host revision resets it, and route unmount cannot resurrect touched state.
+#[test]
+fn native_x11_validate_on_blur_errors_and_host_revision_lifecycle(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[
+            ("x","20"),("y","20"),("width","270"),("height","48"),
+            ("radius","0"),("value",""),("value_revision","1"),
+            ("on_change","cb:941"),("form","signup"),
+            ("required","true"),("min_graphemes","2"),
+            ("validate_on_blur","true")],vec![]),
+        node("TextInput",&[
+            ("x","20"),("y","100"),("width","270"),("height","48"),
+            ("radius","0"),("value","OK"),("value_revision","1"),
+            ("on_change","cb:942"),("form","signup"),
+            ("required","true")],vec![]),
+    ]);
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(plugin.diagnostic_resize_window(640,330));
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty());
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("real X11 Raylib window");
+    xdo(&["windowfocus","--sync",id]);
+    let clean=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    let untouched=plugin.diagnostic_capture_pixel(21.0,122.0).unwrap();
+    assert!(clean.r.abs_diff(untouched.r)<32,
+        "untouched fields cannot show premature validation warnings: {clean:?} {untouched:?}");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let focused=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(focused.r.abs_diff(clean.r)<45,
+        "focus alone must not display validation error: {focused:?} {clean:?}");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let invalid=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    let peer=plugin.diagnostic_capture_pixel(21.0,122.0).unwrap();
+    assert!(invalid.r>clean.r.saturating_add(75) &&
+            invalid.r>peer.r.saturating_add(75),
+        "real Tab blur must show RED required/length feedback only on touched field: \
+         before={clean:?} after={invalid:?} sibling={peer:?}");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",true).is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"a",false),941,"a"));
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let short=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(short.r>clean.r.saturating_add(75),
+        "Too short must retain the error until the committed draft is valid: {short:?}");
+    assert!(has(&press(&plugin,&root,&mut ctx,"b",false),941,"ab"));
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let valid=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(invalid.r>valid.r.saturating_add(75),
+        "valid committed text must immediately clear the error: {valid:?}");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let peer_after=plugin.diagnostic_capture_pixel(21.0,122.0).unwrap();
+    assert!(peer_after.r.abs_diff(untouched.r)<55,
+        "non-opted sibling remains untouched and valid");
+
+    // The Host replaces the field in the background with a NEW authority
+    // epoch. This clears the previous touched marker even though the new
+    // authoritative empty value is now invalid.
+    root.children[0].set_prop("value","");
+    root.children[0].set_prop("value_revision","2");
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let reset=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(invalid.r>reset.r.saturating_add(75),
+        "Host revision must clear stale touched state, not show an unearned warning");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty()); // first
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty()); // second
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let retrigger=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(retrigger.r>reset.r.saturating_add(75),
+        "second real blur in new Host epoch re-evaluates required value");
+
+    let away=node("App",&[("bg","#121212")],vec![
+        node("Text",&[("text","Other route")],vec![])
+    ]);
+    assert!(frames(&plugin,&away,&mut ctx,3).is_empty());
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    let remounted=plugin.diagnostic_capture_pixel(21.0,42.0).unwrap();
+    assert!(retrigger.r>remounted.r.saturating_add(75),
+        "unmount/reentry must not restore a stale blur-validation warning");
+    eprintln!("LUMINA_BLUR_VALIDATION_X11 untouched_no_warning=true focus_no_warning=true real_tab_blur_red_error=true only_touched_field=true too_short_until_corrected=true live_edit_clears_error=true host_revision_resets_touched=true new_epoch_blur_revalidates=true route_unmount_clears=true committed_draft_only=true");
+}

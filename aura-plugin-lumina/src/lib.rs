@@ -343,6 +343,9 @@ struct LuminaWindow {
     /// Forms whose last native submit attempt failed. Field errors are
     /// always recomputed against current authoritative EditSession drafts.
     attempted_forms: std::collections::HashSet<String>,
+    /// Version-bound, metadata-only early validation after genuine user blur.
+    /// Discarded on unmount, identity change and new Host authority.
+    blur_touched:HashMap<u64,forms::BlurBinding>,
     /// Monotonic host request generations for which the native user already
     /// emitted a cancellation request. Bounded, never cleared by a re-render.
     cancelled_requests: HashMap<String,u64>,
@@ -1485,6 +1488,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     focused_input: None,
                     focused_button: None,
                     attempted_forms: std::collections::HashSet::new(),
+                    blur_touched:HashMap::new(),
                     cancelled_requests: HashMap::new(),
                     autofocus_decided: false,
                     input_sessions: HashMap::new(),
@@ -1630,6 +1634,21 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let keyboard_order=layout::keyboard_focus_order_with_blocked(
                 tree,&planned_layout,&focus_order,&cancel_pre.blocked);
             reconcile_input_sessions(win,&focus_order,&revisions);
+            // Capture AFTER Host tree reconciliation, before native user
+            // pointer/Tab/Escape. No touched errors on unmount/rebase alone.
+            let focus_before_user_action=win.focused_input.as_ref()
+                .map(|fi|fi.on_change);
+            // Revoke old-generation/removed bindings BEFORE admitting another
+            // touched field, so the strict 32-entry budget cannot be blocked
+            // by stale marks from an earlier Host render or route.
+            win.blur_touched.retain(|id,binding|{
+                focus_order.iter().any(|target|
+                    matches!(target,layout::HitTarget::TextInput{on_change,..}
+                        if *on_change==*id)) &&
+                find_input_by_callback(tree,&planned_layout,*id)
+                    .is_some_and(|(node,_)|
+                        forms::blur_binding(node)==Ok(Some(binding.clone())))
+            });
             // No callback from a removed, clipped, disabled or ambiguous button.
             if win.focused_button.is_some_and(|id|!keyboard_order.iter()
                 .any(|entry|matches!(entry,layout::HitTarget::Button(other) if *other==id))) {
@@ -2081,6 +2100,26 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            // Record a touched field only when a genuine pointer, Tab or
+            // Escape moved focus away. Never store a private edit buffer.
+            if (tab || (clicked && !candidate_click_consumed) || escape)
+                && focus_before_user_action != win.focused_input.as_ref().map(|f|f.on_change) {
+                if let Some(id)=focus_before_user_action {
+                    if let Some((node,_))=
+                        find_input_by_callback(tree,&planned_layout,id){
+                        if focus_order.iter().any(|target|
+                            matches!(target,layout::HitTarget::TextInput{on_change,..}
+                                if *on_change==id)){
+                            if let Ok(Some(binding))=forms::blur_binding(node){
+                                if win.blur_touched.len()<32 ||
+                                    win.blur_touched.contains_key(&id){
+                                    win.blur_touched.insert(id,binding);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // The first real user-authored edit dismisses the informational
             // warning; focus/Tab alone never hides it. These callbacks are
             // already trusted local committed edits, not IME preedit events.
@@ -2227,6 +2266,20 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                     for (cb,reason) in assessment.radio_errors{
                         form_errors.radio.insert(cb,reason);
+                    }
+                }
+            }
+            // Merge only touched-field errors, without showing errors for
+            // untouched siblings. Existing Submit errors take precedence.
+            for (id,binding) in &win.blur_touched{
+                if let Some((node,_))=
+                    find_input_by_callback(tree,&planned_layout,*id){
+                    if forms::blur_binding(node)==Ok(Some(binding.clone())){
+                        let committed=current_values.get(id).map(String::as_str)
+                            .unwrap_or("");
+                        if let Some(reason)=forms::blur_error(node,committed){
+                            form_errors.text.entry(*id).or_insert(reason);
+                        }
                     }
                 }
             }

@@ -282,6 +282,48 @@ pub(crate) struct RenderErrors{
     pub(crate) text:HashMap<u64,FieldError>,
     pub(crate) radio:HashMap<u64,FieldError>,
 }
+/// Opt-in validation displayed after the USER moves focus away from a field.
+/// Revisions are mandatory: a new Host authority must never inherit a stale
+/// touched/error marker from another server-owned field instance.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) struct BlurBinding{
+    pub(crate) form:String,
+    pub(crate) revision:u64,
+}
+fn blur_prop<'a>(node:&'a UiNode,name:&str)->Result<Option<&'a str>,()>{
+    let mut values=node.props.iter().filter(|(key,_)|key==name);
+    let found=values.next().map(|(_,value)|value.as_str());
+    if values.next().is_some(){return Err(());}
+    Ok(found)
+}
+pub(crate) fn blur_binding(node:&UiNode)->Result<Option<BlurBinding>,()>{
+    if node.kind!="TextInput"{return Err(());}
+    match blur_prop(node,"validate_on_blur")?{
+        None|Some("false")=>Ok(None),
+        Some("true")=>{
+            let form=blur_prop(node,"form")?.filter(|x|valid_name(x)).ok_or(())?;
+            // A valid callback is required; runtime independently verifies
+            // uniqueness, clipping and current focus eligibility.
+            blur_prop(node,"on_change")?.and_then(|x|x.strip_prefix("cb:"))
+                .and_then(|x|x.parse::<u64>().ok()).ok_or(())?;
+            let rev=blur_prop(node,"value_revision")?.and_then(|v|{
+                if v.is_empty()||!v.bytes().all(|b|b.is_ascii_digit()){return None;}
+                v.parse::<u64>().ok()
+            }).ok_or(())?;
+            Ok(Some(BlurBinding{form:form.to_owned(),revision:rev}))
+        },
+        Some(_)=>Err(()),
+    }
+}
+/// Only the committed local EditSession value is supplied. No projected
+/// IBus preedit, private text or Host echo is persisted as warning metadata.
+pub(crate) fn blur_error(node:&UiNode,committed:&str)->Option<FieldError>{
+    match rule(node,committed){
+        Ok(value)=>value,
+        Err(())=>Some(FieldError::InvalidRule),
+    }
+}
+
 fn parse_limit(raw:Option<&str>)->Result<Option<usize>,()>{
     match raw{
         None=>Ok(None),
@@ -291,6 +333,8 @@ fn parse_limit(raw:Option<&str>)->Result<Option<usize>,()>{
     }
 }
 fn rule(node:&UiNode,value:&str)->Result<Option<FieldError>,()>{
+    // A broken opt-in cannot silently allow the form to proceed.
+    blur_binding(node)?;
     let required=match prop(node,"required"){
         None|Some("false")=>false,
         Some("true")=>true,
@@ -444,6 +488,60 @@ mod tests{
             HitTarget::TextInput{on_change,..}=>Some(on_change),
             _=>None,
         }).collect()
+    }
+    #[test]
+    fn explicit_blur_policy_requires_unique_versioned_form_and_callback(){
+        let mut field=n("TextInput",&[("form","signup"),("on_change","cb:101"),
+            ("value_revision","8"),("validate_on_blur","true")],vec![]);
+        assert_eq!(blur_binding(&field),Ok(Some(BlurBinding{
+            form:"signup".to_owned(),revision:8
+        })));
+        field.set_prop("validate_on_blur","false");
+        assert_eq!(blur_binding(&field),Ok(None));
+        field.props.retain(|(k,_)|k!="validate_on_blur");
+        assert_eq!(blur_binding(&field),Ok(None));
+        for value in ["True","yes",""," true","false ","1"]{
+            field.set_prop("validate_on_blur",value);
+            assert_eq!(blur_binding(&field),Err(()));
+        }
+        field.set_prop("validate_on_blur","true");
+        for (key,value) in [("value_revision","x"),("form"," bad"),
+            ("on_change","invalid")] {
+            let mut copy=field.clone();
+            copy.set_prop(key,value);
+            assert_eq!(blur_binding(&copy),Err(()),"{key} must fail closed");
+        }
+        for key in ["validate_on_blur","value_revision","form","on_change"]{
+            let mut copy=field.clone();
+            let first=prop(&copy,key).unwrap().to_owned();
+            copy.props.push((key.to_owned(),first));
+            assert_eq!(blur_binding(&copy),Err(()),"duplicate {key} rejected");
+        }
+    }
+    #[test]
+    fn blur_validation_uses_unicode_committed_value_and_not_projected_preedit(){
+        let input=n("TextInput",&[("form","signup"),("on_change","cb:77"),
+            ("value_revision","10"),("validate_on_blur","true"),
+            ("required","true"),("min_graphemes","2"),("max_graphemes","3")],vec![]);
+        assert_eq!(blur_error(&input,""),Some(FieldError::Required));
+        assert_eq!(blur_error(&input,"👩‍💻"),Some(FieldError::TooShort));
+        assert_eq!(blur_error(&input,"👩‍💻🇮🇱"),None);
+        assert_eq!(blur_error(&input,"👩‍💻🇮🇱e\u{301}"),None);
+        assert_eq!(blur_error(&input,"👩‍💻🇮🇱e\u{301}a"),Some(FieldError::TooLong));
+        let mut broken=input.clone();
+        broken.set_prop("validate_on_blur","invalid");
+        assert_eq!(blur_error(&broken,"👩‍💻🇮🇱"),Some(FieldError::InvalidRule));
+    }
+    #[test]
+    fn malformed_validate_on_blur_blocks_form_submit_not_only_hint(){
+        let mut root=n("App",&[],vec![n("TextInput",&[
+            ("form","signup"),("on_change","cb:71"),("value","abc"),
+            ("value_revision","4"),("validate_on_blur","True")],vec![])]);
+        let p=plan(&root);
+        let mut values=HashMap::new();values.insert(71,"abc".to_owned());
+        assert!(!assess(&root,&p,"signup",&values,&eligible(&root,&p)).valid());
+        root.children[0].set_prop("validate_on_blur","true");
+        assert!(assess(&root,&p,"signup",&values,&eligible(&root,&p)).valid());
     }
     #[test]
     fn live_edit_limit_and_form_validation_share_one_fail_closed_parser(){
