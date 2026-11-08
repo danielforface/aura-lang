@@ -1,0 +1,449 @@
+name: AURA X-RAY Windows EXE
+
+on:
+  push:
+    branches: [product/xray-windows-v0]
+    paths:
+      - "apps/xray/**"
+      - ".github/workflows/xray-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xray-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-executable:
+    name: Aura source to genuine Windows x64 EXE
+    runs-on: windows-2022
+    timeout-minutes: 65
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure native MSVC linker and Windows SDK
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache compiler dependencies for repeatable product pulses
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Print source and compiler versions
+        run: |
+          Write-Host "SOURCE_SHA $env:GITHUB_SHA"
+          rustc --version
+          cargo --version
+          clang --version
+
+      - name: Build Aura compiler from this repo
+        run: |
+          cargo build -p aura --locked --no-default-features
+          if ($LASTEXITCODE -ne 0) { throw "Aura compiler build failed" }
+          if (!(Test-Path "target/debug/aura.exe")) { throw "Missing newly built Aura compiler" }
+
+      - name: Compile real Aura product logic to C
+        run: |
+          & "target/debug/aura.exe" build apps/xray/src/analysis.aura --backend c
+          if ($LASTEXITCODE -ne 0) { throw "Aura business source compilation failed" }
+          if (!(Test-Path "build/analysis/module.c")) { throw "No generated module.c" }
+          if (!(Test-Path "build/analysis/aura_runtime.h")) { throw "No generated aura_runtime.h" }
+          $generated = Get-Content "build/analysis/module.c" -Raw
+          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact", "xray_burst_gate", "xray_recovery_gate", "xray_cpu_hot_gate", "xray_cpu_streak_gate", "xray_transfer_surge_gate", "xray06_cpu_streak_next", "xray06_io_streak_next", "xray06_memory_remaining", "xray06_memory_phase", "xray06_signal_dimensions", "xray06_evidence_grade", "xray07_cpu_threshold", "xray07_io_threshold", "xray07_memory_threshold", "xray07_cpu_min_samples", "xray07_io_min_samples", "xray07_cpu_next", "xray07_io_next", "xray07_memory_gate", "xray07_signal_dimensions", "xray07_coincidence_gate", "xray07_policy_support")) {
+            $signature = '(?m)\buint32_t\s+' + [regex]::Escape($fn) + '\s*\('
+            if (![regex]::IsMatch($generated, $signature)) {
+              throw "Aura codegen ABI regression: $fn must return real uint32_t, not void or prototype"
+            }
+          }
+
+      - name: Compile native Aura Studio widget and navigation source to C
+        run: |
+          & "target/debug/aura.exe" build apps/xray/src/studio.aura --backend c
+          if ($LASTEXITCODE -ne 0) { throw "XR08 Aura UI compilation failed" }
+          if (!(Test-Path "build/studio/module.c")) { throw "XR08 Aura generated UI missing" }
+          $ui = Get-Content "build/studio/module.c" -Raw
+          $names = @(
+            "xray08_ui_window_min_w","xray08_ui_window_min_h",
+            "xray08_ui_tab_y","xray08_ui_tab_x","xray08_ui_tab_hit",
+            "xray08_ui_cycle_policy","xray08_ui_case_x","xray08_ui_case_y",
+            "xray08_ui_case_w","xray08_ui_case_step",
+            "xray08_ui_case_row_y","xray08_ui_case_hit",
+            "xray08_ui_case_index","xray08_ui_case_page_for",
+            "xray08_ui_cycle_case","xray08_ui_page_next",
+            "xray08_ui_page_prev","xray08_ui_chart_x",
+            "xray08_ui_chart_width","xray08_ui_chart_sample_x",
+            "xray08_ui_chart_height","xray08_ui_chart_hit",
+            "xray08_ui_detail_x","xray08_ui_detail_w",
+            "xray08_ui_evidence_tone","xray08_ui_score_tone"
+          )
+          foreach($fn in $names){
+            $signature='(?m)\buint32_t\s+'+[regex]::Escape($fn)+'\s*\('
+            if(![regex]::IsMatch($ui,$signature)){
+              throw "XR08 UI ABI missing genuine Aura return symbol $fn"
+            }
+          }
+          Write-Host "XR08_AURA_UI_CODEGEN_PASS $($names.Count) native Aura UI functions"
+
+      - name: Link Aura-generated C plus restricted Win32 adapter
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $q = [char]34
+          $buildInfo = "#pragma once" + [Environment]::NewLine + "#define XR_BUILD_SHA " + $q + $env:GITHUB_SHA + $q + [Environment]::NewLine
+          [System.IO.File]::WriteAllText((Join-Path $PWD "apps/xray/src/build_info.h"), $buildInfo)
+          $clang = (Get-Command clang.exe -ErrorAction Stop).Source
+          $flags = @(
+            "-std=c11", "-O2", "-Werror=implicit-function-declaration",
+            "-include", "apps/xray/src/build_info.h",
+            "-I", "build/analysis", "-I", "build/studio", "-I", "aura-stdlib/include",
+            "build/analysis/module.c",
+            "build/studio/module.c",
+            "aura-stdlib/src/stdlib.c",
+            "apps/xray/src/win32_host.c",
+            "apps/xray/src/xr02_engine.c",
+            "apps/xray/src/xr03_explorer.c",
+            "apps/xray/src/xr05_cases.c",
+            "apps/xray/src/xr08_studio.c",
+            "-lpsapi", "-luser32", "-lgdi32", "-o", "dist/AuraXRay.exe"
+          )
+          & $clang @flags
+          if ($LASTEXITCODE -ne 0) { throw "Windows EXE linker failed: no host-only fallback" }
+          if (!(Test-Path "dist/AuraXRay.exe")) { throw "EXE not produced" }
+
+      - name: Execute generated Aura semantic vectors and real Windows capture
+        run: |
+          $selfTest = (& "dist/AuraXRay.exe" --self-test | Out-String)
+          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS') -or !$selfTest.Contains('AURA_XR07_POLICY_PASS') -or !$selfTest.Contains('AURA_XR08_STUDIO_PASS')) {
+             throw "XR08 compiled-Aura analysis, UI layout and state contract failed"
+          }
+          Write-Host $selfTest
+          $version = (& "dist/AuraXRay.exe" --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or !$version.Contains($env:GITHUB_SHA)) { throw "EXE provenance mismatch" }
+          & "dist/AuraXRay.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw "Help failed" }
+          & "dist/AuraXRay.exe" --capture --seconds 3 --out "dist/ci-capture.jsonl" --report "dist/ci-report.html"
+          if ($LASTEXITCODE -ne 0) { throw "Live Windows process capture failed" }
+          $r = @(Get-Content "dist/ci-capture.jsonl" -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+          $start = @($r | Where-Object type -eq "capture_start")
+          $end = @($r | Where-Object type -eq "capture_end")
+          $p = @($r | Where-Object type -eq "process")
+          $samples = @($r | Where-Object type -eq "sample_end")
+          if ($start.Count -ne 1 -or $end.Count -ne 1 -or $samples.Count -ne 3) { throw "Missing XR-02 capture records" }
+          if ($start[0].schema -ne "aura.xray.capture/2" -or $start[0].build -ne $env:GITHUB_SHA) { throw "Capture source metadata invalid" }
+          if ($end[0].status -ne "complete" -or $end[0].samples -ne 3 -or $p.Count -lt 3) { throw "No complete live capture" }
+          if ($end[0].elapsed_ms -lt 3000) { throw "Capture duration is less than requested three seconds" }
+          if ($end[0].monotonic_ms -le $start[0].monotonic_ms) { throw "Capture monotonic time did not progress" }
+          if (($end[0].monotonic_ms - $start[0].monotonic_ms) -ne $end[0].elapsed_ms) { throw "Inconsistent capture duration counters" }
+          if (!$end[0].utc) { throw "Missing capture-end UTC time" }
+          if (@($p | Where-Object { $null -ne $_.working_set_kib }).Count -lt 1) { throw "No readable real process memory readings" }
+          if (@($p | Where-Object { $_.PSObject.Properties.Name -contains "process_name" }).Count -gt 0) { throw "Sensitive process names exposed by default" }
+          $invalid = @($p | Where-Object { $null -ne $_.memory_quanta_256m -and $null -ne $_.working_set_mib -and $_.memory_quanta_256m -ne [math]::Floor($_.working_set_mib / 256) })
+          if ($invalid.Count -gt 0) { throw "Aura classification differs from observed memory band" }
+          if (@($p | Where-Object { $_.sample -eq 1 -and $null -ne $_.activity_score }).Count -gt 0) { throw "Baseline must not imply a rate or score" }
+          $vectors = @($p | Where-Object { $null -ne $_.activity_score })
+          if ($vectors.Count -lt 5) { throw "XR-02 temporal analysis produced no meaningful live vectors" }
+          if ($end[0].derived_records -ne $vectors.Count) { throw "Aura score count does not match summary" }
+          # XR-04 exact CPU + I/O source counters must accompany every fully
+          # observed vector, and coarse and raw values must be consistent.
+          $missingRaw = @($vectors | Where-Object {
+             $null -eq $_.cpu_total_100ns -or
+             $null -eq $_.cumulative_io_read_bytes -or
+             $null -eq $_.cumulative_io_write_bytes -or
+             $null -eq $_.parent_pid -or $null -eq $_.thread_count
+          })
+          if ($missingRaw.Count -gt 0) { throw "XR04 evidence provenance missing raw counter or topology fields" }
+          $rawCoarseMismatch = @($vectors | Where-Object {
+             $_.cpu_total_ms -ne [math]::Floor($_.cpu_total_100ns / 10000) -or
+             $_.cumulative_io_read_kib -ne [math]::Floor($_.cumulative_io_read_bytes / 1024) -or
+             $_.cumulative_io_write_kib -ne [math]::Floor($_.cumulative_io_write_bytes / 1024)
+          })
+          if ($rawCoarseMismatch.Count -gt 0) { throw "XR04 source counters disagree with legacy coarse counters" }
+          if (@($p | Where-Object { $null -ne $_.activity_score -and ($null -eq $_.cpu_millicores -or $null -eq $_.io_read_kib_s -or $null -eq $_.io_write_kib_s -or $null -eq $_.memory_delta_kib) }).Count -gt 0) { throw "Scored incomplete observation" }
+          $checkScore = @($vectors | Where-Object {
+            $_.activity_score -ne ([math]::Floor($_.cpu_millicores / 100) +
+               [math]::Floor($_.io_read_kib_s / 2048) +
+               [math]::Floor($_.io_write_kib_s / 2048) +
+               (2 * [math]::Min(16384, [math]::Floor([math]::Max(0, $_.memory_delta_kib) / 1024))))
+          })
+          if ($checkScore.Count -gt 0) { throw "Aura activity scoring diverges from independent oracle" }
+          if (!(Test-Path "dist/ci-report.html")) { throw "No offline field report" }
+          $html = Get-Content "dist/ci-report.html" -Raw
+          if ($html.Length -lt 9000 -or !$html.Contains('id="filter"') -or !$html.Contains('id="metric"') -or !$html.Contains('id="matrix"') -or !$html.Contains('id="topoRows"') -or !$html.Contains('id="caseRows"') -or !$html.Contains('NATIVE AURA DECISION GATES') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "XR-04 evidence workbench missing required topology/integrity features" }
+          $htmlRaw=([regex]::Match($html,'"rawPrecision":(\d+)')).Groups[1].Value
+          $htmlVerified=([regex]::Match($html,'"rateVerified":(\d+)')).Groups[1].Value
+          $htmlCases=$html.Contains('"cases":[')
+          Write-Host "XR08_HTML_AUDIT rawPrecision=$htmlRaw rateVerified=$htmlVerified expectedVectors=$($vectors.Count) hasCases=$htmlCases bytes=$($html.Length)"
+          if ($htmlRaw -ne '1' -or $htmlVerified -ne [string]$vectors.Count -or !$htmlCases) {
+             throw "XR05 casebook/raw evidence mismatch: raw=$htmlRaw audited=$htmlVerified scored=$($vectors.Count) cases=$htmlCases"
+          }
+          # Parse the actual emitted JavaScript rather than assuming success
+          # from static HTML tags. Node check uses no external libraries.
+          $script = [regex]::Match($html, '(?s)<script>(.*?)</script>').Groups[1].Value
+          if (!$script -or !$script.Contains('function renderCases()')) {
+             throw "XR05 casebook script missing"
+          }
+          [IO.File]::WriteAllText((Join-Path $PWD "dist/ci-casebook.js"),$script)
+          node --check "dist/ci-casebook.js"
+          if ($LASTEXITCODE -ne 0) { throw "XR05 offline casebook JavaScript failed syntax check" }
+          if (!$html.Contains('"rawPrecision":1') -or !$html.Contains(('"rateVerified":' + $vectors.Count))) {
+             throw "XR04 generated report did not independently recheck EVERY exact counter rate"
+          }
+          if ($html -match '(?i)(https?://|src="[^"]+\.js|process_name)') { throw "Offline report has unexpected external dependency or privacy leak" }
+          # Verified post-render regression: previous XR-03 candidate displayed NaN
+          # because the formatter referenced its own function name instead of x.
+          if (!$html.Contains("const n=x=>Number(x||0).toLocaleString('en-US')")) {
+            throw "XR03 number formatter regression: cards/event inspector can display NaN"
+          }
+          Write-Host "XRAY_TEMPORAL_ORACLE_PASS vectors=$($vectors.Count) elapsed_ms=$($end[0].elapsed_ms) report_bytes=$($html.Length)"
+          # Replay the actual Windows runner capture, and reject any tampered score.
+          & "dist/AuraXRay.exe" --replay "dist/ci-capture.jsonl" --report "dist/ci-replay.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR03 offline replay of genuine Windows capture failed" }
+          $replay = Get-Content "dist/ci-replay.html" -Raw
+          if (!$replay.Contains("const baseline=null") -or !$replay.Contains("EVIDENCE")) { throw "XR03 replay workbench invalid" }
+          Copy-Item "dist/ci-capture.jsonl" "dist/ci-baseline.jsonl"
+          & "dist/AuraXRay.exe" --compare "dist/ci-baseline.jsonl" "dist/ci-capture.jsonl" --report "dist/ci-comparison.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR03 baseline vs candidate comparison failed" }
+          $comparison = Get-Content "dist/ci-comparison.html" -Raw
+          if (!$comparison.Contains("const baseline={")) { throw "XR03 comparison lacks baseline dataset" }
+          # Integrity canary: a syntactically valid but tampered score must fail closed.
+          $originalText = Get-Content "dist/ci-capture.jsonl" -Raw
+          $tampered = $originalText -replace '"activity_score":0','"activity_score":9999'
+          if ($tampered -eq $originalText) { throw "No score-zero canary to tamper with" }
+          [IO.File]::WriteAllText((Join-Path $PWD "dist/ci-tampered.jsonl"), $tampered)
+          & "dist/AuraXRay.exe" --replay "dist/ci-tampered.jsonl" --report "dist/ci-should-not-exist.html" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-should-not-exist.html")) { throw "XR03 accepted falsified process scores" }
+          # Corrupt JSON must also reject, without leaving an empty report file.
+          [IO.File]::WriteAllText((Join-Path $PWD "dist/ci-bad.jsonl"), "{invalid json")
+          & "dist/AuraXRay.exe" --replay "dist/ci-bad.jsonl" --report "dist/ci-bad-report.html" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-bad-report.html")) { throw "XR03 accepted invalid JSONL" }
+          # XR-04 precision regression: maliciously alter a raw CPU tick count
+          # while leaving the rounded CPU-ms field and published score unchanged.
+          # This is stronger than merely recomputing the score formula.
+          $lines = [IO.File]::ReadAllLines((Join-Path $PWD "dist/ci-capture.jsonl"))
+          $changed = $false
+          for ($i=0; $i -lt $lines.Length; $i++) {
+             if (!$changed -and $lines[$i] -match '"cpu_total_100ns":([0-9]+)') {
+                $tick = [uint64]$Matches[1]
+                $originalRounded = [math]::Floor($tick / 10000)
+                $trial = $tick + 1
+                if ([math]::Floor($trial / 10000) -eq $originalRounded) {
+                   $lines[$i] = $lines[$i] -replace '"cpu_total_100ns":[0-9]+', ('"cpu_total_100ns":' + $trial)
+                   $changed = $true
+                }
+             }
+          }
+          if (!$changed) { throw "Could not construct exact-counter tamper fixture" }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist/ci-raw-tampered.jsonl"),$lines)
+          # Any source raw mutation could still be consistent when one tick does
+          # not affect the truncated millisecond rate. Do not claim byte-integrity
+          # authentication; instead test a significant raw change that alters rate.
+          $lines = [IO.File]::ReadAllLines((Join-Path $PWD "dist/ci-capture.jsonl"))
+          $changed = $false
+          for ($i=0; $i -lt $lines.Length; $i++) {
+             if (!$changed -and $lines[$i] -match '"io_read_kib_s":([0-9]+)' -and $lines[$i] -notmatch '"activity_score":null') {
+                $lines[$i] = $lines[$i] -replace '"io_read_kib_s":[0-9]+', '"io_read_kib_s":999999'
+                $changed = $true
+             }
+          }
+          if (!$changed) { throw "Could not construct rate-falsification fixture" }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist/ci-rate-tampered.jsonl"),$lines)
+          & "dist/AuraXRay.exe" --replay "dist/ci-rate-tampered.jsonl" --report "dist/ci-rate-forged.html" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-rate-forged.html")) { throw "XR04 accepted raw-counter-inconsistent rate" }
+          # The headless JSON uses the SAME strict parser and Aura-native cases.
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --out "dist/ci-casebook.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR06 headless Aura casebook export failed" }
+          $casebook = Get-Content "dist/ci-casebook.json" -Raw | ConvertFrom-Json
+          if ($casebook.schema -ne 'aura.xray.casebook/1' -or
+              $casebook.source_build -ne $env:GITHUB_SHA -or
+              $casebook.observations -ne $p.Count -or
+              $casebook.comparable_vectors -ne $vectors.Count -or
+              $casebook.verified_raw_vectors -ne $vectors.Count -or
+              $casebook.complete_case_scope -ne $true) {
+              throw "XR06 headless casebook schema or provenance invalid"
+          }
+          $plain = Get-Content "dist/ci-casebook.json" -Raw
+          if ($plain -match '(?i)(process_name|https?://|cmdline|path_to_exe)') {
+             throw "XR06 JSON casebook violates process-name privacy"
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --out "dist/ci-casebook.json" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "XR06 allowed overwriting the original casebook" }
+          & "dist/AuraXRay.exe" --explain "dist/ci-rate-tampered.jsonl" --out "dist/ci-tampered-casebook.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-tampered-casebook.json")) {
+             throw "XR06 accepted raw-counter tampering or left invalid JSON"
+          }
+          # XR-07: the same immutable, exact source is evaluated by three real
+          # Aura policy models. This tests the observed CLI, not just C fixtures.
+          & "dist/AuraXRay.exe" --sweep "dist/ci-capture.jsonl" --out "dist/ci-policy-sweep.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 full native policy sweep failed" }
+          $sweep = Get-Content "dist/ci-policy-sweep.json" -Raw | ConvertFrom-Json
+          $profiles = @($sweep.profiles)
+          if ($sweep.schema -ne 'aura.xray.policy_sweep/1' -or
+              $sweep.source_build -ne $env:GITHUB_SHA -or
+              $sweep.observations -ne $p.Count -or
+              $profiles.Count -ne 3 -or
+              $profiles[0].policy -ne 'sensitive' -or
+              $profiles[1].policy -ne 'standard' -or
+              $profiles[2].policy -ne 'strict') {
+              throw "XR07 source metadata or three policy profiles malformed"
+          }
+          if ($profiles[0].thresholds.cpu_millicores -ne 500 -or
+              $profiles[1].thresholds.cpu_millicores -ne 700 -or
+              $profiles[2].thresholds.cpu_millicores -ne 950 -or
+              $profiles[2].thresholds.transfer_kib_s -ne 32768 -or
+              $profiles[2].thresholds.memory_growth_kib -ne 65536) {
+              throw "XR07 policy sweep does not report compiled Aura thresholds"
+          }
+          foreach($profile in $profiles){
+              if($profile.case_count -ne @($profile.cases).Count) {
+                 throw "XR07 case count is not the count of generated cases"
+              }
+              foreach($c in $profile.cases){
+                  if ($null -eq $c.witnesses -or $c.policy_support -lt 1 -or
+                      $c.policy_support -gt 3) {
+                      throw "XR07 policy case missing source witnesses or support count"
+                  }
+              }
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --policy strict --out "dist/ci-strict-casebook.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 strict explain failed" }
+          $strict = Get-Content "dist/ci-strict-casebook.json" -Raw | ConvertFrom-Json
+          if ($strict.policy -ne 'strict' -or $strict.thresholds.cpu_millicores -ne 950) {
+              throw "XR07 --explain did not use the chosen Aura policy"
+          }
+          & "dist/AuraXRay.exe" --replay "dist/ci-capture.jsonl" --policy sensitive --report "dist/ci-sensitive.html"
+          if ($LASTEXITCODE -ne 0) { throw "XR07 sensitive HTML replay failed" }
+          $sensitiveHtml = Get-Content "dist/ci-sensitive.html" -Raw
+          if (!$sensitiveHtml.Contains('"policy":"sensitive"') -or
+              !$sensitiveHtml.Contains('id="caseRows"')) {
+              throw "XR07 report did not preserve policy provenance"
+          }
+          & "dist/AuraXRay.exe" --sweep "dist/ci-capture.jsonl" --out "dist/ci-policy-sweep.json" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "XR07 sweep overwrote existing output" }
+          & "dist/AuraXRay.exe" --sweep "dist/ci-rate-tampered.jsonl" --out "dist/ci-fake-sweep.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-fake-sweep.json")) {
+              throw "XR07 sweep accepted tampered input"
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --policy unknown --out "dist/ci-invalid-policy.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-invalid-policy.json")) {
+              throw "XR07 allowed unsupported policy"
+          }
+          $sweepRaw=Get-Content "dist/ci-policy-sweep.json" -Raw
+          if($sweepRaw -match '(?i)(process_name|cmdline|path_to_exe|https?://)'){
+              throw "XR07 sweep leaks private process metadata or external links"
+          }
+          # New native Win32 GDI compositor runs OFFSCREEN in CI, no desktop,
+          # browser, JS, installed runtime or remote graphics service.
+          # Same paint_studio entrypoint is used by the interactive window.
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-capture.jsonl" --out "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp"
+          if($LASTEXITCODE -ne 0){ throw "XR08 compiled Aura GUI offscreen execution failed" }
+          $bmp=[System.IO.File]::ReadAllBytes((Join-Path $PWD "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp"))
+          if($bmp.Length -ne (54 + 1360 * 840 * 4) -or
+             $bmp[0] -ne 66 -or $bmp[1] -ne 77 -or
+             [BitConverter]::ToInt32($bmp,18) -ne 1360 -or
+             [BitConverter]::ToInt32($bmp,22) -ne -840){
+             throw "XR08 failed to draw actual validated source to top-down GDI BMP"
+          }
+          # Fail closed on evidence tampering and existing output.
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-rate-tampered.jsonl" --out "dist/ci-bad-native.bmp" 2>$null
+          if($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-bad-native.bmp")){
+              throw "XR08 native viewer accepted tampered capture"
+          }
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-capture.jsonl" --out "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp" 2>$null
+          if($LASTEXITCODE -eq 0){ throw "XR08 native preview overwrote existing evidence" }
+          Write-Host "XR08_NATIVE_AURA_STUDIO_PASS window link, offscreen GDI, bitmap, strict source, no-overwrite"
+          Write-Host "XR07_AURA_POLICY_SWEEP_PASS three compiled profiles, source witnesses, replay, bad-input rejection"
+          Write-Host "XR06_HEADLESS_CASEBOOK_PASS schema, source counters, privacy, no-overwrite, tamper rejection"
+          Write-Host "XR04_RAW_COUNTER_ORACLE_PASS full rates, topology, tampered-rate rejection"
+          Write-Host "XR03_REPLAY_COMPARE_ORACLE_PASS replay, comparison, tamper rejection, invalid JSON rejection"
+          # Negative controls: reject invalid duration; never create the requested file.
+          $badOutput = Join-Path $env:RUNNER_TEMP "xray-invalid-duration.jsonl"
+          & "dist/AuraXRay.exe" --capture --seconds 0 --out $badOutput 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path $badOutput)) { throw "Zero-duration capture must fail without writing" }
+          # Negative control: refuse to overwrite an existing evidence file.
+          $original = (Get-FileHash "dist/ci-capture.jsonl" -Algorithm SHA256).Hash
+          & "dist/AuraXRay.exe" --capture --seconds 1 --out "dist/ci-capture.jsonl" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Existing capture must not be overwritten" }
+          if ((Get-FileHash "dist/ci-capture.jsonl" -Algorithm SHA256).Hash -ne $original) { throw "Evidence capture bytes changed despite overwrite refusal" }
+          Write-Host "XRAY_NEGATIVE_GATES_PASS no-overwrite and invalid duration"
+          Write-Host "XRAY_WINDOWS_SMOKE_PASS process_records=$($p.Count) samples=3 elapsed_ms=$($end[0].elapsed_ms)"
+          # Expected failing CLI calls above have passed their negative acceptance checks.
+          # pwsh preserves the last native failure exit code unless explicitly cleared.
+          exit 0
+
+      - name: Validate architecture, SHA256 and release manifest
+        run: |
+          $exe = [IO.File]::ReadAllBytes((Join-Path $PWD "dist/AuraXRay.exe"))
+          if ($exe.Length -lt 512 -or $exe[0] -ne 77 -or $exe[1] -ne 90) { throw "Not an EXE MZ image" }
+          $pe = [BitConverter]::ToInt32($exe, 60)
+          if ($pe -le 0 -or $pe + 6 -gt $exe.Length) { throw "PE offset invalid" }
+          if ($exe[$pe] -ne 80 -or $exe[$pe+1] -ne 69 -or $exe[$pe+2] -ne 0 -or $exe[$pe+3] -ne 0) { throw "PE signature invalid" }
+          if ([BitConverter]::ToUInt16($exe, $pe + 4) -ne 0x8664) { throw "Expected x86-64 PE" }
+          $sha = (Get-FileHash "dist/AuraXRay.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            schema = "aura.xray.build-manifest/1"
+            product = "AuraXRay"
+            version = "0.8.0-xr08"
+            source_sha = $env:GITHUB_SHA
+            compiler = "aura from exact source SHA"
+            backend = "aura-backend-c"
+            platform = "windows-x64-pe"
+            binary = "AuraXRay.exe"
+            binary_sha256 = $sha
+            runtime_windows_smoke = "PASS"
+            signing = "UNSIGNED_EXPERIMENTAL"
+            limitations = @("native GDI window; Win32 host adapter still in C","not yet pure Aura Lumina/Win32 FFI","no ETW","no automatic fixes","no root-cause proof","score is heuristic","untrusted input bounded","unsigned experimental")
+          }
+          $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
+          Copy-Item "apps/xray/README.md" "dist/README.txt"
+          Copy-Item "dist/ci-report.html" "dist/XR08-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-comparison.html" "dist/XR08-EXAMPLE-COMPARISON.html"
+          Write-Host "AURA_XRAY_EXE_SHA256 $sha"
+
+      - name: Upload deliverable Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXRay-windows-x64-${{ github.sha }}
+          path: |
+            dist/AuraXRay.exe
+            dist/BUILD-MANIFEST.json
+            dist/README.txt
+            dist/ci-casebook.json
+            dist/ci-policy-sweep.json
+            dist/ci-strict-casebook.json
+            dist/XR08-NATIVE-STUDIO-PREVIEW.bmp
+            dist/XR08-EXAMPLE-REPORT.html
+            dist/XR08-EXAMPLE-COMPARISON.html
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Preserve generated Aura C on failed CI for auditable diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXRay-failed-native-diagnostics-${{ github.sha }}
+          path: |
+            build/analysis/module.c
+            build/analysis/aura_runtime.h
+            build/studio/module.c
+            build/studio/aura_runtime.h
+            dist/ci-capture.jsonl
+            dist/ci-report.html
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload sanitized Windows test capture (CI diagnostic only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXRay-ci-capture-${{ github.sha }}
+          path: dist/ci-capture.jsonl
+          retention-days: 7
+          if-no-files-found: error

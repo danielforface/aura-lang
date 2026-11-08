@@ -1,0 +1,189 @@
+# AURA X-RAY — current-main-safe native analysis contract.
+# This is REAL Aura source compiled through aura-backend-c into the Windows EXE.
+# No main() here: the minimal Win32 collection host calls these Aura functions.
+# Units are explicitly defined; no claimed formal proof of these functions.
+
+# Returns full 256-MiB quanta of a Windows process working set.
+# 0..255 MiB => 0; 256..511 MiB => 1; etc.
+cell xray_memory_quanta_256m(working_set_mib: u32):
+    yield working_set_mib / 256
+
+# Returns full 64-MiB quanta of cumulative process read IO.
+# Cumulative counter, NOT a per-second rate.
+cell xray_io_read_quanta_64m(io_read_kib: u32):
+    yield io_read_kib / 65536
+
+# Returns a 1,024-KiB resolution; helps exercise non-constant Aura logic.
+cell xray_working_set_mib(working_set_kib: u32):
+    yield working_set_kib / 1024
+
+# XR-02 temporal analysis: callers must supply elapsed_ms > 0, counter deltas
+# known monotonic and deltas <= 4294967 KiB to avoid uint32 overflow.
+# Units are KiB/second (whole integer, conservative truncation).
+cell xray_read_kib_per_sec(delta_kib: u32, elapsed_ms: u32):
+    yield (delta_kib * 1000) / elapsed_ms
+
+# 1000 millicores = 100% of ONE logical CPU. Values may exceed 1000.
+cell xray_cpu_millicores(delta_cpu_ms: u32, elapsed_ms: u32):
+    yield (delta_cpu_ms * 1000) / elapsed_ms
+
+# Transparent ACTIVITY index (NOT ML/anomaly proof).
+# CPU 100 millicores = 1 point; read/write 2048 KiB/s = 1 point each;
+# 1 MiB positive working-set growth = 2 points. No negative growth bonus.
+# Only called on complete, identity-validated comparable vectors.
+cell xray_activity_score(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_mib: u32):
+    yield (cpu_milli / 100) + (read_kib_s / 2048) + (write_kib_s / 2048) + (growth_mib * 2)
+
+# XR-03 evidence decomposition. These terms are ACTUAL AURA product logic,
+# not reimplemented by the offline HTML viewer or the Windows adapter.
+cell xray_cpu_impact(cpu_milli: u32):
+    yield cpu_milli / 100
+
+cell xray_io_impact(read_kib_s: u32, write_kib_s: u32):
+    yield (read_kib_s / 2048) + (write_kib_s / 2048)
+
+# growth_mib validated and bounded <= 16384 by the native caller.
+cell xray_memory_impact(growth_mib: u32):
+    yield growth_mib * 2
+
+# XR-05 / Investigator — all behavioral thresholds are actual compiled Aura.
+# C handles only observed process identity, sample ordering and evidence transport.
+# None of these gates establishes causation, leaks, or a security diagnosis.
+# A growth delta of 32768 KiB or more is a noteworthy memory pulse.
+cell xray_burst_gate(growth_kib: u32):
+    yield growth_kib / 32768
+
+# Caller proves burst_kib >= 32768 and retraction_kib >= 0.
+# Gate is true when the net retraction is >= half the original burst.
+cell xray_recovery_gate(retraction_kib: u32, burst_kib: u32):
+    yield retraction_kib / (burst_kib / 2)
+
+# CPU >= 700 millicores = >=70% of one core for this sample.
+cell xray_cpu_hot_gate(cpu_millicores: u32):
+    yield cpu_millicores / 700
+
+# Require at least 3 consecutive comparable high-CPU samples.
+cell xray_cpu_streak_gate(consecutive_samples: u32):
+    yield consecutive_samples / 3
+
+# Transfer surge in either direction >= 16384 KiB/s.
+# This is process I/O transfer, not guaranteed physical disk throughput.
+cell xray_transfer_surge_gate(read_kib_s: u32, write_kib_s: u32):
+    yield (read_kib_s / 16384) + (write_kib_s / 16384)
+
+
+# XR-06 / Aura Temporal State Machine: single-assignment arithmetic folds.
+# Mainline C emitter currently cannot safely lower a mutable value merged
+# across nested if/else Phi blocks (see Windows CI #42519053084). Therefore
+# these are FULLY AURA transition laws expressed as branchless bounded u32
+# arithmetic, not C implementations. C only enforces the scalar preconditions.
+#
+# In all recurrence laws, comparable/adjacent are normalized 0 or 1.
+# Precondition previous <= 4096. threshold_bit(x,t) is implemented as
+#   1 - 1 / (x / t + 1)
+# using unsigned integer division: exactly 0 below t, otherwise exactly 1.
+
+cell xray06_cpu_streak_next(previous: u32, cpu_milli: u32, comparable: u32, adjacent: u32):
+    val hot: u32 = 1 - (1 / ((cpu_milli / 700) + 1))
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * hot
+
+cell xray06_io_streak_next(previous: u32, read_kib_s: u32, write_kib_s: u32, comparable: u32, adjacent: u32):
+    val read_hot: u32 = 1 - (1 / ((read_kib_s / 16384) + 1))
+    val write_hot: u32 = 1 - (1 / ((write_kib_s / 16384) + 1))
+    val active: u32 = read_hot + write_hot - (read_hot * write_hot)
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * active
+
+# Caller proves previous + growth <= UINT32_MAX-1 and previous >= 1.
+# The multiplication masks modular unsigned subtraction when shrink exceeds
+# outstanding balance; no division by zero and no invented negative debt.
+cell xray06_memory_remaining(previous: u32, growth: u32, reduction: u32):
+    val total: u32 = previous + growth
+    val over: u32 = 1 - (1 / ((reduction / (total + 1)) + 1))
+    yield (total - reduction) * (1 - over)
+
+# States: 1 pending, 2 observed retraction, 3 window elapsed, 4 uncertain.
+# Caller guarantees 1<=previous<=4, age in [0,3], evidence_ok in {0,1},
+# and remaining<UINT32_MAX. The phase recurrence is absorbing after closure.
+cell xray06_memory_phase(previous: u32, remaining: u32, age: u32, evidence_ok: u32):
+    val pending: u32 = 1 / previous
+    val recovered: u32 = 1 / (remaining + 1)
+    val elapsed: u32 = age / 3
+    val result: u32 = (4 * (1 - evidence_ok)) + (evidence_ok * ((2 * recovered) + ((1 - recovered) * ((3 * elapsed) + (1 - elapsed)))))
+    yield ((1 - pending) * previous) + (pending * result)
+
+# Returns 0..3; simultaneous comparable observations, NOT causation.
+cell xray06_signal_dimensions(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_kib: u32):
+    val cpu_hot: u32 = 1 - (1 / ((cpu_milli / 700) + 1))
+    val read_hot: u32 = 1 - (1 / ((read_kib_s / 16384) + 1))
+    val write_hot: u32 = 1 - (1 / ((write_kib_s / 16384) + 1))
+    val io_hot: u32 = read_hot + write_hot - (read_hot * write_hot)
+    val memory_hot: u32 = 1 - (1 / ((growth_kib / 32768) + 1))
+    yield cpu_hot + io_hot + memory_hot
+
+# 0 unknown, 1 comparable, 2 exact raw-counter source, 3 exact+contiguous.
+# Input bits are proven 0/1 by the C evidence adapter.
+cell xray06_evidence_grade(comparable: u32, raw_verified: u32, contiguous: u32):
+    yield comparable * (1 + raw_verified * (1 + contiguous))
+
+
+# XR-07 / AURA POLICY ENGINE — the user can test how conclusions depend on
+# transparent thresholds WITHOUT silently changing source measurements.
+# Policy 0=sensitive, 1=standard (XR-06 compatible), 2=strict.
+# Adapter proves policy <=2, previous <=4096, comparable/adjacent are bits.
+# All thresholds, streak gates and co-signal decisions run in Aura.
+# No safety/security verdict or causality is inferred from the policy.
+
+cell xray07_cpu_threshold(policy: u32):
+    yield 500 + (200 * policy) + (50 * (policy / 2))
+
+cell xray07_io_threshold(policy: u32):
+    yield 8192 * (1 + policy + (policy / 2))
+
+cell xray07_memory_threshold(policy: u32):
+    yield 16384 * (1 + policy + (policy / 2))
+
+cell xray07_cpu_min_samples(policy: u32):
+    yield 2 + policy
+
+cell xray07_io_min_samples(policy: u32):
+    yield 1 + (policy / 2)
+
+cell xray07_cpu_next(previous: u32, cpu_milli: u32, comparable: u32, adjacent: u32, policy: u32):
+    val threshold: u32 = 500 + (200 * policy) + (50 * (policy / 2))
+    val active: u32 = 1 - (1 / ((cpu_milli / threshold) + 1))
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * active
+
+cell xray07_io_next(previous: u32, read_kib_s: u32, write_kib_s: u32, comparable: u32, adjacent: u32, policy: u32):
+    val threshold: u32 = 8192 * (1 + policy + (policy / 2))
+    val r: u32 = 1 - (1 / ((read_kib_s / threshold) + 1))
+    val w: u32 = 1 - (1 / ((write_kib_s / threshold) + 1))
+    val active: u32 = r + w - (r * w)
+    yield (previous * adjacent + 1 - ((previous / 4096) * adjacent)) * comparable * active
+
+cell xray07_memory_gate(growth_kib: u32, policy: u32):
+    val threshold: u32 = 16384 * (1 + policy + (policy / 2))
+    yield 1 - (1 / ((growth_kib / threshold) + 1))
+
+cell xray07_signal_dimensions(cpu_milli: u32, read_kib_s: u32, write_kib_s: u32, growth_kib: u32, policy: u32):
+    val cpu_min: u32 = 500 + (200 * policy) + (50 * (policy / 2))
+    val io_min: u32 = 8192 * (1 + policy + (policy / 2))
+    val memory_min: u32 = 16384 * (1 + policy + (policy / 2))
+    val c: u32 = 1 - (1 / ((cpu_milli / cpu_min) + 1))
+    val r: u32 = 1 - (1 / ((read_kib_s / io_min) + 1))
+    val w: u32 = 1 - (1 / ((write_kib_s / io_min) + 1))
+    val io: u32 = r + w - (r * w)
+    val m: u32 = 1 - (1 / ((growth_kib / memory_min) + 1))
+    yield c + io + m
+
+# For strict: all THREE source dimensions must concur in the same process
+# observation. Other policies require at least TWO; coincidence != causation.
+cell xray07_coincidence_gate(dimensions: u32, policy: u32):
+    val threshold: u32 = 2 + (policy / 2)
+    yield 1 - (1 / ((dimensions / threshold) + 1))
+
+
+# Count how many independently rerun policy profiles contain an overlapping
+# same-identity, same-kind observation. NOT a confidence probability.
+# Adapter proves each support bit is zero or one.
+cell xray07_policy_support(sensitive: u32, standard: u32, strict: u32):
+    yield sensitive + standard + strict
