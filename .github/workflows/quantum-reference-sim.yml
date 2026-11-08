@@ -111,6 +111,14 @@ jobs:
           cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run < aura-quantum-sim/fixtures/factorized_counts_hadamard_v1.json > /tmp/q28-counts-65536.json
           python3 -c 'import json; d=json.load(open("/tmp/q28-counts-65536.json")); assert d["schema"]=="aura.quantum.factorized-counts-result/1" and d["shots"]==65536 and d["counts_only"] is True and d["retained_shot_records"]==0 and d["qpu_hardware_jobs"]==0 and sum(d["histogram"].values())==65536 and len(d["histogram"])==2 and "results" not in d and "trace" not in d; print("Q28_COUNTS_REAL_CLI_PASS shots=65536 bins=2 retained=0 qpu=0")'
 
+      - name: Run real 128-wire Pauli Hamiltonian app and offline observable CLI
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example pauli_hamiltonian_128
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-observable-run < aura-quantum-sim/fixtures/observable_bell_t_128_v1.json > /tmp/q28-pauli128.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-observable-run < aura-quantum-sim/fixtures/observable_dynamic_v1.json > /tmp/q28-pauli-conditional.json
+          python3 -c 'import json,math; a=json.load(open("/tmp/q28-pauli128.json")); b=json.load(open("/tmp/q28-pauli-conditional.json")); assert a["schema"]=="aura.quantum.observable-result/1" and a["qubits"]==128 and a["term_count"]==5 and a["shots"]==1 and a["qpu_hardware_jobs"]==0 and abs(a["weighted_sum"]-(1.25+1/math.sqrt(2)))<1e-10 and a["peak_logical_state_bytes"]<8192; assert b["qubits"]==3 and b["term_count"]==4 and len(b["trace"])==2 and b["conditioned_on_observed_instruments"] is True and b["qpu_hardware_jobs"]==0; print("Q28_PAULI_OBSERVABLE_REAL_CLI_PASS qubits=128 bell_pairs=64 terms=5 conditional_trace=2 qpu=0")'
+
       - name: Record empirical long-depth precision residuals
         run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --test precision_envelope -- --nocapture
       - name: Fail on Rust Clippy warnings
@@ -173,6 +181,12 @@ jobs:
           set -euo pipefail
           cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-counts-run
           python aura-quantum-sim/tools/check_qiskit_counts.py aura-quantum-sim/target/release/aura-quantum-counts-run aura-quantum-sim/fixtures ci-artifacts/q28/c015-counts-born.json
+
+      - name: Independently compare Pauli/Y/weighted observable energies against pinned Qiskit
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-observable-run
+          python aura-quantum-sim/tools/check_qiskit_pauli_observables.py aura-quantum-sim/target/release/aura-quantum-observable-run aura-quantum-sim/fixtures/observable_bell_t_128_v1.json ci-artifacts/q28/c016-pauli-observables-qiskit.json
 
       - name: Upload reproducible parity evidence
         if: always()

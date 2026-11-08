@@ -55,8 +55,8 @@ fn computational_basis_plus_y_and_t_phases_have_correct_pauli_sign() {
     f.apply(Gate::Z(0)).unwrap();
     near(f.expectation_pauli("Y").unwrap(),-1.0);
     f.apply(Gate::S(0)).unwrap();
-    // H |0> -> |+>; S Z S = -I on |1>, but Z and S combine
-    // to +1 on the previously +i phase, returning to |+>.
+    // S Z S = identity: diag(1,i) diag(1,-1) diag(1,i)
+    // = diag(1,1), so H|0> returns to |+>.
     near(f.expectation_pauli("Y").unwrap(),0.0);
     near(f.expectation_pauli("X").unwrap(),1.0);
 }

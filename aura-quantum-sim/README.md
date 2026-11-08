@@ -666,3 +666,80 @@ branches/flags/oversized histograms, plus independently pinned Qiskit
 Born probabilities on 65,536 H and 32,768 Bell shots (98,304 total,
 six-sigma acceptance). This is empirical distribution confidence,
 not proof of RNG independence or hardware quantum behavior.
+
+
+
+## C-016 — Analytic Pauli expectations and bounded weighted Hamiltonians
+
+A new **real Rust/JSON CPU service** computes `⟨ψ|P|ψ⟩` for any
+`I/X/Y/Z` Pauli string on a supported final pure factorized state,
+plus a weighted energy of up to **64 real-coefficient terms**. It
+evaluates only small factor-local amplitudes (up to `2^10` per factor)
+and multiplies their real Hermitian expectations. It does **not**
+construct a global `2^128` state, estimate an observable by noisy
+Shots, use SVD/truncation, submit hardware, or promise error-free
+floating-point arithmetic.
+
+The new standalone executable `aura-quantum-observable-run` accepts
+`aura.quantum.observable-request/1` and produces
+`aura.quantum.observable-result/1`:
+
+- `qubits` 1–128, `classical_bits` 0–64, `seed`,
+  `max_memory_bytes` within the 16 MiB budget;
+  the same actual `instructions` as the factorized runtime;
+  1–64 `terms`, each `{"paulis":"XZYI...", "coefficient": 0.5}`.
+- **The Pauli string is q0-first**: character at position 0
+  acts on the least-significant global wire q0. This differs
+  from Qiskit's displayed string order; the independently
+  checked Qiskit oracle reverses the word before evaluation.
+  Invalid ASCII letters, wrong lengths, missing fields,
+  non-finite or out-of-bound coefficients, unknown hardware
+  controls, large inputs or unadmitted CPU work fail closed.
+- Coefficients are finite `f64` with magnitude at most 10,000.
+  Terms must number at most 64. Aggregate state + result
+  accounting has an explicit logical budget allowance;
+  this does **not** assert an actual allocator RSS bound.
+  The existing detailed, counts, noisy, stabilizer, symbolic
+  and dispatch request contracts remain unchanged.
+- The JSON returns each **real** analytic term expectation,
+  coefficient and contribution, their weighted sum, the
+  complete observed classical register and ordered instrument
+  trace, numeric and engine provenance, and zero QPU calls.
+- **Mid-circuit measurement/reset caveat:** one real seeded
+  trajectory is executed before the analytic queries, so
+  expectations are **conditional on the observed branch**.
+  They are *not* a mixed-state average across all possible
+  measurement outcomes. Observable evaluation itself does
+  not sample, alter the state or consume RNG. For different
+  conditioned trajectories the caller must explicitly
+  request/summarize separate runs.
+
+A 128-qubit **64 Bell+T-pair** example computes
+`⟨Z0 Z1⟩=1`, `⟨X0 X1⟩=1/√2`,
+`⟨Y0 Y1⟩=-1/√2` and a global
+`⟨Z^⊗128⟩=1` using **64 local two-wire factors**.
+One weighted 5-term Hamiltonian returns
+`1.25 + 1/√2 ≈ 1.957106781` without storing
+a global vector. This is a useful analytic
+energy service for limited VQE-style toy workloads,
+not Aura compiler/QIR integration or generic
+high-entanglement VQE chemistry.
+
+```sh
+cargo run --manifest-path aura-quantum-sim/Cargo.toml --example pauli_hamiltonian_128
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-observable-run < aura-quantum-sim/fixtures/observable_bell_t_128_v1.json
+cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-observable-run < aura-quantum-sim/fixtures/observable_dynamic_v1.json
+```
+
+Independent source tests compare all **complex phase
+conventions** including Y against dense Pauli gate
+compositions, 2–11q entangling factors, global
+128q Bell+T expectations, conditioned
+measurement/reset classical traces and strict
+negative admission. A separate pinned Qiskit
+real-CLI oracle compares multiple random Pauli
+expectations and weighted sums at 2–8 wires
+with actual seed-selected projective branches,
+and checks the 128q separable example through
+a 2q Qiskit component theorem.
+No QPU and no formal Pauli-proof claim.
