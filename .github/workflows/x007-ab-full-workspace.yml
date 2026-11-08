@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # provenance uses HEAD^; keep original source parent locally available
       - uses: dtolnay/rust-toolchain@stable
       - name: Install supported native workspace prerequisites
         run: |
