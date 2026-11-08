@@ -16,7 +16,8 @@ pub enum ChannelError{
     InvalidWidth,InvalidClassicalBits,InvalidInstructions,InvalidInstruments,
     InvalidTerms,InvalidCoefficient,InvalidPauli{term:usize,wire:usize},
     InvalidBit,ReadBeforeWrite{instruction:usize,bit:usize},
-    InvalidBudget,BudgetExceeded,WorkLimit,BranchLimit,InvalidTomographyPairs,ProbabilityUnderflow,
+    InvalidBudget,BudgetExceeded,WorkLimit,BranchLimit,InvalidTomographyPairs,
+    InvalidCondition,ImpossibleCondition,ConditionProbabilityTooSmall,ProbabilityUnderflow,
     ProbabilityMass,Numeric,Overflow,Allocation,Simulator(SimError),
 }
 impl From<SimError> for ChannelError{

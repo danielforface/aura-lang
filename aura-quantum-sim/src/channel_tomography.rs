@@ -2,9 +2,9 @@
 //! True reduced subsystem density matrices, no sampled trajectory or QPU.
 //! A mixed local state does NOT by itself establish entanglement.
 use crate::channel_moments::{
-    enumerate_channel,ChannelError,MAX_CHANNEL_QUBITS,
+    enumerate_channel,Branch,ChannelError,MAX_CHANNEL_QUBITS,
 };
-use crate::circuit::Circuit;
+use crate::circuit::{Circuit,Instruction};
 use crate::{Complex,NORM_TOLERANCE};
 use std::collections::{BTreeMap,BTreeSet};
 
@@ -115,12 +115,31 @@ fn mixing_gap(mean:f64,mixed:f64)->Result<f64,ChannelError>{
     }
     Ok(delta.max(0.0))
 }
-/// Compute all one-wire 2x2 and up to 16 requested two-wire 4x4 marginals.
-/// Every genuine ideal instrument history is weighted by its Born probability.
-/// The 2-wire basis is |q[b] q[a]>, where a<b. Requests must be unique.
-pub fn execute_channel_tomography(
-    circuit:&Circuit,selected_pairs:&[[usize;2]],budget:usize,
-)->Result<ChannelTomography,ChannelError>{
+/// A final-register filter, NOT a past instrument-history selector.
+/// Canonical ascending bit indices. Only explicitly measured bits are valid.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub struct ClassicalCondition{
+    pub bit:usize,
+    pub equals:bool,
+}
+/// Conditioned reduced state, with NO unselected classical histogram or
+/// individual instrument histories in the public result.
+#[derive(Debug,Clone)]
+pub struct ConditionedTomography{
+    pub conditions:Vec<ClassicalCondition>,
+    pub condition_probability:f64,
+    pub selected_branch_count:usize,
+    pub instrument_count:usize,
+    pub wires:Vec<OneWireDensity>,
+    pub pairs:Vec<TwoWireDensity>,
+    pub reserved_peak_logical_bytes:usize,
+    pub work_units:usize,
+}
+/// Conditional probabilities below this absolute floor cannot be certified
+/// as reliable in the current double-precision numerical profile. Fail closed.
+pub const MIN_CONDITION_PROBABILITY:f64=1e-12;
+fn preflight_reductions(circuit:&Circuit,selected_pairs:&[[usize;2]])
+    ->Result<(usize,usize),ChannelError>{
     let n=circuit.qubits();
     if !(1..=MAX_CHANNEL_QUBITS).contains(&n){
         return Err(ChannelError::InvalidWidth);
@@ -134,59 +153,86 @@ pub fn execute_channel_tomography(
             return Err(ChannelError::InvalidTomographyPairs);
         }
     }
-    // Conservatively charge every marginal plus 4x4 reduction and buffered
-    // output in addition to the common channel's full-branch preflight.
-    let work_factor=n.checked_add(selected_pairs.len().checked_mul(4)
+    // Conservative extra memory reservation beyond the common channel
+    // branch buffer, and CPU-work factor for each 2x2/4x4 reduction.
+    let work=n.checked_add(selected_pairs.len().checked_mul(4)
         .ok_or(ChannelError::Overflow)?).ok_or(ChannelError::Overflow)?;
-    let reserved=n.checked_mul(256).and_then(|v|v.checked_add(
+    let reserve=n.checked_mul(256).and_then(|v|v.checked_add(
         selected_pairs.len().checked_mul(512)?))
         .ok_or(ChannelError::Overflow)?;
-    let (branches,instruments,peak,work,mass)=
-        enumerate_channel(circuit,budget,work_factor,reserved)?;
+    Ok((work,reserve))
+}
+fn validate_conditions(circuit:&Circuit,conditions:&[ClassicalCondition])
+    ->Result<(),ChannelError>{
+    if conditions.is_empty()||conditions.len()>64{
+        return Err(ChannelError::InvalidCondition);
+    }
+    let mut measured=vec![false;circuit.classical_bits()];
+    for op in circuit.instructions(){
+        if let Instruction::Measure{into_bit,..}=op{
+            if *into_bit<measured.len(){measured[*into_bit]=true;}
+        }
+    }
+    let mut previous=None;
+    for c in conditions{
+        if c.bit>=measured.len()||!measured[c.bit]
+            ||previous.is_some_and(|b|c.bit<=b){
+            return Err(ChannelError::InvalidCondition);
+        }
+        previous=Some(c.bit);
+    }
+    Ok(())
+}
+/// One numerical reduction routine for unconditional and postselected
+/// tomography. Caller decides the normalization and which branches enter.
+fn summarize_reductions<'a>(
+    n:usize,selected_pairs:&[[usize;2]],
+    branches:impl Iterator<Item=&'a Branch>,normalizer:f64,
+)->Result<(Vec<OneWireDensity>,Vec<TwoWireDensity>),ChannelError>{
+    if normalizer<=0.0||!normalizer.is_finite(){
+        return Err(ChannelError::Numeric);
+    }
     let mut singles=vec![[[Complex::ZERO;2];2];n];
     let mut pairs=vec![[[Complex::ZERO;4];4];selected_pairs.len()];
     let mut single_branch_purity=vec![0.0;n];
     let mut pair_branch_purity=vec![0.0;selected_pairs.len()];
-    let mut histogram=BTreeMap::<String,f64>::new();
-    for b in &branches{
+    for b in branches{
+        let weight=b.weight/normalizer;
+        if weight<=0.0||!weight.is_finite(){
+            return Err(ChannelError::Numeric);
+        }
         for q in 0..n{
             let local=single_reduced(&b.state,q)?;
-            single_branch_purity[q]+=b.weight*purity(&local)?;
+            single_branch_purity[q]+=weight*purity(&local)?;
             for row in 0..2{
                 for col in 0..2{
                     singles[q][row][col]=singles[q][row][col]+
-                        weighted(local[row][col],b.weight);
+                        weighted(local[row][col],weight);
                 }
             }
         }
         for (i,&wires) in selected_pairs.iter().enumerate(){
             let local=pair_reduced(&b.state,wires)?;
-            pair_branch_purity[i]+=b.weight*purity(&local)?;
+            pair_branch_purity[i]+=weight*purity(&local)?;
             for row in 0..4{
                 for col in 0..4{
                     pairs[i][row][col]=pairs[i][row][col]+
-                        weighted(local[row][col],b.weight);
+                        weighted(local[row][col],weight);
                 }
             }
         }
-        let key:String=b.bits.iter().rev().map(|bit|match bit{
-            Some(true)=>'1',Some(false)=>'0',None=>'?',
-        }).collect();
-        *histogram.entry(key).or_insert(0.0)+=b.weight;
     }
     let wires=singles.into_iter().enumerate()
         .map(|(wire,density)|{
-            let final_purity=purity(&density)?;
+            let p=purity(&density)?;
             let rho01=density[0][1];
-            let bloch=[
-                2.0*rho01.re,
-                -2.0*rho01.im,
-                density[0][0].re-density[1][1].re,
-            ];
             Ok(OneWireDensity{
-                wire,density,bloch,purity:final_purity,
+                wire,density,
+                bloch:[2.0*rho01.re,-2.0*rho01.im,
+                    density[0][0].re-density[1][1].re],
+                purity:p,
                 mean_branch_purity:single_branch_purity[wire],
-                branch_mixing_gap:mixing_gap(single_branch_purity[wire],final_purity)?,
+                branch_mixing_gap:mixing_gap(single_branch_purity[wire],p)?,
             })
         }).collect::<Result<Vec<_>,ChannelError>>()?;
     let pairs=pairs.into_iter().enumerate()
@@ -198,10 +244,70 @@ pub fn execute_channel_tomography(
                 branch_mixing_gap:mixing_gap(pair_branch_purity[i],p)?,
             })
         }).collect::<Result<Vec<_>,ChannelError>>()?;
+    Ok((wires,pairs))
+}
+/// Original C-020 unconditioned channel-reduced tomography, API unchanged.
+pub fn execute_channel_tomography(
+    circuit:&Circuit,selected_pairs:&[[usize;2]],budget:usize,
+)->Result<ChannelTomography,ChannelError>{
+    let (work_factor,reserve)=preflight_reductions(circuit,selected_pairs)?;
+    let (branches,instruments,peak,work,mass)=
+        enumerate_channel(circuit,budget,work_factor,reserve)?;
+    // Preserve C-020 arithmetic semantics exactly: unconditioned ensemble
+    // weights are already globally normalized, so normalizer is 1.
+    let (wires,pairs)=summarize_reductions(
+        circuit.qubits(),selected_pairs,branches.iter(),1.0)?;
+    let mut histogram=BTreeMap::new();
+    for b in &branches{
+        let key:String=b.bits.iter().rev().map(|bit|match bit{
+            Some(true)=>'1',Some(false)=>'0',None=>'?',
+        }).collect();
+        *histogram.entry(key).or_insert(0.0)+=b.weight;
+    }
     Ok(ChannelTomography{
         wires,pairs,branch_count:branches.len(),
         instrument_count:instruments,probability_mass:mass,
         classical_probabilities:histogram,
         reserved_peak_logical_bytes:peak,work_units:work,
+    })
+}
+/// Postselect ONLY by final explicit classical register values.
+/// Returns conditional reduced densities and Born probability of selection.
+/// Unrequested branch histories and registers are not emitted or persisted.
+pub fn execute_conditioned_tomography(
+    circuit:&Circuit,selected_pairs:&[[usize;2]],
+    conditions:&[ClassicalCondition],budget:usize,
+)->Result<ConditionedTomography,ChannelError>{
+    let (work_factor,reserve)=preflight_reductions(circuit,selected_pairs)?;
+    validate_conditions(circuit,conditions)?;
+    let (branches,instrument_count,peak,work,_mass)=
+        enumerate_channel(circuit,budget,work_factor,reserve)?;
+    let is_selected=|b:&Branch|conditions.iter().all(|c|
+        b.bits[c.bit]==Some(c.equals));
+    let mut probability=0.0;
+    let mut count=0usize;
+    for b in &branches{
+        if is_selected(b){
+            probability+=b.weight;
+            count+=1;
+        }
+    }
+    if count==0||probability==0.0{
+        return Err(ChannelError::ImpossibleCondition);
+    }
+    if !probability.is_finite()||probability>1.0+NORM_TOLERANCE{
+        return Err(ChannelError::ProbabilityMass);
+    }
+    if probability<MIN_CONDITION_PROBABILITY{
+        return Err(ChannelError::ConditionProbabilityTooSmall);
+    }
+    let (wires,pairs)=summarize_reductions(
+        circuit.qubits(),selected_pairs,
+        branches.iter().filter(|b|is_selected(b)),probability)?;
+    Ok(ConditionedTomography{
+        conditions:conditions.to_vec(),
+        condition_probability:probability,
+        selected_branch_count:count,instrument_count,
+        wires,pairs,reserved_peak_logical_bytes:peak,work_units:work,
     })
 }
