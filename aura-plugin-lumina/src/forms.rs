@@ -230,6 +230,62 @@ pub(crate) fn submit_action(root:&UiNode,plan:&LayoutNode,clicked:u64)->SubmitAc
     if count!=1 && action!=SubmitAction::Normal{SubmitAction::Reject}else{action}
 }
 
+/// Strictly opt-in: Enter in this field may invoke its form's existing
+/// guarded Submit Button callback instead of its per-field on_submit.
+/// Conflicting or duplicate Host identities fail closed; no new Nexus event.
+pub(crate) fn enter_submits_form(node:&UiNode)->Result<bool,()> {
+    if node.kind!="TextInput"{return Err(());}
+    fn unique<'a>(node:&'a UiNode,key:&str)->Result<Option<&'a str>,()>{
+        let mut values=node.props.iter().filter(|(k,_)|k==key);
+        let first=values.next().map(|(_,v)|v.as_str());
+        if values.next().is_some(){return Err(());}
+        Ok(first)
+    }
+    match unique(node,"submit_form_on_enter")? {
+        None|Some("false")=>Ok(false),
+        Some("true")=>{
+            let form=unique(node,"form")?.ok_or(())?;
+            if !valid_name(form) ||
+                unique(node,"on_change")?.is_none() ||
+                callback(node,"on_change").is_none() ||
+                unique(node,"on_submit")?.is_some() {return Err(());}
+            Ok(true)
+        },
+        _=>Err(()),
+    }
+}
+
+/// Reuse exactly the current guarded Submit Button, if unambiguous and
+/// actionable. Do not synthesize a new callback, bypass busy/disabled, or
+/// accept two same-form submitters just because the first is clickable.
+pub(crate) fn enter_submit_button(root:&UiNode,plan:&LayoutNode,form:&str)->Option<u64>{
+    if !valid_name(form){return None;}
+    fn visit(node:&UiNode,plan:&LayoutNode,form:&str,
+        count:&mut usize,found:&mut Option<u64>,ambiguous:&mut bool){
+        if plan.bounds.intersect(plan.clip).is_empty(){return;}
+        if node.kind=="Button" &&
+            node.props.iter().any(|(k,v)|k=="form_submit" && v==form) {
+            *count+=1;
+            let matches=node.props.iter().filter(|(k,_)|k=="form_submit").count();
+            if matches!=1{*ambiguous=true;}
+            *found=callback(node,"on_click");
+        }
+        for (child,layout) in node.children.iter().zip(&plan.children){
+            if let Some(layout)=layout{
+                visit(child,layout,form,count,found,ambiguous);
+            }
+        }
+    }
+    let (mut count,mut found,mut ambiguous)=(0,None,false);
+    visit(root,plan,form,&mut count,&mut found,&mut ambiguous);
+    if count!=1 || ambiguous{return None;}
+    let id=found?;
+    match submit_action(root,plan,id){
+        SubmitAction::Validate(name) if name==form=>Some(id),
+        _=>None,
+    }
+}
+
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum FieldError {
     Required,
@@ -335,6 +391,7 @@ fn parse_limit(raw:Option<&str>)->Result<Option<usize>,()>{
 fn rule(node:&UiNode,value:&str)->Result<Option<FieldError>,()>{
     // A broken opt-in cannot silently allow the form to proceed.
     blur_binding(node)?;
+    enter_submits_form(node)?;
     let required=match prop(node,"required"){
         None|Some("false")=>false,
         Some("true")=>true,
@@ -488,6 +545,59 @@ mod tests{
             HitTarget::TextInput{on_change,..}=>Some(on_change),
             _=>None,
         }).collect()
+    }
+    #[test]
+    fn enter_form_opt_in_requires_exact_unique_host_contract(){
+        let base=[("form","registration"),("on_change","cb:31"),
+            ("submit_form_on_enter","true")];
+        let mut field=n("TextInput",&base,vec![]);
+        assert_eq!(enter_submits_form(&field),Ok(true));
+        field.set_prop("submit_form_on_enter","false");
+        assert_eq!(enter_submits_form(&field),Ok(false));
+        field.props.retain(|(k,_)|k!="submit_form_on_enter");
+        assert_eq!(enter_submits_form(&field),Ok(false));
+        for bad in ["True","yes","1"," true","","false "]{
+            let mut candidate=n("TextInput",&base,vec![]);
+            candidate.set_prop("submit_form_on_enter",bad);
+            assert_eq!(enter_submits_form(&candidate),Err(()));
+        }
+        for duplicate in ["submit_form_on_enter","form","on_change"]{
+            let mut candidate=n("TextInput",&base,vec![]);
+            let value=prop(&candidate,duplicate).unwrap().to_owned();
+            candidate.props.push((duplicate.to_owned(),value));
+            assert_eq!(enter_submits_form(&candidate),Err(()));
+        }
+        let conflict=n("TextInput",&[("form","registration"),
+            ("on_change","cb:31"),("on_submit","cb:32"),
+            ("submit_form_on_enter","true")],vec![]);
+        assert_eq!(enter_submits_form(&conflict),Err(()));
+        assert_eq!(rule(&conflict,"valid"),Err(()));
+    }
+    #[test]
+    fn enter_form_target_requires_one_live_actionable_submitter(){
+        let field=n("TextInput",&[("form","registration"),
+            ("on_change","cb:31"),("submit_form_on_enter","true"),
+            ("x","20"),("y","20"),("width","160"),("height","40")],vec![]);
+        let button=n("Button",&[("form_submit","registration"),
+            ("on_click","cb:42"),("x","20"),("y","90"),
+            ("width","160"),("height","40")],vec![]);
+        let mut root=n("App",&[],vec![field,button]);
+        assert_eq!(enter_submit_button(&root,&plan(&root),"registration"),Some(42));
+        assert_eq!(enter_submit_button(&root,&plan(&root),"other"),None);
+        root.children[1].set_prop("form_status","busy");
+        assert_eq!(enter_submit_button(&root,&plan(&root),"registration"),None);
+        root.children[1].set_prop("form_status","error");
+        root.children[1].set_prop("form_error","Remote failure");
+        assert_eq!(enter_submit_button(&root,&plan(&root),"registration"),Some(42));
+        root.children[1].set_prop("form_status","ready");
+        root.children[1].props.retain(|(k,_)|k!="form_error");
+        root.children.push(n("Button",&[("form_submit","registration"),
+            ("on_click","cb:43"),("x","200"),("y","90"),
+            ("width","160"),("height","40")],vec![]));
+        assert_eq!(enter_submit_button(&root,&plan(&root),"registration"),None);
+        root.children.pop();
+        root.children[1].props.push(("form_submit".into(),"registration".into()));
+        assert_eq!(enter_submit_button(&root,&plan(&root),"registration"),None);
     }
     #[test]
     fn explicit_blur_policy_requires_unique_versioned_form_and_callback(){

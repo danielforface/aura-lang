@@ -2018,6 +2018,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            let mut enter_form_from_input:Option<String>=None;
             if let Some(fi)=&mut win.focused_input {
                 if fi.session.composing() || composition_consumed {
                     // The platform adapter owns navigation and typing while
@@ -2077,10 +2078,30 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         });
                     }
                     if enter && focused_edit_mode.editable() {
-                        if let Some(cb)=fi.on_submit {
-                            fb.text_input_events.push(UiTextInputEvent {
-                                callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
-                            });
+                        let policy=find_input_by_callback(
+                            tree,&planned_layout,fi.on_change)
+                            .map(|(node,_)|(forms::enter_submits_form(node),
+                                prop_string(node,"form")));
+                        match policy {
+                            Some((Ok(true),Some(form))) if plain_button_action=>{
+                                // Only the existing guarded Submit Button may
+                                // dispatch. Same-frame committed edits are
+                                // assessed below; an IME preedit cannot enter here.
+                                enter_form_from_input=Some(form.to_owned());
+                            },
+                            Some((Ok(false),_))=>{
+                                // Legacy field-level on_submit is unchanged
+                                // unless the Host explicitly opts into form Enter.
+                                if let Some(cb)=fi.on_submit {
+                                    fb.text_input_events.push(UiTextInputEvent {
+                                        callback_id:cb,text:fi.session.buffer.clone(),
+                                        submitted:true,
+                                    });
+                                }
+                            },
+                            // Bad/ambiguous opt-in never falls through to a
+                            // per-field submit callback.
+                            _=>{},
                         }
                     }
                 }
@@ -2189,7 +2210,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 }).collect();
             let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
                 && win.focused_input.is_none(){win.focused_button}else{None};
-            let mut validated_click=click_cb.or(radio_action).or(keyboard_click);
+            let enter_button=enter_form_from_input.as_deref()
+                .and_then(|form|forms::enter_submit_button(
+                    tree,&planned_layout,form));
+            let mut validated_click=click_cb.or(radio_action)
+                .or(keyboard_click).or(enter_button);
             if let Some(id)=validated_click{
                 if let Some(decision)=cancel_pre.decisions.get(&id){
                     match decision {

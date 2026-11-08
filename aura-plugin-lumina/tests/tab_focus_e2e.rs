@@ -1322,3 +1322,77 @@ fn native_x11_validate_on_blur_errors_and_host_revision_lifecycle(){
         "unmount/reentry must not restore a stale blur-validation warning");
     eprintln!("LUMINA_BLUR_VALIDATION_X11 untouched_no_warning=true focus_no_warning=true real_tab_blur_red_error=true only_touched_field=true too_short_until_corrected=true live_edit_clears_error=true host_revision_resets_touched=true new_epoch_blur_revalidates=true route_unmount_clears=true committed_draft_only=true");
 }
+
+/// Opt-in native Enter-to-form-submit uses the same guarded Button callback
+/// and current EditSession; absent/malformed opt-in does not steal on_submit.
+#[test]
+fn native_x11_enter_from_textinput_validates_form_and_honors_busy(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","220"),
+            ("height","44"),("value",""),("on_change","cb:801"),
+            ("form","registration"),("required","true"),
+            ("min_graphemes","2"),("submit_form_on_enter","true"),
+            ("autofocus","true")],vec![]),
+        node("Button",&[("x","20"),("y","95"),("width","200"),
+            ("height","44"),("on_click","cb:901"),
+            ("form_submit","registration"),("label","Register")],vec![]),
+        node("TextInput",&[("x","20"),("y","170"),("width","200"),
+            ("height","44"),("value","Legacy"),("on_change","cb:811"),
+            ("on_submit","cb:812")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,400));
+    frames(&plugin,&root,&mut ctx,3);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native window");
+    xdo(&["windowfocus","--sync",id]);
+
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "required field cannot submit from Enter");
+    let one=press(&plugin,&root,&mut ctx,"a",false);
+    assert!(has(&one,801,"a"),"first grapheme must be committed: {one:?}");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "min_graphemes must reject short native draft");
+    let two=press(&plugin,&root,&mut ctx,"b",false);
+    assert!(has(&two,801,"ab"),"second grapheme must commit: {two:?}");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![901],
+        "valid form Enter must invoke only the existing Submit Button");
+
+    root.children[1].set_prop("form_status","busy");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "busy Host status forbids Enter submit");
+    root.children[1].set_prop("form_status","error");
+    root.children[1].set_prop("form_error","Service unavailable");
+    assert_eq!(button_key(&plugin,&root,&mut ctx,"Return"),vec![901],
+        "explicit Enter retries only after Host enters actionable error");
+
+    root.children.push(node("Button",&[("x","260"),("y","95"),
+        ("width","180"),("height","44"),("on_click","cb:902"),
+        ("form_submit","registration")],vec![]));
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "two visible Submit Buttons for one form must fail closed");
+    root.children.pop();
+    root.children[1].set_prop("form_status","ready");
+    root.children[1].props.retain(|(k,_)|k!="form_error");
+    root.children[0].set_prop("submit_form_on_enter","invalid");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "malformed opt-in never dispatches a form submit");
+    root.children[0].set_prop("submit_form_on_enter","true");
+    root.children[0].set_prop("on_submit","cb:999");
+    let conflict=press(&plugin,&root,&mut ctx,"Return",false);
+    assert!(!conflict.iter().any(|e|e.submitted),
+        "conflicting legacy callback must never be fired: {conflict:?}");
+    assert!(button_key(&plugin,&root,&mut ctx,"Return").is_empty(),
+        "conflicting per-field submit and form submit must fail closed");
+
+    // A field without the opt-in retains the old per-field submitted event.
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    let legacy=press(&plugin,&root,&mut ctx,"Return",false);
+    assert!(legacy.iter().any(|e|e.callback_id==812 && e.submitted),
+        "legacy on_submit preserved: {legacy:?}");
+    drop(plugin);
+    eprintln!("LUMINA_FORM_ENTER_X11 invalid_rejected=true committed_draft=true valid_single_callback=true busy_blocked=true host_error_retry=true duplicate_rejected=true malformed_rejected=true conflict_rejected=true legacy_preserved=true");
+}
