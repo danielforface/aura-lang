@@ -3,7 +3,7 @@
 //! conditional on the one actually sampled trajectory, NOT branch averaged.
 use crate::circuit::{Instruction,TraceEntry,TraceKind};
 use crate::factorized::{
-    FactorCircuit,FactorError,PauliTerm,ObservableBatch,
+    FactorCircuit,PauliTerm,ObservableBatch,
     MAX_FACTOR_GLOBAL_QUBITS,MAX_FACTOR_INSTRUCTIONS,MAX_FACTOR_QUBITS,
     MAX_PAULI_TERMS,OBSERVABLE_RESULT_SCHEMA,FACTORIZED_PROFILE,
 };
