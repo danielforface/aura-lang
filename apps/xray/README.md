@@ -1,8 +1,86 @@
-# AURA X-RAY XR-03 — multidimensional offline evidence workbench
+# AURA X-RAY XR-08 — native Aura-driven Windows studio and evidence engine
 
-**Version 0.7.0-xr07 · Windows x64 · unsigned experimental · local only**
+**Version 0.8.0-xr08 · Windows x64 · unsigned experimental · local only**
 
 XR-03 evolves the Windows process analyzer into an **importable, comparable, self-contained investigation system**. It is a real Windows EXE built with the repository's Aura C backend. Nine application-domain functions (normalization, rate calculations, activity scoring and CPU/IO/memory impact) are authored in Aura Lang and generated directly from apps/xray/src/analysis.aura. Win32 API collection, 64-bit identity checks and bounded storage are handled in C, not falsely described as fully Aura. The OS adapter does not modify process state.
+
+
+## XR-08: native interactive Aura Studio (Windows, no browser)
+
+**This is the first actual Windows GDI WINDOW in the shipped executable.**
+The core widget state, policy switching, keyboard navigation, case
+pagination, mouse routing, chart bar geometry, evidence tone, responsive
+horizontal panel placement and hit-testing live in **26 real Aura cells**
+under `apps/xray/src/studio.aura`. These cells are compiled into
+`build/studio/module.c` by the repository's actual Aura compiler and
+linked with all 31 existing `analysis.aura` cells into one native PE:
+**57 generated Aura functions total**, verified by actual Windows CI.
+The separate `apps/xray/src/xr08_studio.c` invokes these exact
+functions. Win32 GDI paints the pixels and forwards Windows input
+messages; it never substitutes C decision tables for Aura layout/state.
+
+**Launch from an existing capture (offline, read-only):**
+
+    .\AuraXRay.exe --studio capture-xr04.jsonl
+
+Use left/right arrow to switch the sensitive/standard/strict
+**Aura policy** and up/down arrow to move between investigation cases.
+PageUp/PageDown navigates longer result sets. Click policy tabs,
+case rows and samples to inspect evidence. Escape closes the window.
+The app shows source case identity, measured peak, observed memory
+retraction, source event trail and policy overlap count without
+inventing process names. This is independent of the original HTML
+workbench; existing `--replay`, `--compare`, `--explain` and
+`--sweep` remain available.
+
+**Render exactly the same native GDI scene to a standalone offline
+Windows bitmap without a desktop session:**
+
+    .\AuraXRay.exe --studio-preview capture-xr04.jsonl --out xr08-native.bmp
+    Start-Process .\xr08-native.bmp
+
+The preview is a top-down, 32-bit, 1360×840 uncompressed BMP. This is
+not an HTML rendering or fabricated screenshot: the native Windows
+renderer uses the exact same `paint_studio` path for the interactive
+window and the offscreen surface. Output paths must be new, inputs
+must pass strict capture/2 provenance checks, and invalid/tampered
+captures fail closed without leaving a partial bitmap.
+
+**What 'Aura UI' means, precisely:** 26 generated Aura functions own
+the interaction/layout decisions, and 31 compiled Aura functions
+already own policy/data mathematics. The only non-Aura layers still
+needed are the Windows OS boundary (Toolhelp32/PSAPI, raw window
+creation, GDI drawing and keyboard/mouse event transport), a
+bounded/strict JSONL parser and in-memory evidence-vector/identity
+transport. Native Lumina has **not** been integrated into the
+product's Windows binary; the available Linux-oriented Lumina branch
+and unqualified Win64 record/slice ABI cannot be silently included.
+This is a real Aura-driven native GUI, **not** yet a pure-Aura
+source-only desktop application. No Electron, browser, JS, Node,
+Raylib, external GUI service, administrator privileges or network
+is required.
+
+**Scientific fidelity:** the native view preserves all 3 policy
+interpretations, uses original sample IDs, PID+creation identity,
+labels peak score as a heuristic and does not conflate process
+IO transfer with physical disk throughput. The validated source
+sample vector is owned by the bounded host adapter; Aura takes
+only scalar primitive inputs through its qualified ABI.
+The display caps chart-only *pixel normalization* at 1,000,000
+to avoid u32 multiplication overflow, never the actual exported
+measurements. The native case trail visibly truncates after 9 rows;
+the verified capture is the complete source record.
+
+**Qualifying tests:** the Windows workflow compiles `studio.aura`
+separately, checks all 26 generated ABI signatures, tests mouse
+hit regions/keyboard/paging/chart calculations against real generated
+functions, links Win32/GDI, captures a live Windows 3-s run and
+renders a source-validated BMP. It checks BMP file header,
+dimensions, completeness, existing-output rejection and tampered
+input rejection; the source parser's XR-03..XR-07 gates remain active.
+GitHub CI can test offscreen paint but does not simulate an interactive
+human desktop; **end-user GUI acceptance on a local Windows machine
+must still be confirmed**. No PR auto-merge.
 
 ## Commands — Windows PowerShell
 

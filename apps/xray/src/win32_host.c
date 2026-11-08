@@ -17,12 +17,13 @@
 #include "xr02_engine.h"
 #include "xr03_explorer.h"
 #include "xr05_cases.h"
+#include "xr08_studio.h"
 
 #ifndef XR_BUILD_SHA
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.7.0-xr07"
+#define XR_VERSION "0.8.0-xr08"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -385,6 +386,7 @@ static int self_test(void) {
         fputs("XRAY XR06 STATE FAIL: compiled Aura transition contract\n",stderr);
         return 0;
     }
+    if(!xr08_studio_self_test())return 0;
     puts("AURA_CORE_CONTRACT_PASS 24 vectors; source=analysis.aura; backend=c");
     if(xray07_cpu_threshold(0)!=500 || xray07_cpu_threshold(1)!=700 ||
        xray07_cpu_threshold(2)!=950 || xray07_io_threshold(0)!=8192 ||
@@ -421,7 +423,7 @@ static int self_test(void) {
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-07 -- Compiled Aura Policy Engine and Evidence Witnesses\n"
+    fputs("AURA X-RAY XR-08 -- Native Windows Studio with compiled Aura UI\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
@@ -430,11 +432,14 @@ static void usage(FILE *out) {
           "  AuraXRay.exe --replay CAPTURE.jsonl --report WORKBENCH.html [--include-names]\n"
           "  AuraXRay.exe --explain CAPTURE.jsonl --out CASES.json [--policy sensitive|standard|strict]\n"
           "  AuraXRay.exe --sweep CAPTURE.jsonl --out SWEEP.json\n"
+          "  AuraXRay.exe --studio CAPTURE.jsonl\n"
+          "  AuraXRay.exe --studio-preview CAPTURE.jsonl --out STUDIO.bmp\n"
           "  AuraXRay.exe --compare BASELINE.jsonl CANDIDATE.jsonl --report DIFF.html [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-07: three native Aura policy interpretations, source witnesses and policy sweep.\n"
+          "XR-08: native GDI window. UI layout, click routing, keys and chart geometry in Aura.\n"
+          "           Win32 is the minimal OS renderer/input boundary; no browser or JavaScript.\n"
           "Reconstructs source deltas when raw counters are available; legacy /2 remains readable.\n"
           "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
           "Offline casebook/replay/compare and topology; process names are opt-in only.\n"
@@ -468,6 +473,12 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--explain") == 0 && i+1 < argc && !mode) {
             mode = 3; input_path = argv[++i]; continue;
+        }
+        if (strcmp(argv[i], "--studio") == 0 && i+1 < argc && !mode) {
+            mode = 5; input_path=argv[++i]; continue;
+        }
+        if (strcmp(argv[i], "--studio-preview") == 0 && i+1 < argc && !mode) {
+            mode = 6; input_path=argv[++i]; continue;
         }
         if (strcmp(argv[i], "--sweep") == 0 && i+1 < argc && !mode) {
             mode = 4; input_path = argv[++i]; continue;
@@ -510,6 +521,27 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (mode==5 || mode==6) {
+        if(capture || seconds || report_path || include_names || policy_supplied ||
+           !input_path || !input_path[0] ||
+           (mode==5 && out_path) ||
+           (mode==6 && (!out_path || !out_path[0] ||
+                        strcmp(out_path,input_path)==0))){
+            fputs("ERROR studio requires validated capture; preview also requires NEW distinct --out BMP\n",stderr);
+            return 2;
+        }
+        char diagnostics[240]={0};
+        int ok=xr08_studio(input_path,mode==6?out_path:NULL,
+                           diagnostics,sizeof diagnostics);
+        if(!ok){
+            fprintf(stderr,"XRAY_STUDIO_REJECTED %s\n",
+                    diagnostics[0]?diagnostics:"native studio failed");
+            return 4;
+        }
+        printf("AURA_XRAY_STUDIO_OK mode=%s input=%s aura_ui=compiled source=validated_capture2\n",
+               mode==6?"offscreen_preview":"native_window",input_path);
+        return 0;
+    }
     if (mode==4) {
         if (capture || seconds || report_path || include_names || policy_supplied ||
             !input_path || !input_path[0] || !out_path || !out_path[0] ||

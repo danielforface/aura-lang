@@ -66,6 +66,34 @@ jobs:
             }
           }
 
+      - name: Compile native Aura Studio widget and navigation source to C
+        run: |
+          & "target/debug/aura.exe" build apps/xray/src/studio.aura --backend c
+          if ($LASTEXITCODE -ne 0) { throw "XR08 Aura UI compilation failed" }
+          if (!(Test-Path "build/studio/module.c")) { throw "XR08 Aura generated UI missing" }
+          $ui = Get-Content "build/studio/module.c" -Raw
+          $names = @(
+            "xray08_ui_window_min_w","xray08_ui_window_min_h",
+            "xray08_ui_tab_y","xray08_ui_tab_x","xray08_ui_tab_hit",
+            "xray08_ui_cycle_policy","xray08_ui_case_x","xray08_ui_case_y",
+            "xray08_ui_case_w","xray08_ui_case_step",
+            "xray08_ui_case_row_y","xray08_ui_case_hit",
+            "xray08_ui_case_index","xray08_ui_case_page_for",
+            "xray08_ui_cycle_case","xray08_ui_page_next",
+            "xray08_ui_page_prev","xray08_ui_chart_x",
+            "xray08_ui_chart_width","xray08_ui_chart_sample_x",
+            "xray08_ui_chart_height","xray08_ui_chart_hit",
+            "xray08_ui_detail_x","xray08_ui_detail_w",
+            "xray08_ui_evidence_tone","xray08_ui_score_tone"
+          )
+          foreach($fn in $names){
+            $signature='(?m)\buint32_t\s+'+[regex]::Escape($fn)+'\s*\('
+            if(![regex]::IsMatch($ui,$signature)){
+              throw "XR08 UI ABI missing genuine Aura return symbol $fn"
+            }
+          }
+          Write-Host "XR08_AURA_UI_CODEGEN_PASS $($names.Count) native Aura UI functions"
+
       - name: Link Aura-generated C plus restricted Win32 adapter
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
@@ -76,14 +104,16 @@ jobs:
           $flags = @(
             "-std=c11", "-O2", "-Werror=implicit-function-declaration",
             "-include", "apps/xray/src/build_info.h",
-            "-I", "build/analysis", "-I", "aura-stdlib/include",
+            "-I", "build/analysis", "-I", "build/studio", "-I", "aura-stdlib/include",
             "build/analysis/module.c",
+            "build/studio/module.c",
             "aura-stdlib/src/stdlib.c",
             "apps/xray/src/win32_host.c",
             "apps/xray/src/xr02_engine.c",
             "apps/xray/src/xr03_explorer.c",
             "apps/xray/src/xr05_cases.c",
-            "-lpsapi", "-o", "dist/AuraXRay.exe"
+            "apps/xray/src/xr08_studio.c",
+            "-lpsapi", "-luser32", "-lgdi32", "-o", "dist/AuraXRay.exe"
           )
           & $clang @flags
           if ($LASTEXITCODE -ne 0) { throw "Windows EXE linker failed: no host-only fallback" }
@@ -92,8 +122,8 @@ jobs:
       - name: Execute generated Aura semantic vectors and real Windows capture
         run: |
           $selfTest = (& "dist/AuraXRay.exe" --self-test | Out-String)
-          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS') -or !$selfTest.Contains('AURA_XR07_POLICY_PASS')) {
-             throw "XR07 compiled-Aura policy and state contract failed"
+          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS') -or !$selfTest.Contains('AURA_XR07_POLICY_PASS') -or !$selfTest.Contains('AURA_XR08_STUDIO_PASS')) {
+             throw "XR08 compiled-Aura analysis, UI layout and state contract failed"
           }
           Write-Host $selfTest
           $version = (& "dist/AuraXRay.exe" --version | Out-String).Trim()
@@ -306,6 +336,26 @@ jobs:
           if($sweepRaw -match '(?i)(process_name|cmdline|path_to_exe|https?://)'){
               throw "XR07 sweep leaks private process metadata or external links"
           }
+          # New native Win32 GDI compositor runs OFFSCREEN in CI, no desktop,
+          # browser, JS, installed runtime or remote graphics service.
+          # Same paint_studio entrypoint is used by the interactive window.
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-capture.jsonl" --out "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp"
+          if($LASTEXITCODE -ne 0){ throw "XR08 compiled Aura GUI offscreen execution failed" }
+          $bmp=[System.IO.File]::ReadAllBytes((Join-Path $PWD "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp"))
+          if($bmp.Length -ne (54 + 1360 * 840 * 4) -or
+             $bmp[0] -ne 66 -or $bmp[1] -ne 77 -or
+             [BitConverter]::ToInt32($bmp,18) -ne 1360 -or
+             [BitConverter]::ToInt32($bmp,22) -ne -840){
+             throw "XR08 failed to draw actual validated source to top-down GDI BMP"
+          }
+          # Fail closed on evidence tampering and existing output.
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-rate-tampered.jsonl" --out "dist/ci-bad-native.bmp" 2>$null
+          if($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-bad-native.bmp")){
+              throw "XR08 native viewer accepted tampered capture"
+          }
+          & "dist/AuraXRay.exe" --studio-preview "dist/ci-capture.jsonl" --out "dist/XR08-NATIVE-STUDIO-PREVIEW.bmp" 2>$null
+          if($LASTEXITCODE -eq 0){ throw "XR08 native preview overwrote existing evidence" }
+          Write-Host "XR08_NATIVE_AURA_STUDIO_PASS window link, offscreen GDI, bitmap, strict source, no-overwrite"
           Write-Host "XR07_AURA_POLICY_SWEEP_PASS three compiled profiles, source witnesses, replay, bad-input rejection"
           Write-Host "XR06_HEADLESS_CASEBOOK_PASS schema, source counters, privacy, no-overwrite, tamper rejection"
           Write-Host "XR04_RAW_COUNTER_ORACLE_PASS full rates, topology, tampered-rate rejection"
@@ -337,7 +387,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.7.0-xr07"
+            version = "0.8.0-xr08"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
@@ -346,12 +396,12 @@ jobs:
             binary_sha256 = $sha
             runtime_windows_smoke = "PASS"
             signing = "UNSIGNED_EXPERIMENTAL"
-            limitations = @("no native Lumina GUI","no ETW","no automatic fixes","no root-cause proof","score is heuristic","untrusted input bounded","unsigned experimental")
+            limitations = @("native GDI window; Win32 host adapter still in C","not yet pure Aura Lumina/Win32 FFI","no ETW","no automatic fixes","no root-cause proof","score is heuristic","untrusted input bounded","unsigned experimental")
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
-          Copy-Item "dist/ci-report.html" "dist/XR07-EXAMPLE-REPORT.html"
-          Copy-Item "dist/ci-comparison.html" "dist/XR07-EXAMPLE-COMPARISON.html"
+          Copy-Item "dist/ci-report.html" "dist/XR08-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-comparison.html" "dist/XR08-EXAMPLE-COMPARISON.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -365,8 +415,9 @@ jobs:
             dist/ci-casebook.json
             dist/ci-policy-sweep.json
             dist/ci-strict-casebook.json
-            dist/XR07-EXAMPLE-REPORT.html
-            dist/XR07-EXAMPLE-COMPARISON.html
+            dist/XR08-NATIVE-STUDIO-PREVIEW.bmp
+            dist/XR08-EXAMPLE-REPORT.html
+            dist/XR08-EXAMPLE-COMPARISON.html
           retention-days: 30
           if-no-files-found: error
 
@@ -378,6 +429,8 @@ jobs:
           path: |
             build/analysis/module.c
             build/analysis/aura_runtime.h
+            build/studio/module.c
+            build/studio/aura_runtime.h
           retention-days: 7
           if-no-files-found: ignore
 

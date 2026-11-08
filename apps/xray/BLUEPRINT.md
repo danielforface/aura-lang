@@ -361,3 +361,45 @@ thresholds. It is not statistical confidence or a causal claim;
 non-triggering is not an assurance that no anomaly exists. No
 autonomous merge, no other agent-owned source changes or shared ABI
 modification.
+
+## 27. XR-08 — Aura-authored native UI / Win32 GDI host bridge
+
+**Demand (2026-11-08):** after actual Windows acceptance of XR-07
+(2,153 records; 1,928 raw reverified; sensitive 3 / standard 3 / strict
+2), advance from scalar-only Aura analysis toward product UI authored in
+Aura, without external browser/framework dependencies and without
+falsifying qualified language capabilities.
+
+**Dependency review:** Agent X's 2026-11-08 Issue #109 decision
+explicitly blocks directly exported Record/Slice Win64 FFI (producer A
+#57, D2). No unapproved pointer casts, generic borrow, struct copy
+or ui control-flow lowering. This XR-08 uses the already qualified
+u32→u32 native Aura C ABI with entirely separate Aura UI domain source;
+the C renderer is kept strictly as Win32 platform interface.
+
+**Real BEFORE→AFTER:** previous product generated HTML/JS as offline
+investigation interface; no native GUI. New `studio.aura` has
+26 executable functions for native Aura layout/state/navigation/chart,
+compiled independently and linked with 31 verified domain cells.
+`xr08_studio.c` draws a real Windows GDI native window (no browser or
+web transport) and a bit-exact same-creator offscreen 32-bit BMP for
+automation. Casebooks for all 3 policies come from a single STRICT
+capture/2 parse with source provenance and identity-aware evidence.
+Do not modify any A/B/C or shared compiler/runtime path.
+
+**Acceptance:** live unprivileged Windows host via
+`--studio CAPTURE`; keyboard left/right/up/down/PageUp/PageDown,
+mouse policy/case/sample; preserve exact typed source identity and
+sample continuity, score uncertainties and policy support. Golden
+codegen check = 26 UI native uint32-return functions, +31 core domain
+functions = 57. CI headless screenshot proves the GDI painting path,
+validates BMP and no-overwrite/tamper rejection; local human desktop
+test still pending. No claim that GDI or JSON parser are Aura code.
+
+**Next purity step (D2 only after producer ACK):** formalize a
+versioned Aura source-defined widget tree/FFI adapter with bounded
+primitive scalar snapshot or qualified full layout/ownership contract.
+Lumina Agent B owns its native compositor path and should review any
+Windows Lumina integration; not unilaterally borrowed from Linux branch.
+Until this is approved, continue shipping honest, working native
+Aura-driven product features rather than renaming host C as Aura.

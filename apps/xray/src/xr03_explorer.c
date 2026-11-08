@@ -6,6 +6,7 @@
  */
 #define _CRT_SECURE_NO_WARNINGS
 #include "xr03_explorer.h"
+#include "xr08_studio.h"
 #include <stdint.h>
 #include "xr05_cases.h"
 #include <stdio.h>
@@ -1019,5 +1020,70 @@ int xr03_export_sweep(FILE *out,const char *path,char *error,size_t cap){
     r->casebook=NULL;
     for(unsigned p=0;p<3;p++)if(books[p])free(books[p]);
     free(r->events);free(r);
+    return ok;
+}
+
+/*
+ * XR-08 immutable studio snapshot. This is TRANSPORT, not UI policy.
+ * Reuses the existing strict, provenance-aware capture/2 parser and
+ * Aura-compiled episode decisions. No private source bytes are
+ * embedded in the Windows application or checked into GitHub.
+ */
+int xr03_load_studio(const char *path,XR08StudioModel *out,
+                     char *error,size_t cap){
+    if(!out||!path||!path[0]){
+        xr3_error(error,cap,"missing studio input/output",0);return 0;
+    }
+    memset(out,0,sizeof(*out));
+    XR3Run *r=(XR3Run*)calloc(1,sizeof(*r));
+    if(!r){xr3_error(error,cap,"studio source allocation failed",0);return 0;}
+    int ok=parsefile(path,r,0,error,cap);
+    if(ok && (r->truncated||r->records!=r->kept||
+               r->actual_samples!=r->samples||r->samples>XR08_SAMPLES)){
+        xr3_error(error,cap,"studio requires complete validated capture",0);
+        ok=0;
+    }
+    XR05Observation *events=NULL;
+    if(ok){
+        events=(XR05Observation*)calloc(r->kept?r->kept:1,sizeof(*events));
+        if(!events){
+            xr3_error(error,cap,"studio evidence allocation failed",0);ok=0;
+        }
+    }
+    if(ok){
+        out->seconds=r->seconds;
+        out->actual_samples=r->samples;
+        out->raw_precision=r->raw_precision;
+        out->records=r->records;
+        out->derived=r->derived;
+        out->raw_verified=r->source_rate_verified;
+        (void)snprintf(out->build,sizeof(out->build),"%s",r->sha);
+        for(unsigned sample=1;sample<=r->samples;sample++){
+            out->sample_peak[sample]=r->peak[sample];
+            out->sample_count[sample]=r->counts[sample];
+            out->sample_valid[sample]=r->valid[sample];
+        }
+        for(unsigned k=0;k<r->kept;k++){
+            const XR3Event *e=&r->events[k];
+            XR05Observation *v=&events[k];
+            v->sample=e->sample;v->pid=e->pid;v->creation=e->creation;
+            v->score=e->score;v->cpu=e->cpu;v->read=e->read;
+            v->write=e->write;v->delta_kib=e->delta_kib;
+            v->comparable=e->has_score;
+            v->rate_reverified=e->rate_reverified;
+        }
+        for(unsigned policy=0;policy<3;policy++){
+            if(!xr05_build_cases_policy(events,r->kept,policy,
+                                        &out->policy[policy])||
+                out->policy[policy].truncated){
+                xr3_error(error,cap,"studio casebook capacity exceeded",0);
+                ok=0;break;
+            }
+        }
+    }
+    if(ok){out->events=events;out->event_count=r->kept;}
+    else free(events);
+    free(r->events);free(r);
+    if(!ok)memset(out,0,sizeof(*out));
     return ok;
 }
