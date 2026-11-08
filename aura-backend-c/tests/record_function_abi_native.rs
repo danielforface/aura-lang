@@ -6,6 +6,10 @@
 #[path = "record_i64_division_native.rs"]
 mod checked_i64_record_division;
 
+// Required Q03 native Record suite also qualifies full-width U64 division.
+#[path = "record_u64_division_native.rs"]
+mod checked_u64_record_division;
+
 #[path = "record_string_eq_native.rs"]
 mod source_string_record_equality;
 

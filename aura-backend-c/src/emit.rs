@@ -175,6 +175,22 @@ static inline bool aura_string_content_equal(const char* left, const char* right
     out.push_str("  }\n");
     out.push_str("}\n\n");
 
+    // Unsigned binary64 division is a supported typed-Record numeric ABI.
+    // Unlike U32, checking a divisor by narrowing to uint32_t would reject
+    // valid high-bit inputs or accidentally divide by zero. Always retain
+    // the full uint64_t width and reject zero before the C division.
+    out.push_str(r#"
+static inline uint64_t aura_u64_div_checked(uint64_t numerator, uint64_t divisor) {
+  if (divisor == UINT64_C(0)) {
+    fputs("Aura u64 division rejected: zero divisor\n", stderr);
+    fflush(stderr);
+    abort();
+  }
+  return numerator / divisor;
+}
+
+"#);
+
     // Native signed i64 division is qualified at the already-typed IR/Record
     // ABI boundary. Unlike Add/Sub/Mul, signed division cannot be reduced
     // modulo 2^64: both division by zero and INT64_MIN / -1 are UB in C.
@@ -675,7 +691,7 @@ impl CNameMap {
             "aura_unicode_char_tail", "aura_f64_display",
             "aura_f64_from_bits",
             "aura_i32_from_wrapped_bits", "aura_i64_from_wrapped_bits",
-            "aura_i64_div_checked", "aura_string_content_equal",
+            "aura_i64_div_checked", "aura_u64_div_checked", "aura_string_content_equal",
             // Names and object-like macros from the C11 headers that
             // emit_runtime_h() actually includes. These occupy the same C
             // ordinary-identifier namespace as user Cell exports, or are
@@ -2893,6 +2909,14 @@ fn emit_binop(
             format!(
                 "(AURA_RANGE_CHECK_U32((uint32_t)({r}), 1u, 0xFFFFFFFFu, \"divisor\"), ({l}) / ({r}))"
             ),
+        ),
+        // Full-width unsigned 64-bit division. The existing U64 Record/C
+        // ABI and exact-width Add/Sub/Mul are already qualified; this branch
+        // closes its missing Div operation without widening source Checker
+        // inference or accepting mixed numeric types.
+        Div if lhs_type == CType::U64 && rhs_type == CType::U64 => (
+            CType::U64,
+            format!("aura_u64_div_checked({l}, {r})"),
         ),
         // Typed i64 has a well-defined signed quotient only outside the
         // two C/Rust trap cases. This is NOT a source-level signed-return
