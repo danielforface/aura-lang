@@ -353,6 +353,9 @@ struct LuminaWindow {
     /// EditSession + bounded Undo may be rebound only to the same callback,
     /// logical key/form and nondecreasing host value_revision.
     retained_drafts:HashMap<u64,RetainedDraft>,
+    /// Metadata-only, eight-entry maximum. A capacity loss must not be
+    /// silently mistaken for a restored route draft when the field returns.
+    retention_misses:HashMap<u64,draft_retention::LostDraft>,
     /// Incremented on native TextInput focus; used only for
     /// deterministic bounded draft admission, never as Host text authority.
     retention_focus_seq:u64,
@@ -543,6 +546,12 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
     win.retained_drafts.retain(|id,saved|
         catalog.scope_gate.allows(&saved.identity.scope)
         && !catalog.conflicts_with(*id,&saved.identity));
+    win.retention_misses.retain(|id,miss|
+        catalog.scope_gate.allows(&miss.identity.scope)
+        && !catalog.conflicts_with(*id,&miss.identity)
+        && !(catalog.present.contains(id)&&!catalog.active.contains_key(id))
+        && catalog.active.get(id).is_none_or(|now|
+            draft_retention::lost_draft_matches(miss,now)));
     let prior=std::mem::replace(&mut win.retention_active,catalog.active.clone());
     for (id,old) in &prior {
         if catalog.active.get(id).is_some_and(|now|now.same_field(old)){
@@ -568,8 +577,15 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
             .saturating_add(entry.revision.retained_bytes());
         if entry.revision.version()!=Some(old.revision)
             || !catalog.scope_gate.allows(&old.scope)
-            || catalog.conflicts_with(*id,old)
-            || bytes>draft_retention::MAX_ENTRY_BYTES {
+            || catalog.conflicts_with(*id,old) {
+            continue;
+        }
+        if bytes>draft_retention::MAX_ENTRY_BYTES {
+            if entry.session.buffer!=entry.revision.echoed(){
+                win.retention_misses.insert(*id,draft_retention::LostDraft{
+                    identity:old.clone(),last_focus:entry.last_focus,
+                });
+            }
             continue;
         }
         // Evaluate the complete candidate set AFTER all routes disappear;
@@ -593,6 +609,8 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
         if let Some(saved)=win.retained_drafts.remove(id) {
             if saved.identity.same_field(now) &&
                 now.revision>=saved.identity.revision {
+                // A successful restoration supersedes any older warning.
+                win.retention_misses.remove(id);
                 win.input_sessions.insert(*id,saved.entry);
             }
         }
@@ -611,7 +629,21 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
             }).collect();
         draft_retention::select_retained(&ranked)
     };
+    // Only capacity-evicted unsynced text produces an informational loss
+    // marker. Never store the actual discarded text, undo or echo payload
+    // here; Host revision replacement and session logout revoke the marker.
+    for (id,saved) in &win.retained_drafts {
+        if !selected.contains(id)
+            && saved.entry.session.buffer!=saved.entry.revision.echoed(){
+            win.retention_misses.insert(*id,draft_retention::LostDraft{
+                identity:saved.identity.clone(),
+                last_focus:saved.entry.last_focus,
+            });
+        }
+    }
     win.retained_drafts.retain(|id,_|selected.contains(id));
+    let keep=draft_retention::select_lost_draft_notices(&win.retention_misses);
+    win.retention_misses.retain(|id,_|keep.contains(id));
 }
 
 /// Keep local edits when same revision host values echo older locally
@@ -1454,6 +1486,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     input_sessions: HashMap::new(),
                     retention_active:HashMap::new(),
                     retained_drafts:HashMap::new(),
+                    retention_misses:HashMap::new(),
                     retention_focus_seq:0,
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
@@ -2007,6 +2040,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 (win.native_ibus.as_mut(),win.focused_input.as_ref()){
                 let _=sync_native_ibus_context(bus,fi);
             }
+            // The first real user-authored edit dismisses the informational
+            // warning; focus/Tab alone never hides it. These callbacks are
+            // already trusted local committed edits, not IME preedit events.
+            for event in &fb.text_input_events{
+                if !event.submitted {win.retention_misses.remove(&event.callback_id);}
+            }
             ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
                 &planned_layout,&win.focused_input,&win.input_sessions);
             let requests=collect_shaped_requests(tree,&planned_layout,
@@ -2150,6 +2189,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            let draft_warnings:std::collections::HashSet<u64>=win.retention_misses
+                .iter().filter_map(|(id,notice)|{
+                    draft_catalog.active.get(id).filter(|now|
+                        draft_retention::lost_draft_matches(notice,now))
+                        .map(|_|*id)
+                }).collect();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -2160,7 +2205,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
                     win.click_anim, &win.focused_input, win.focused_button,
-                    &invalid_radio_groups, &form_errors, &cancel_draw, &win.textures,
+                    &invalid_radio_groups, &form_errors, &cancel_draw, &draft_warnings,
+                    &win.textures,
                     &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
@@ -2353,6 +2399,7 @@ fn render_children(
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
     cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2363,7 +2410,7 @@ fn render_children(
         if let Some(prepared) = prepared {
             render_node(d, child, prepared, now, sdf, click_anim, focused_input,
                 focused_button, invalid_radio_groups, form_errors, cancel_plan,
-                textures, input_sessions, text_views, fonts, shaped);
+                draft_warnings, textures, input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2381,6 +2428,7 @@ fn render_node(
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
     cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2394,7 +2442,8 @@ fn render_node(
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
             focused_input, focused_button, invalid_radio_groups,
-            form_errors, cancel_plan, textures, input_sessions, text_views, fonts, shaped, false);
+            form_errors, cancel_plan, draft_warnings,
+            textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2403,12 +2452,13 @@ fn render_node(
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
                 focused_input,focused_button,invalid_radio_groups,form_errors,
-                cancel_plan,textures,input_sessions,text_views,fonts,shaped,true);
+                cancel_plan,draft_warnings,
+                textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
     render_children(d, node, layout, now, sdf, click_anim, focused_input,
         focused_button, invalid_radio_groups, form_errors, cancel_plan,
-        textures, input_sessions, text_views, fonts, shaped);
+        draft_warnings, textures, input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2424,6 +2474,7 @@ fn paint_node<D: RaylibDraw>(
     invalid_radio_groups: &std::collections::HashSet<String>,
     form_errors: &forms::RenderErrors,
     cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2556,8 +2607,12 @@ fn paint_node<D: RaylibDraw>(
             let placeholder_c = parse_color(Some("#8B949E"));
             let on_change = parse_callback_id(prop_string(node, "on_change"));
             let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
+            let draft_lost = field_error.is_none()
+                && on_change.is_some_and(|id|draft_warnings.contains(&id));
             let border = if field_error.is_some(){
                 Color::new(235,76,89,255)
+            }else if draft_lost{
+                Color::new(242,166,54,255)
             }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
@@ -2598,6 +2653,12 @@ fn paint_node<D: RaylibDraw>(
                     d.draw_text(label,x as i32,(rect.y+3.0) as i32,
                         11,Color::new(255,125,130,255));
                 }
+            } else if draft_lost && rect.width>=190.0 && rect.height>=36.0 {
+                // Explicitly describe capacity loss, not a network failure.
+                // No cached user text, key, form, scope or callback is drawn.
+                d.draw_text("Draft not retained",
+                    (rect.x+rect.width-123.0) as i32,(rect.y+3.0) as i32,
+                    10,Color::new(255,188,83,255));
             }
 
             return;

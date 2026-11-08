@@ -46,6 +46,30 @@ pub(crate) fn select_retained(candidates:&[RetentionCandidate<'_>])
     selected
 }
 
+/// A privacy-minimized, bounded *notice*, not a backup of discarded text.
+/// Only user-committed text that differed from the most recently observed
+/// host value may generate this notice when capacity forces an eviction.
+#[derive(Clone,Debug)]
+pub(crate) struct LostDraft {
+    pub(crate) identity:Identity,
+    pub(crate) last_focus:u64,
+}
+pub(crate) fn lost_draft_matches(notice:&LostDraft,current:&Identity)->bool{
+    notice.identity.same_field(current)
+        && notice.identity.revision==current.revision
+}
+/// Keep at most eight metadata-only warnings using the same deterministic
+/// priority as complete draft selection, irrespective of HashMap order.
+pub(crate) fn select_lost_draft_notices(lost:&HashMap<u64,LostDraft>)->HashSet<u64>{
+    let candidates=lost.iter().map(|(id,notice)|RetentionCandidate{
+        callback:*id,
+        last_focus:notice.last_focus,
+        bytes:0,
+        identity:&notice.identity,
+    }).collect::<Vec<_>>();
+    select_retained(&candidates)
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(crate) struct Identity{
     pub(crate) scope:String,
@@ -274,6 +298,45 @@ mod tests{
             type_kind:"text".into(),
             revision:1,
         }
+    }
+    #[test]
+    fn discarded_draft_notice_is_bound_to_exact_host_revision_and_identity(){
+        let original=sampled_identity("name");
+        let notice=LostDraft{identity:original.clone(),last_focus:7};
+        assert!(lost_draft_matches(&notice,&original));
+        let mut different=original.clone();
+        different.revision+=1;
+        assert!(!lost_draft_matches(&notice,&different),
+            "a newer authoritative host revision supersedes the warning");
+        different=original.clone();different.key="other".into();
+        assert!(!lost_draft_matches(&notice,&different));
+        different=original.clone();different.scope="other-user".into();
+        assert!(!lost_draft_matches(&notice,&different));
+        different=original.clone();different.type_kind="email".into();
+        assert!(!lost_draft_matches(&notice,&different));
+    }
+    #[test]
+    fn discarded_draft_notices_are_metadata_only_and_bounded_deterministically(){
+        let mut warnings=HashMap::new();
+        for i in 0..20{
+            warnings.insert(i+10,LostDraft{
+                identity:sampled_identity(&format!("f.{i:02}")),
+                last_focus:i,
+            });
+        }
+        let selected=select_lost_draft_notices(&warnings);
+        assert_eq!(selected.len(),MAX_DRAFTS);
+        for i in 0..20{
+            assert_eq!(selected.contains(&(i+10)),i>=12,
+                "newest eight only; no dependency on randomized map iteration");
+        }
+        let mut reverse=HashMap::new();
+        for i in (0..20).rev(){
+            reverse.insert(i+10,LostDraft{
+                identity:sampled_identity(&format!("f.{i:02}")),last_focus:i,
+            });
+        }
+        assert_eq!(selected,select_lost_draft_notices(&reverse));
     }
     #[test]
     fn deterministic_ninth_field_eviction_keeps_last_eight_focused(){

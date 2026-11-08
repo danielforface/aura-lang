@@ -961,10 +961,26 @@ fn native_x11_ninth_retained_draft_evicts_least_recently_focused_field(){
         "route removal cannot emit synthetic text callbacks");
     assert!(frames(&plugin,&screen,&mut ctx,4).is_empty(),
         "route reentry cannot steal focus or send callbacks");
+    let evicted=plugin.diagnostic_capture_pixel(21.0,34.0)
+        .expect("native evicted draft border pixel");
+    let retained=plugin.diagnostic_capture_pixel(21.0,87.0)
+        .expect("native retained draft border pixel");
+    assert!(evicted.r>retained.r.saturating_add(65)
+            && evicted.g>retained.g.saturating_add(40),
+        "only the evicted unsynced draft should show a visible amber warning: \
+         evicted={evicted:?}, retained={retained:?}");
     for i in 0..9usize{
         assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
         let edit=press(&plugin,&screen,&mut ctx,"q",false);
         let expected=if i==0{"Aq"}else{"Axq"};
+        if i==0{
+            frames(&plugin,&screen,&mut ctx,3);
+            let dismissed=plugin.diagnostic_capture_pixel(21.0,34.0)
+                .expect("native warning dismissal pixel");
+            assert!(evicted.r>dismissed.r.saturating_add(65),
+                "the first real committed user edit dismisses the warning: \
+                 before={evicted:?}, after={dismissed:?}");
+        }
         assert!(has(&edit,(401+i) as u64,expected),
             "field={i} must follow last-focus capacity ordering \
              (evict oldest only): expected={expected:?} feedback={edit:?}");
@@ -972,5 +988,58 @@ fn native_x11_ninth_retained_draft_evicts_least_recently_focused_field(){
     eprintln!("LUMINA_ROUTE_CAPACITY_X11 nine_fields_edited=true \
         last_eight_retained=true least_recent_evicted=true \
         no_random_hashmap_survivors=true host_scope_unchanged=true \
+        visible_amber_eviction_warning=true no_warning_for_retained=true \
+        warning_dismisses_on_real_edit=true \
         focus_not_stolen=true normal_fields_still_editable=true");
+}
+
+
+/// A newer Host revision is authoritative even when the older local draft
+/// would otherwise have been dropped because it was ninth in the cache.
+#[test]
+fn native_x11_capacity_notice_never_overrides_newer_host_revision(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut screen=node("App",&[("bg","#121212"),
+        ("draft_active_scope","session-a")],vec![]);
+    for i in 0..9usize{
+        let mut field=node("TextInput",&[
+            ("x","20"),("width","245"),("height","40"),
+            ("value","A"),("value_revision","1"),
+            ("retain_draft","route"),("draft_scope","session-a"),
+            ("form","checkout"),
+        ],vec![]);
+        field.set_prop("y",&format!("{}",14+i*53));
+        field.set_prop("draft_key",&format!("checkout.{i:02}"));
+        field.set_prop("on_change",&format!("cb:{}",401+i));
+        screen.children.push(field);
+    }
+    let away=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],
+        vec![node("Text",&[("text","Next page")],vec![])]);
+    frames(&plugin,&screen,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,560));
+    frames(&plugin,&screen,&mut ctx,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("actual Native X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    for i in 0..9usize{
+        assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+        assert!(has(&press(&plugin,&screen,&mut ctx,"x",false),
+            (401+i) as u64,"Ax"));
+    }
+    assert!(frames(&plugin,&away,&mut ctx,4).is_empty());
+    screen.children[0].set_prop("value","Authoritative");
+    screen.children[0].set_prop("value_revision","2");
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty());
+    let host=plugin.diagnostic_capture_pixel(21.0,34.0)
+        .expect("revised input frame");
+    let retained=plugin.diagnostic_capture_pixel(21.0,87.0)
+        .expect("retained input frame");
+    assert!(host.r.abs_diff(retained.r)<32 &&
+            host.g.abs_diff(retained.g)<32,
+        "new Host revision must suppress amber loss warning: {host:?} vs {retained:?}");
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),401,"Authoritativeq"),
+        "new host value wins and remains editable");
+    eprintln!("LUMINA_ROUTE_CAPACITY_REBASE_X11 newer_host_revision_suppresses_warning=true no_stale_local_replay=true editable_authoritative_value=true other_fields_retained=true");
 }
