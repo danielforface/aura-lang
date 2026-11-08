@@ -1,7 +1,33 @@
 //! Q03-001 Native trust boundary: C must never accept mixed numeric,
 //! non-Boolean logical or unsupported nominal comparisons merely because
 //! the host C language implicitly converts the operands.
-use super::*;
+
+use aura_backend_c::emit_module;
+use aura_ir::{run_oracle_entry, validate_module, OracleConfig, OracleValue, InstKind, Type};
+use std::{fs, process::Command};
+
+/// Isolated per-test harness: Cargo also compiles this file as an independent
+/// integration test, not just under record_function_abi_native's #[path] mod.
+struct Scratch(std::path::PathBuf);
+impl Scratch {
+    fn new() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch").as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "aura-record_comparison_type_guards_native-{}-{nanos}", std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create native test scratch directory");
+        Self(dir)
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+use aura_core::{lower_program, Checker};
+
 use aura_ir::{
     BasicBlock, BinOp, BlockId, ExecutionHint, FunctionIR, Inst, ModuleIR,
     Param, Terminator, ValueId,

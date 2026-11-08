@@ -1,6 +1,32 @@
 // New source-level String equality through nominal Record fields.
 // Incorporated in the existing mandatory record_function_abi_native gate.
-use super::*;
+
+use aura_backend_c::emit_module;
+use aura_ir::{run_oracle_entry, validate_module, OracleConfig, OracleValue, InstKind, Type};
+use std::{fs, process::Command};
+
+/// Isolated per-test harness: Cargo also compiles this file as an independent
+/// integration test, not just under record_function_abi_native's #[path] mod.
+struct Scratch(std::path::PathBuf);
+impl Scratch {
+    fn new() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch").as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "aura-record_string_eq_native-{}-{nanos}", std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create native test scratch directory");
+        Self(dir)
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+use aura_core::{lower_program, Checker};
+
 
 const SOURCE: &str = r#"
 type Label = record { title: String, rank: u32 }

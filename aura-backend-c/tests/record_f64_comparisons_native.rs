@@ -3,7 +3,32 @@
 //! The Oracle used to reject those six operations, blocking actual differential
 //! validation. This suite keeps the source-level Float inference and F32/ABI
 //! contracts untouched, and runs the same IR in C at O0/O2 with UBSan.
-use super::*;
+
+use aura_backend_c::emit_module;
+use aura_ir::{run_oracle_entry, validate_module, OracleConfig, OracleValue, InstKind, Type};
+use std::{fs, process::Command};
+
+/// Isolated per-test harness: Cargo also compiles this file as an independent
+/// integration test, not just under record_function_abi_native's #[path] mod.
+struct Scratch(std::path::PathBuf);
+impl Scratch {
+    fn new() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch").as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "aura-record_f64_comparisons_native-{}-{nanos}", std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create native test scratch directory");
+        Self(dir)
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 use aura_ast::Span;
 use aura_ir::{
     optimize_module, BasicBlock, BinOp, BlockId, ExecutionHint, FunctionIR,
