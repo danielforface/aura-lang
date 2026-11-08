@@ -615,6 +615,27 @@ fn run_function(
         })?;
         let bb = &func.blocks[bb_idx];
 
+        // SSA Phi nodes observe the incoming predecessor edge *together*.
+        // Snapshot only the selected operands at block entry: a loop-back
+        // swap (x <- y, y <- x) must not read the first Phi's newly written x.
+        // The validator guarantees that all Phis precede ordinary instructions.
+        let mut phi_snapshots: HashMap<ValueId, OracleValue> = HashMap::new();
+        for phi in &bb.insts {
+            let InstKind::Phi { incomings } = &phi.kind else { break };
+            let pred = prev.ok_or_else(|| OracleError {
+                message: "oracle: phi executed with no predecessor".to_string(),
+            })?;
+            let chosen = incomings.iter().find(|(from, _)| *from == pred)
+                .map(|(_, value)| *value).ok_or_else(|| OracleError {
+                    message: format!("oracle: phi has no incoming for predecessor {:?}", pred),
+                })?;
+            let value = env.get(&chosen).cloned().ok_or_else(|| OracleError {
+                message: format!("oracle: phi incoming value {:?} missing", chosen),
+            })?;
+            let dest = phi.dest.expect("validated Phi has SSA destination");
+            phi_snapshots.insert(dest, value);
+        }
+
         for inst in &bb.insts {
             match &inst.kind {
                 InstKind::AllocCapability { .. } => {
@@ -774,28 +795,12 @@ fn run_function(
                         env.insert(dest, out);
                     }
                 }
-                InstKind::Phi { incomings } => {
-                    let pred = prev.ok_or_else(|| OracleError {
-                        message: "oracle: phi executed with no predecessor".to_string(),
+                InstKind::Phi { .. } => {
+                    let dest = inst.dest.expect("validated Phi has SSA destination");
+                    let value = phi_snapshots.remove(&dest).ok_or_else(|| OracleError {
+                        message: format!("oracle: missing predecessor snapshot for Phi {:?}", dest),
                     })?;
-                    let mut chosen: Option<ValueId> = None;
-                    for (from, v) in incomings {
-                        if *from == pred {
-                            chosen = Some(*v);
-                            break;
-                        }
-                    }
-                    let Some(chosen) = chosen else {
-                        return Err(OracleError {
-                            message: format!("oracle: phi has no incoming for predecessor {:?}", pred),
-                        });
-                    };
-                    let v = env.get(&chosen).ok_or_else(|| OracleError {
-                        message: format!("oracle: phi incoming value {:?} missing", chosen),
-                    })?;
-                    if let Some(dest) = inst.dest {
-                        env.insert(dest, v.clone());
-                    }
+                    env.insert(dest, value);
                 }
                 InstKind::Call { callee, args } | InstKind::ComputeKernel { callee, args } => {
                     let call_args = args

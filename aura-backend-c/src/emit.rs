@@ -1427,14 +1427,16 @@ fn emit_function(
                         }
                     }
                     InstKind::Phi { incomings } if !incomings.is_empty() => {
-                        let incoming_names = incomings.iter()
-                            .map(|(_, incoming)| known_record_types.get(incoming).cloned())
-                            .collect::<Option<Vec<_>>>();
-                        incoming_names.and_then(|names| {
-                            names.first().cloned().filter(|name|
-                                names.iter().all(|candidate| candidate == name)
-                            )
-                        })
+                        // A loop-carried Record Phi can depend cyclically on
+                        // another Phi. Seed from an independently typed
+                        // preheader/formal, then require *every* incoming to
+                        // have the same nominal type in the declaration pass.
+                        let known = incomings.iter()
+                            .filter_map(|(_, incoming)| known_record_types.get(incoming).cloned())
+                            .collect::<Vec<_>>();
+                        known.first().cloned().filter(|name|
+                            known.iter().all(|candidate| candidate == name)
+                        )
                     }
                     _ => None,
                 };
@@ -2344,7 +2346,7 @@ fn emit_function(
                 out.push_str("  return;\n");
             }
             Terminator::Br(t) => {
-                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *t);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *t)?;
                 out.push_str("  goto ");
                 out.push_str(&bb_label(*t));
                 out.push_str(";\n");
@@ -2361,12 +2363,12 @@ fn emit_function(
                 out.push_str("  if (");
                 out.push_str(&cn);
                 out.push_str(") {\n");
-                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *then_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *then_bb)?;
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*then_bb));
                 out.push_str(";\n");
                 out.push_str("  } else {\n");
-                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *else_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *else_bb)?;
                 out.push_str("    goto ");
                 out.push_str(&bb_label(*else_bb));
                 out.push_str(";\n");
@@ -2388,14 +2390,14 @@ fn emit_function(
 
                 for (k, bb2) in cases {
                     out.push_str(&format!("    case {}u: ", k));
-                    emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *bb2);
+                    emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *bb2)?;
                     out.push_str("goto ");
                     out.push_str(&bb_label(*bb2));
                     out.push_str(";\n");
                 }
 
                 out.push_str("    default: ");
-                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *default_bb);
+                emit_phi_assigns(out, &phi_inj, &values, &records, b.id, *default_bb)?;
                 out.push_str("goto ");
                 out.push_str(&bb_label(*default_bb));
                 out.push_str(";\n");
@@ -2960,23 +2962,49 @@ fn emit_phi_assigns(
     records: &HashMap<ValueId, (String, String)>,
     pred: BlockId,
     target: BlockId,
-) {
+) -> Result<(), CBackendError> {
     if let Some(assigns) = phi_inj.get(&(pred, target)) {
+        // Phi assignments on the same CFG edge are simultaneous. Staging
+        // every source before writing any destination preserves loop swaps
+        // and cyclic Record Phis; direct sequential C assignments do not.
+        // Use a compound statement so declarations are also legal after a
+        // C switch case label, without leaking their scope to other edges.
+        let mut used_names: BTreeSet<String> = values.values()
+            .map(|(_, name)| name.clone())
+            .chain(records.values().map(|(_, name)| name.clone()))
+            .collect();
+        let mut staged = Vec::with_capacity(assigns.len());
+        out.push_str("    {\n");
         for (dest, incoming) in assigns {
-            let dn = format!("v{}", dest.0);
-            // Phi predecessor edges may carry named Record formals as
-            // well as local vN values. A fallback vN for a formal parameter
-            // would reference an undeclared variable, breaking native ABI.
-            let sn = values.get(incoming).map(|(_, n)| n.clone())
-                .or_else(|| records.get(incoming).map(|(_, n)| n.clone()))
-                .unwrap_or_else(|| format!("v{}", incoming.0));
-            out.push_str("    ");
-            out.push_str(&dn);
-            out.push_str(" = ");
-            out.push_str(&sn);
-            out.push_str(";\n");
+            if !values.contains_key(dest) && !records.contains_key(dest) {
+                return Err(CBackendError { message: format!(
+                    "unqualified Phi edge {:?}->{:?}: unknown destination v{}",
+                    pred, target, dest.0
+                ) });
+            }
+            let (decl, source) = if let Some((ty, name)) = values.get(incoming) {
+                (map_ctype_decl(*ty).to_string(), name.as_str())
+            } else if let Some((record, name)) = records.get(incoming) {
+                (record_type_symbol(record), name.as_str())
+            } else {
+                return Err(CBackendError { message: format!(
+                    "unqualified Phi edge {:?}->{:?}: unknown incoming v{}",
+                    pred, target, incoming.0
+                ) });
+            };
+            let mut temp = format!("aura_phi_snapshot_{}_{}_{}", pred.0, target.0, dest.0);
+            while !used_names.insert(temp.clone()) {
+                temp.push('_');
+            }
+            out.push_str(&format!("      {decl} {temp} = {source};\n"));
+            staged.push((*dest, temp));
         }
+        for (dest, temp) in staged {
+            out.push_str(&format!("      v{} = {temp};\n", dest.0));
+        }
+        out.push_str("    }\n");
     }
+    Ok(())
 }
 
 fn builtin_return_ctype(c_fn: &str) -> CType {

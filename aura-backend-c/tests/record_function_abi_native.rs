@@ -10,6 +10,10 @@ mod checked_i64_record_division;
 #[path = "record_u64_division_native.rs"]
 mod checked_u64_record_division;
 
+// Required Q03 Native gate: loop-carried scalar/Record Phi copies are atomic.
+#[path = "record_phi_parallel_copy_native.rs"]
+mod checked_parallel_phi_edges;
+
 #[path = "record_string_eq_native.rs"]
 mod source_string_record_equality;
 
