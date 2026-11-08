@@ -801,3 +801,119 @@ fn native_x11_route_draft_key_collision_sensitive_field_and_revision_downgrade()
         "password field local edits must not persist across removal");
     eprintln!("LUMINA_ROUTE_DRAFT_GUARDS_X11 host_revision_downgrade_refuses_restore=true different_draft_key_isolated=true callback_reuse_not_identity=true scope_rotation_rejects_old_draft=true sensitive_type_not_cached=true sensitive_unmount_discards=true");
 }
+
+
+/// Actual X11 route transition retaining two independent editors, then host
+/// rotating a single root-wide session scope while the route is unmounted.
+/// Old drafts must be purged, not merely ignored until some later reuse.
+#[test]
+fn native_x11_multifield_route_retention_and_host_session_revocation(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let screen=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","250"),("height","46"),
+            ("value","A"),("value_revision","1"),("on_change","cb:401"),
+            ("retain_draft","route"),("draft_scope","session-a"),
+            ("draft_key","checkout.first"),("form","checkout")],vec![]),
+        node("TextInput",&[("x","20"),("y","95"),("width","250"),("height","46"),
+            ("value","B"),("value_revision","1"),("on_change","cb:402"),
+            ("retain_draft","route"),("draft_scope","session-a"),
+            ("draft_key","checkout.second"),("form","checkout")],vec![]),
+    ]);
+    let mut alternate=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],
+        vec![node("Text",&[("x","20"),("y","20"),("text","Review route")],vec![])]);
+    frames(&plugin,&screen,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,340));
+    frames(&plugin,&screen,&mut ctx,4);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("actual X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"x",false),401,"Ax"));
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"y",false),402,"By"));
+    assert!(frames(&plugin,&alternate,&mut ctx,4).is_empty(),
+        "temporary route change cannot synthesize editor callbacks");
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"z",false),401,"Axz"),
+        "first field kept its own committed unsynced draft");
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),402,"Byq"),
+        "second field restored independently without callback/session mix-up");
+    xdo(&["keydown","Control_L"]);
+    frames(&plugin,&screen,&mut ctx,3);
+    let undone=press(&plugin,&screen,&mut ctx,"z",false);
+    xdo(&["keyup","Control_L"]);
+    frames(&plugin,&screen,&mut ctx,3);
+    assert!(has(&undone,402,"By"),
+        "second field must retain its own Undo history after route return: {undone:?}");
+    assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),402,"Byq"),
+        "fresh edit after Undo must not corrupt the retained first field");
+
+    assert!(frames(&plugin,&alternate,&mut ctx,4).is_empty());
+    alternate.set_prop("draft_active_scope","session-b"); // logout while absent
+    assert!(frames(&plugin,&alternate,&mut ctx,4).is_empty(),
+        "explicit host session rotation must not invent text callbacks");
+    // A stale navigation back to the original scope cannot resurrect data
+    // already purged by the logout boundary, even at the old host revision.
+    alternate.set_prop("draft_active_scope","session-a");
+    assert!(frames(&plugin,&alternate,&mut ctx,4).is_empty());
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"n",false),401,"An"),
+        "revoked first draft Axz must never survive session switch");
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"m",false),402,"Bm"),
+        "revoked second draft Byq must never survive session switch");
+    eprintln!("LUMINA_ROUTE_MULTI_SCOPE_X11 two_distinct_drafts=true undo_authority_preserved=true root_scope_logout_while_unmounted=true both_old_drafts_purged=true stale_scope_reentry_clean=true no_focus_steal=true");
+}
+
+/// An ineligible editor claiming a cached logical key with another callback
+/// revokes old ownership; otherwise stale private drafts could survive
+/// through disabled/password/hidden interstitial screens.
+#[test]
+fn native_x11_route_draft_foreign_ineligible_key_claim_revokes_private_cache(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let screen=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","240"),("height","46"),
+            ("value","M"),("value_revision","4"),("on_change","cb:401"),
+            ("retain_draft","route"),("draft_scope","session-a"),
+            ("draft_key","profile.name"),("form","profile")],vec![]),
+    ]);
+    let empty=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],
+        vec![node("Text",&[("x","20"),("y","20"),("text","Empty route")],vec![])]);
+    let mut alien=node("App",&[("bg","#121212"),("draft_active_scope","session-a")],vec![
+        node("TextInput",&[("x","9000"),("y","9000"),("width","200"),
+            ("disabled","true"),("value","private"),("value_revision","4"),
+            ("on_change","cb:903"),("retain_draft","route"),
+            ("draft_scope","session-a"),("draft_key","profile.name"),
+            ("form","profile")],vec![]),
+    ]);
+    frames(&plugin,&screen,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,330));
+    frames(&plugin,&screen,&mut ctx,4);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("actual X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"x",false),401,"Mx"));
+    assert!(frames(&plugin,&empty,&mut ctx,4).is_empty());
+    assert!(frames(&plugin,&alien,&mut ctx,4).is_empty(),
+        "hidden disabled foreign field cannot synthesize a text callback");
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"q",false),401,"Mq"),
+        "foreign hidden key claim must purge Mx and its Undo chain");
+
+    assert!(frames(&plugin,&empty,&mut ctx,4).is_empty());
+    alien.children[0].set_prop("on_change","malformed");
+    alien.children[0].set_prop("type","password");
+    assert!(frames(&plugin,&alien,&mut ctx,4).is_empty());
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty());
+    assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+    assert!(has(&press(&plugin,&screen,&mut ctx,"z",false),401,"Mz"),
+        "malformed sensitive foreign key claim must also purge Mq");
+    eprintln!("LUMINA_ROUTE_FOREIGN_CLAIM_X11 hidden_disabled_claim_revokes=true malformed_password_claim_revokes=true original_host_value_wins=true no_private_draft_replay=true");
+}

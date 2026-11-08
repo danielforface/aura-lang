@@ -520,6 +520,15 @@ fn input_value_revisions(tree:&UiNode,plan:&layout::LayoutNode,order:&[layout::H
 #[cfg(feature="raylib")]
 fn reconcile_retained_drafts(win:&mut LuminaWindow,
     catalog:&draft_retention::Catalog) {
+    // Host-wide route/session authority can change while all editors are
+    // unmounted (logout, account switch, workflow completion). Never retain
+    // bytes belonging to an old scope after this explicit host transition.
+    // A hidden/disabled/sensitive foreign TextInput with the same logical
+    // key also revokes the old cached session; do not wait for it to become
+    // eligible or visible before invalidating private draft ownership.
+    win.retained_drafts.retain(|id,saved|
+        catalog.scope_gate.allows(&saved.identity.scope)
+        && !catalog.conflicts_with(*id,&saved.identity));
     let prior=std::mem::replace(&mut win.retention_active,catalog.active.clone());
     for (id,old) in &prior {
         if catalog.active.get(id).is_some_and(|now|now.same_field(old)){
@@ -546,6 +555,8 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
         let total=win.retained_drafts.values()
             .fold(0usize,|sum,item|sum.saturating_add(item.bytes));
         if entry.revision.version()!=Some(old.revision)
+            || !catalog.scope_gate.allows(&old.scope)
+            || catalog.conflicts_with(*id,old)
             || !draft_retention::within_budget(
                 bytes,win.retained_drafts.len(),total) {
             continue;
@@ -574,7 +585,10 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
     }
     // A once-unmounted callback later reused by an invalid/sensitive widget
     // may never revive old, potentially private, text on a future screen.
-    win.retained_drafts.retain(|id,_|!catalog.present.contains(id));
+    win.retained_drafts.retain(|id,saved|
+        !catalog.present.contains(id)
+        && catalog.scope_gate.allows(&saved.identity.scope)
+        && !catalog.conflicts_with(*id,&saved.identity));
 }
 
 /// Keep local edits when same revision host values echo older locally

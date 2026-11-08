@@ -32,12 +32,49 @@ impl Identity{
             && self.type_kind==other.type_kind
     }
 }
+/// Optional host-wide route/session authority. Without a root opt-in the
+/// existing per-field scope contract is unchanged. A malformed root command
+/// fails closed rather than retaining drafts under an ambiguous session.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub(crate) enum ScopeGate{Legacy,Only(String),Reject}
+impl ScopeGate{
+    pub(crate) fn allows(&self,scope:&str)->bool{
+        match self{
+            Self::Legacy=>true,
+            Self::Only(active)=>active==scope,
+            Self::Reject=>false,
+        }
+    }
+}
+#[derive(Clone,Debug,PartialEq,Eq,Hash)]
+pub(crate) struct ClaimKey {
+    scope:String,
+    key:String,
+    form:Option<String>,
+}
 #[derive(Default)]
 pub(crate) struct Catalog{
     pub(crate) active:HashMap<u64,Identity>,
     /// Even hidden/disabled/malformed fields are present and MUST NOT be
     /// silently treated as an unmounted route with retained private data.
     pub(crate) present:HashSet<u64>,
+    pub(crate) claims:HashMap<ClaimKey,HashSet<Option<u64>>>,
+    pub(crate) ambiguous_claims:bool,
+    pub(crate) scope_gate:ScopeGate,
+}
+impl Default for ScopeGate{
+    fn default()->Self{Self::Legacy}
+}
+impl Catalog {
+    /// Any same-key claim by a different callback, even an ineligible,
+    /// disabled or hidden TextInput, revokes the old cached editor.
+    pub(crate) fn conflicts_with(&self,cb:u64,field:&Identity)->bool{
+        self.ambiguous_claims || self.claims.iter().any(|(claim,owners)|
+            claim.scope==field.scope && claim.key==field.key
+            && (claim.form==field.form || claim.form.is_none()
+                || field.form.is_none())
+            && owners.iter().any(|owner|*owner!=Some(cb)))
+    }
 }
 fn prop<'a>(n:&'a UiNode,k:&str)->Option<&'a str>{
     n.props.iter().find(|(key,_)|key==k).map(|(_,v)|v.as_str())
@@ -46,6 +83,24 @@ fn valid_key(key:&str)->bool {
     !key.is_empty() && key.len()<=128 && key.trim()==key &&
         !key.chars().any(|c|c.is_control()||
             matches!(c,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
+}
+const IDENTITY_PROPS:[&str;10]=["retain_draft","draft_scope","draft_key",
+    "on_change","value_revision","form","type","input_type","sensitive",
+    "surrounding_text"];
+fn duplicates_identity_props(node:&UiNode)->bool{
+    IDENTITY_PROPS.iter().any(|key|
+        node.props.iter().filter(|(k,_)|k.as_str()==*key).take(2).count()>1)
+}
+/// Single authoritative root scope, optional. The host rotates this value
+/// during logout/context replacement even when all TextInputs are unmounted.
+pub(crate) fn root_scope_gate(root:&UiNode)->ScopeGate{
+    if root.kind!="App"{return ScopeGate::Legacy;}
+    let mut values=root.props.iter().filter(|(key,_)|key=="draft_active_scope");
+    match (values.next(),values.next()){
+        (None,_)=>ScopeGate::Legacy,
+        (Some((_,scope)),None) if valid_key(scope)=>ScopeGate::Only(scope.as_str().to_owned()),
+        _=>ScopeGate::Reject,
+    }
 }
 fn canonical_revision(raw:&str)->Option<u64>{
     if raw.is_empty()||raw.len()>20||!raw.bytes().all(|b|b.is_ascii_digit()){
@@ -64,7 +119,8 @@ fn callback(node:&UiNode)->Option<u64>{
 /// Opt-in is explicit. Password/secret/unknown text field kinds and disabled
 /// surrounding-text policy cannot be retained in long-lived native memory.
 pub(crate) fn identity(node:&UiNode)->Option<Identity>{
-    if node.kind!="TextInput" || prop(node,"retain_draft")!=Some("route"){return None;}
+    if node.kind!="TextInput" || duplicates_identity_props(node)
+        || prop(node,"retain_draft")!=Some("route"){return None;}
     let scope=prop(node,"draft_scope").filter(|s|valid_key(s))?;
     let key=prop(node,"draft_key").filter(|s|valid_key(s))?;
     let revision=canonical_revision(prop(node,"value_revision")?)?;
@@ -104,28 +160,52 @@ pub(crate) fn catalog(root:&UiNode,order:&[HitTarget])->Catalog{
     let mut result=Catalog::default();
     fn scan(node:&UiNode,by_id:&mut HashMap<u64,(Identity,usize)>,
         counts:&mut HashMap<(String,String,Option<String>),usize>,
-        callbacks:&mut HashMap<u64,usize>,present:&mut HashSet<u64>){
+        callbacks:&mut HashMap<u64,usize>,
+        result:&mut Catalog){
         if node.kind=="TextInput"{
-            if let Some(id)=callback(node){
-                present.insert(id);
+            let id=callback(node);
+            if let Some(id)=id{
+                result.present.insert(id);
                 *callbacks.entry(id).or_default()+=1;
             }
-            // Even a duplicate with a broken callback still occupies the
-            // logical key and prevents the other input from retaining it.
+            if duplicates_identity_props(node){
+                // A duplicate prop can present two contradictory ownership
+                // claims. Never pick the first token and keep private data.
+                result.ambiguous_claims=true;
+            } else if let (Some(scope),Some(key))=
+                (prop(node,"draft_scope"),prop(node,"draft_key")){
+                if valid_key(scope) && valid_key(key){
+                    let form=match prop(node,"form"){
+                        Some(value) if valid_key(value)=>Some(value.to_owned()),
+                        None=>None,
+                        Some(_)=>{
+                            result.ambiguous_claims=true;
+                            None
+                        }
+                    };
+                    result.claims.entry(ClaimKey{
+                        scope:scope.to_owned(),key:key.to_owned(),form,
+                    }).or_default().insert(id);
+                }
+            }
+            // A key claimed by a non-retainable or sensitive widget must
+            // still invalidate older cached drafts from another callback.
             if let Some(identity)=identity(node){
                 *counts.entry((identity.scope.clone(),
                     identity.key.clone(),identity.form.clone())).or_default()+=1;
-                if let Some(id)=callback(node){
+                if let Some(id)=id{
                     by_id.entry(id).and_modify(|(_,n)|*n+=1)
                         .or_insert((identity,1));
                 }
             }
         }
-        for child in &node.children{scan(child,by_id,counts,callbacks,present);}
+        for child in &node.children{scan(child,by_id,counts,callbacks,result);}
     }
-    scan(root,&mut by_id,&mut key_counts,&mut callback_counts,&mut result.present);
+    result.scope_gate=root_scope_gate(root);
+    scan(root,&mut by_id,&mut key_counts,&mut callback_counts,&mut result);
     for (id,(value,multiplicity)) in by_id{
-        if allowed.contains(&id) && multiplicity==1
+        if allowed.contains(&id) && result.scope_gate.allows(&value.scope)
+            && !result.ambiguous_claims && multiplicity==1
             && callback_counts.get(&id)==Some(&1)
             && key_counts.get(&(value.scope.clone(),value.key.clone(),
                 value.form.clone()))==Some(&1){
@@ -153,6 +233,104 @@ mod tests{
         ],vec![]);
         for &(k,v) in fields{node.set_prop(k,v);}
         node
+    }
+
+    #[test]
+    fn root_scope_rotation_is_explicit_and_strictly_single_valued(){
+        let mut root=n("App",&[],vec![field(&[])]);
+        assert_eq!(root_scope_gate(&root),ScopeGate::Legacy);
+        root.set_prop("draft_active_scope","window-session-1");
+        assert_eq!(root_scope_gate(&root),
+            ScopeGate::Only("window-session-1".to_owned()));
+        let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        assert_eq!(catalog(&root,&layout::focus_order(&root,&p)).active.len(),1);
+        root.set_prop("draft_active_scope","window-session-2");
+        let c=catalog(&root,&layout::focus_order(&root,&p));
+        assert!(c.active.is_empty(),"new session must not retain prior user's field");
+        root.set_prop("draft_active_scope","bad\nscope");
+        assert_eq!(root_scope_gate(&root),ScopeGate::Reject);
+        root.set_prop("draft_active_scope","window-session-1");
+        root.props.push(("draft_active_scope".into(),"window-session-2".into()));
+        assert_eq!(root_scope_gate(&root),ScopeGate::Reject);
+        assert!(catalog(&root,&layout::focus_order(&root,&p)).active.is_empty(),
+            "duplicate host-wide scope must never silently choose one");
+    }
+    #[test]
+    fn noneligible_foreign_claim_blocks_cached_draft_even_when_hidden(){
+        let original=field(&[]);
+        let saved=identity(&original).unwrap();
+        let mut intruder=field(&[]);
+        intruder.set_prop("on_change","cb:99");
+        intruder.set_prop("disabled","true");
+        let mut root=n("App",&[],vec![intruder.clone()]);
+        let plan=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        let c=catalog(&root,&layout::focus_order(&root,&plan));
+        assert!(c.active.is_empty());
+        assert!(c.conflicts_with(10,&saved),
+            "disabled foreign callback still claims the private identity");
+        intruder.set_prop("x","9000");
+        root.children[0]=intruder;
+        let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        assert!(catalog(&root,&layout::focus_order(&root,&p))
+            .conflicts_with(10,&saved),"hidden foreign owner also revokes");
+        root.children[0].set_prop("on_change","malformed");
+        let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        assert!(catalog(&root,&layout::focus_order(&root,&p))
+            .conflicts_with(10,&saved),"unparseable foreign identity revokes");
+    }
+    #[test]
+    fn sensitive_or_opted_out_foreign_field_cannot_keep_original_cache(){
+        let saved=identity(&field(&[])).unwrap();
+        for (key,value) in [("type","password"),("retain_draft","false"),
+            ("sensitive","true"),("surrounding_text","none")] {
+            let mut foreign=field(&[]);
+            foreign.set_prop("on_change","cb:22");
+            foreign.set_prop(key,value);
+            let root=n("App",&[],vec![foreign]);
+            let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+            assert!(catalog(&root,&layout::focus_order(&root,&p))
+                .conflicts_with(10,&saved),"{key} should revoke foreign cache");
+        }
+    }
+    #[test]
+    fn duplicated_or_ambiguous_critical_props_never_select_first_identity(){
+        let original=field(&[]);
+        let saved=identity(&original).unwrap();
+        for name in IDENTITY_PROPS{
+            let mut node=original.clone();
+            let original_value=prop(&node,name).unwrap_or("different");
+            node.props.push((name.to_owned(),original_value.to_owned()));
+            assert!(identity(&node).is_none(),"duplicate {name} cannot qualify");
+            let root=n("App",&[],vec![node]);
+            let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+            let c=catalog(&root,&layout::focus_order(&root,&p));
+            assert!(c.ambiguous_claims);
+            assert!(c.conflicts_with(10,&saved));
+        }
+    }
+    #[test]
+    fn unscoped_foreign_claim_cannot_evade_a_scoped_cached_field(){
+        let saved=identity(&field(&[])).unwrap();
+        let mut unscoped=field(&[]);
+        unscoped.set_prop("on_change","cb:88");
+        unscoped.props.retain(|(name,_)|name!="form");
+        let root=n("App",&[],vec![unscoped]);
+        let plan=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        let c=catalog(&root,&layout::focus_order(&root,&plan));
+        assert!(c.conflicts_with(10,&saved),
+            "missing form namespace is ambiguous, not an escape from ownership");
+    }
+    #[test]
+    fn independent_forms_can_share_a_human_key_but_not_a_claim_owner(){
+        let saved=identity(&field(&[])).unwrap();
+        let mut other=field(&[]);
+        other.set_prop("form","different");
+        other.set_prop("on_change","cb:90");
+        let root=n("App",&[],vec![other]);
+        let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
+        let c=catalog(&root,&layout::focus_order(&root,&p));
+        assert!(!c.conflicts_with(10,&saved),
+            "a different valid form namespace is a distinct identity");
     }
     #[test]
     fn bounded_cache_rejects_exact_overruns_and_excess_entries(){
