@@ -55,8 +55,10 @@ fn computational_basis_plus_y_and_t_phases_have_correct_pauli_sign() {
     f.apply(Gate::Z(0)).unwrap();
     near(f.expectation_pauli("Y").unwrap(),-1.0);
     f.apply(Gate::S(0)).unwrap();
+    // H |0> -> |+>; S Z S = -I on |1>, but Z and S combine
+    // to +1 on the previously +i phase, returning to |+>.
     near(f.expectation_pauli("Y").unwrap(),0.0);
-    near(f.expectation_pauli("X").unwrap(),-1.0);
+    near(f.expectation_pauli("X").unwrap(),1.0);
 }
 #[test]
 fn bell_yy_is_negative_and_nonclifford_t_rotates_coherence() {
