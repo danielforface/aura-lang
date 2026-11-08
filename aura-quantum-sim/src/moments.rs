@@ -54,7 +54,7 @@ fn hermitian_product(a:&str,b:&str)->Result<Option<(String,f64)>,FactorError> {
         phase=(phase+turn)%4;
         result.push(z);
     }
-    if phase%2!=0 {return Ok(None);}
+    if !phase.is_multiple_of(2) {return Ok(None);}
     let word=String::from_utf8(result).map_err(|_|FactorError::ArithmeticOverflow)?;
     Ok(Some((word,if phase==0 {1.0}else{-1.0})))
 }
