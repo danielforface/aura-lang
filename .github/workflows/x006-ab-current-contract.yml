@@ -1,0 +1,70 @@
+name: X006 Latest A Core and B Lumina Consumer Contract
+on:
+  push:
+    branches: [integration/x006-ab-current-contract]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: x006-ab-consumer-integration
+  cancel-in-progress: true
+jobs:
+  scoped-core-lumina:
+    name: Real A Core and B Lumina consumer contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate reconciled root lockfile unchanged by Cargo
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Execute current A Core IR and native Record tests
+        run: |
+          cargo test --locked -p aura-core
+          cargo test --locked -p aura-ir
+          cargo test --locked -p aura-backend-c --test record_function_abi_native -- --nocapture
+      - name: Execute current B headless Rust and IBus workflow source-contract tests
+        run: |
+          cargo test --locked -p aura-plugin-lumina --no-default-features --lib
+          cargo test --locked -p aura-plugin-lumina --no-default-features --test ibus_native_source_contract
+      - name: Build public Aura CLI from exact combined tree
+        run: cargo build --locked -p aura --no-default-features
+      - name: Assert real debug events but reject unverified AVM execution
+        run: python3 tools/integration/x006_avm_debug_contract.py --binary target/debug/aura
+      - name: Compile real Z3-enabled Aura profile
+        run: cargo check --locked -p aura --no-default-features --features z3
+      - name: Scoped consumer contract only, not full workspace certification
+        run: echo X006_AB_SCOPED_CORE_LUMINA_AND_AVM_TRUST_PASS
+
+  latest-b-x11:
+    name: Native B Lumina X11 on current A Core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      IBUS_USE_PORTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Original native graphics and IBus packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool cmake pkg-config \
+            libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core \
+            fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul \
+            fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
+      - uses: Swatinem/rust-cache@v2
+      - name: Normal Raylib unit suite, isolate P37 diagnostic harness
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --lib
+      - name: Real X11 pointer, read-only, controlled forms and pixel tests
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
+      - name: Real X11 keyboard, focus, drafts and policy tests
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test tab_focus_e2e -- --nocapture --test-threads=1
+      - name: Scoped X11 consumer contract only
+        run: echo X006_AB_CURRENT_LUMINA_X11_PASS
