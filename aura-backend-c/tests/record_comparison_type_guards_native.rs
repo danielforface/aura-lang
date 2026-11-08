@@ -170,9 +170,10 @@ fn typed_record_comparison_rejects_c_implicit_type_coercions() {
 
 #[test]
 fn typed_record_bool_logic_and_numeric_order_stay_accepted() {
-    // Guard changes must not inadvertently outlaw existing valid typed IR
-    // Boolean and same-type numeric comparisons.
-    for (op,left,right,expected) in [
+    // Guard changes must not outlaw qualified Bool and exact numeric
+    // comparisons. Execute all eight cases through an independent native
+    // driver, in separate O0/O2 executables, not just text-only emission.
+    let cases = [
         (BinOp::Eq,"flag","flag",true),
         (BinOp::Ne,"flag","flag",false),
         (BinOp::And,"flag","flag",true),
@@ -181,11 +182,72 @@ fn typed_record_bool_logic_and_numeric_order_stay_accepted() {
         (BinOp::Lt,"num","num",false),
         (BinOp::Ge,"floating","floating",true),
         (BinOp::Eq,"signed","signed",true),
-    ] {
-        let ir=typed_record_comparison(op,left,right);
-        validate_module(&ir).expect("valid typed Record comparison SSA");
-        emit_module(&ir,None).unwrap_or_else(|e| panic!(
-            "{op:?} {left}/{right} legitimate typed comparison rejected: {e}"
+    ];
+    let mut original = ModuleIR::new();
+    let mut driver = String::from("#include <stdbool.h>\n#include <stdint.h>\n");
+    for (index, (op, left, right, expected)) in cases.iter().enumerate() {
+        let one = typed_record_comparison(*op, left, right);
+        validate_module(&one).expect("valid typed Record comparison SSA");
+        if *left != "floating" {
+            // Oracle models U32, I64 and Bool. Typed F64 ordering is only
+            // claimed at the native C boundary, not as Oracle coverage.
+            let oracle = run_oracle_entry(
+                &one, "compare_mixed",
+                &[OracleValue::U32(1), OracleValue::I64(1),
+                  OracleValue::Bool(true), OracleValue::F64(1.0)],
+                OracleConfig::default(),
+            ).expect("Oracle models qualified primitive comparison");
+            assert!(oracle.ok && oracle.stderr.is_empty());
+            assert_eq!(oracle.return_value, Some(OracleValue::Bool(*expected)),
+                "{op:?} {left}/{right}: Oracle result mismatch");
+        }
+        if original.record_layouts.is_empty() {
+            original.record_layouts = one.record_layouts.clone();
+        }
+        let mut func = one.functions.get("compare_mixed").unwrap().clone();
+        let name = format!("qualified_comparison_{index}");
+        func.name = name.clone();
+        original.functions.insert(name.clone(), func);
+        driver.push_str(&format!(
+            "bool {name}(uint32_t, int64_t, bool, double);\n"
         ));
+    }
+    driver.push_str("int main(void) {\n");
+    for (index, (_, _, _, expected)) in cases.iter().enumerate() {
+        let value = if *expected { "true" } else { "false" };
+        driver.push_str(&format!(
+            "  if (qualified_comparison_{index}(1u, 1LL, true, 1.0) != {value}) return {};\n",
+            index + 1
+        ));
+    }
+    driver.push_str("  return 0;\n}\n");
+
+    validate_module(&original).expect("combined native comparison IR valid");
+    let mut optimized = original.clone();
+    aura_ir::optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized native comparison IR valid");
+    for (profile, ir) in [("original", &original), ("optimized", &optimized)] {
+        let c = emit_module(ir, None).expect("qualified typed Record comparisons emit C");
+        let temp = Scratch::new();
+        fs::write(temp.0.join("aura_runtime.h"), &c.runtime_h).unwrap();
+        fs::write(temp.0.join("module.c"), &c.module_c).unwrap();
+        fs::write(temp.0.join("driver.c"), &driver).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = temp.0.join(format!("valid_record_compare_{profile}_{}", &opt[1..]));
+            let build = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror",
+                       "-fsanitize=undefined", "-fno-sanitize-recover=all",
+                       opt, "-I"])
+                .arg(&temp.0).arg(temp.0.join("module.c"))
+                .arg(temp.0.join("driver.c")).arg("-o").arg(&exe)
+                .output().expect("Native CI clang installed");
+            assert!(build.status.success(), "{profile}/{opt}: C compile: {}\n{}",
+                String::from_utf8_lossy(&build.stderr), c.module_c);
+            let run = Command::new(&exe).output()
+                .expect("compiled native Record comparison driver");
+            assert!(run.status.success(),
+                "{profile}/{opt}: Bool/numeric operation mismatched: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
     }
 }
