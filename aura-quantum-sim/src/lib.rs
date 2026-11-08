@@ -22,6 +22,7 @@ pub mod observable_json;
 pub mod moments;
 pub mod moments_json;
 pub mod channel_moments;
+pub mod channel_moments_json;
 
 use std::mem::size_of;
 
