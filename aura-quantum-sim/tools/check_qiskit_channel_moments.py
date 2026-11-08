@@ -255,6 +255,10 @@ def reference(case: dict) -> dict:
         "maximum_numeric_ghost_mass": maximum_numeric_ghost_mass,
         "minimum_admitted_branch_probability":
             minimum_admitted_branch_probability,
+        # Internal, never serialized in C-019 public report.  C-020's
+        # tomography oracle uses the independently projected density branches
+        # to obtain Qiskit PartialTrace, not Rust states or sampled histograms.
+        "reference_density_branches": branches,
     }
 
 

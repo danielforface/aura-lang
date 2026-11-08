@@ -242,3 +242,15 @@ if __name__=="__main__":
         channel_binary, crate / "fixtures",
         Path(sys.argv[3]).with_name("c019-channel-density-qiskit.json"),
     )
+    # C-020 direct independent Qiskit PartialTrace oracle for all 2x2
+    # and selected 4x4 density matrices of the production tomography CLI.
+    from check_qiskit_channel_tomography import main as tomography_oracle
+    tomography_binary = crate / "target/release/aura-quantum-channel-tomography-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-channel-tomography-run",
+    ],check=True,timeout=180)
+    tomography_oracle(
+        tomography_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c020-channel-tomography-qiskit.json"),
+    )
