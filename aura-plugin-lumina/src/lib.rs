@@ -393,7 +393,8 @@ struct RetainedDraft {
 /// behavior; this is NOT a complete password/secure-memory widget.
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn native_surrounding_policy_allows(node:&UiNode)->bool{
-    if !input_policy::edit_mode(node).editable(){return false;}
+    if !input_policy::edit_mode(node).editable()
+        || input_policy::grapheme_limit(node).is_err(){return false;}
     for key in ["type","input_type"]{
         if prop_string(node,key).is_some_and(|value|
             !matches!(value,"text"|"search"|"email"|"number"|"url"|"tel")){
@@ -1751,14 +1752,23 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // Resolve the Host-authored native-only input edit policy after
             // value reconciliation AND same-frame pointer, Tab, autofocus. Read-only is focusable
             // for selection/navigation but can never emit local edits.
-            let focused_edit_mode=win.focused_input.as_ref()
+            let (focused_edit_mode,grapheme_limit)=win.focused_input.as_ref()
                 .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
-                .map(|(node,_)|input_policy::edit_mode(node))
-                .unwrap_or(input_policy::EditMode::Invalid);
-            if focused_edit_mode.locked(){
-                if let Some(fi)=win.focused_input.as_mut(){
-                    // Transitioning during preedit cancels it atomically,
-                    // before queued CommitText or native replacement is read.
+                .map(|(node,_)|{
+                    let limit=input_policy::grapheme_limit(node);
+                    let mode=if limit.is_err(){input_policy::EditMode::Invalid}
+                        else{input_policy::edit_mode(node)};
+                    (mode,limit.ok().flatten())
+                })
+                .unwrap_or((input_policy::EditMode::Invalid,None));
+            if let Some(fi)=win.focused_input.as_mut(){
+                // Set AFTER host revisions, pointer, Tab and autofocus, but
+                // BEFORE any direct edit, Undo/Redo, IME Commit or native D/C.
+                // The host's existing over-limit text is never truncated.
+                fi.session.set_max_graphemes(grapheme_limit);
+                if focused_edit_mode.locked(){
+                    // Transitioning to invalid policy during preedit also
+                    // cancels it before any queued commit is processed.
                     fi.session.abandon_composition();
                 }
             }
@@ -2637,7 +2647,9 @@ fn paint_node<D: RaylibDraw>(
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
             let on_change = parse_callback_id(prop_string(node, "on_change"));
-            let edit_mode=input_policy::edit_mode(node);
+            let edit_mode=if input_policy::grapheme_limit(node).is_err(){
+                input_policy::EditMode::Invalid
+            }else{input_policy::edit_mode(node)};
             let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
             let draft_lost = field_error.is_none()
                 && on_change.is_some_and(|id|draft_warnings.contains(&id));

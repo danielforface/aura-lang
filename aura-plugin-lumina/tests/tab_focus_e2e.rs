@@ -1138,3 +1138,98 @@ fn native_x11_read_only_textinput_ime_undo_focus_and_host_rebase(){
         "ambiguous duplicate readonly policy fails closed");
     eprintln!("LUMINA_READ_ONLY_X11 focusable=true visible_blue_native_border=true no_mutation_or_submit=true no_undo_redo=true bridge_preedit_rejected=true normal_sibling_editable=true host_unlock_replaces_preserved_selection=true lock_cancels_live_preedit=true new_host_revision_rebases=true malformed_and_duplicate_fail_closed=true");
 }
+
+
+/// Actual X11/XTest acceptance of the Host-authored UAX29 live edit cap.
+/// Unicode IME Commit is from the explicit adapter (not a native IBus claim).
+/// The editor must reject the ENTIRE oversize transaction, with no callback
+/// or Undo change; a newer oversized Host value remains exact and deletable.
+#[test]
+fn native_x11_live_max_graphemes_ime_host_rebase_and_sibling_isolation(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","270"),("height","47"),
+            ("value","A"),("value_revision","1"),("on_change","cb:931"),
+            ("max_graphemes","2"),("radius","0")],vec![]),
+        node("TextInput",&[("x","20"),("y","92"),("width","270"),("height","47"),
+            ("value","Unbound"),("value_revision","1"),
+            ("on_change","cb:932")],vec![])
+    ]);
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty());
+    assert!(plugin.diagnostic_resize_window(640,340));
+    frames(&plugin,&root,&mut ctx,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=windows.lines().next().expect("native Raylib X11 window");
+    xdo(&["windowfocus","--sync",id]);
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"b",false),931,"Ab"));
+    assert!(press(&plugin,&root,&mut ctx,"c",false).is_empty(),
+        "third grapheme cannot enter capped editor");
+    xdo(&["keydown","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    assert!(press(&plugin,&root,&mut ctx,"a",false).is_empty());
+    xdo(&["keyup","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    assert!(has(&press(&plugin,&root,&mut ctx,"e",false),931,"e"),
+        "replacing selection with shorter text is valid");
+    assert!(plugin.submit_composition_event(CompositionEvent::Start{
+        callback_id:931,sequence:1}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Update{
+        callback_id:931,sequence:2,text:"👩‍💻🇮🇱".into(),caret:2}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Commit{
+        callback_id:931,sequence:3,text:"👩‍💻🇮🇱".into()}));
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty(),
+        "multi-grapheme adapter commit exceeding cap emits NO change");
+    assert!(plugin.submit_composition_event(CompositionEvent::Start{
+        callback_id:931,sequence:4}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Update{
+        callback_id:931,sequence:5,text:"👩‍💻".into(),caret:1}));
+    assert!(plugin.submit_composition_event(CompositionEvent::Commit{
+        callback_id:931,sequence:6,text:"👩‍💻".into()}));
+    let committed=frames(&plugin,&root,&mut ctx,4);
+    assert!(has(&committed,931,"e👩‍💻"),
+        "one whole-cluster commit fits at cap: {committed:?}");
+    xdo(&["keydown","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    assert!(has(&press(&plugin,&root,&mut ctx,"z",false),931,"e"),
+        "rejected IME edit must not create extra Undo snapshots");
+    assert!(has(&press(&plugin,&root,&mut ctx,"y",false),931,"e👩‍💻"),
+        "native redo must restore whole-cluster replacement");
+    xdo(&["keyup","Control_L"]);
+    frames(&plugin,&root,&mut ctx,2);
+    root.children[0].set_prop("value","Server");
+    root.children[0].set_prop("value_revision","2");
+    assert!(frames(&plugin,&root,&mut ctx,4).is_empty(),
+        "new Host revision rebases even if its value exceeds max");
+    assert!(press(&plugin,&root,&mut ctx,"q",false).is_empty(),
+        "typing cannot grow an already-over-limit Host value");
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,"Serve"),
+        "deleting from over-limit authoritative text must remain possible");
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,"Serv"));
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,"Ser"));
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,"Se"));
+    assert!(press(&plugin,&root,&mut ctx,"q",false).is_empty(),
+        "input already at capacity rejects next grapheme");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"x",false),932,"Unboundx"),
+        "uncapped sibling unaffected by first input's policy");
+    assert!(press(&plugin,&root,&mut ctx,"Tab",false).is_empty());
+    root.children[0].set_prop("max_graphemes","0");
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"x",false).is_empty());
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,"S"));
+    assert!(has(&press(&plugin,&root,&mut ctx,"BackSpace",false),931,""));
+    assert!(press(&plugin,&root,&mut ctx,"z",false).is_empty(),
+        "zero max prevents any insertion");
+    root.children[0].set_prop("max_graphemes","invalid");
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"q",false).is_empty(),
+        "malformed max_graphemes must fail closed");
+    root.children[0].set_prop("max_graphemes","2");
+    root.children[0].props.push(("max_graphemes".into(),"3".into()));
+    assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"q",false).is_empty(),
+        "ambiguous duplicate cap fails closed");
+    eprintln!("LUMINA_LIVE_GRAPHEME_CAP_X11 keyboard_overflow_rejected=true selection_replacement=true uax29_zwj_ime_commit_atomic=true rejected_commit_no_undo=true native_undo_redo=true host_oversize_preserved=true delete_over_limit=true sibling_unlimited=true zero_cap=true malformed_and_duplicate_fail_closed=true");
+}

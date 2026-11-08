@@ -83,6 +83,8 @@ pub(crate) struct EditSession {
     authority_epoch: u64,
     /// Changes only when host authority rebases (not local editing).
     rebase_generation: u64,
+    /// Optional Host-authored UAX29 capacity; never truncates existing values.
+    max_graphemes:Option<usize>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
@@ -121,7 +123,22 @@ impl EditSession {
         let end=grapheme_count(&text);
         Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
             preedit:None, last_composition_sequence:0,
-            authority_epoch:0,rebase_generation:0 }
+            authority_epoch:0,rebase_generation:0,max_graphemes:None }
+    }
+    /// Applied on every focused native frame after Host revision reconciliation.
+    /// A newer Host revision remains authoritative even if it exceeds the cap.
+    pub(crate) fn set_max_graphemes(&mut self,max:Option<usize>){
+        self.max_graphemes=max;
+    }
+    /// A bounded editor never increases an over-limit Host value; deletion or
+    /// replacement that preserves/decreases its grapheme count stays usable.
+    /// Count the FULL Unicode result, not inserted UTF-8 bytes or the sum of
+    /// separately counted fragments (graphemes can merge across boundaries).
+    fn permits_grapheme_result(&self,before:&str,after:&str)->bool{
+        let Some(cap)=self.max_graphemes else{return true;};
+        let before_count=grapheme_count(before);
+        let after_count=grapheme_count(after);
+        after_count<=cap || (before_count>cap && after_count<=before_count)
     }
     /// Count all retained dynamic text, including Undo/Redo, before a route
     /// can keep this session alive outside the visible widget tree.
@@ -230,6 +247,7 @@ impl EditSession {
         if next_size>MAX_PROJECTED_TEXT_BYTES{return None;}
         let mut next=self.buffer.clone();
         next.replace_range(a..b,replacement);
+        if !self.permits_grapheme_result(&self.buffer,&next){return None;}
         self.last_composition_sequence=sequence;
         if next==self.buffer{return Some(false);}
         let old=self.snapshot();
@@ -361,6 +379,10 @@ impl EditSession {
                 false
             }
             SessionAction::Undo => {
+                if self.undo.last().is_some_and(|previous|
+                    !self.permits_grapheme_result(&self.buffer,&previous.buffer)){
+                    return false; // Keep the undo stack intact for future changes.
+                }
                 if let Some(previous)=self.undo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.redo,now);
@@ -369,6 +391,10 @@ impl EditSession {
                 false
             }
             SessionAction::Redo => {
+                if self.redo.last().is_some_and(|next|
+                    !self.permits_grapheme_result(&self.buffer,&next.buffer)){
+                    return false; // Never consume an inadmissible redo snapshot.
+                }
                 if let Some(next)=self.redo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.undo,now);
@@ -400,6 +426,10 @@ impl EditSession {
                     other => apply_edit(&mut self.buffer,&mut self.caret,other),
                 };
                 self.anchor=self.caret;
+                if changed && !self.permits_grapheme_result(&old.buffer,&self.buffer){
+                    self.restore(old);
+                    return false; // Full rollback: caret, selection, Undo, Redo.
+                }
                 if changed {
                     Self::push(&mut self.undo,old);
                     self.redo.clear();
@@ -822,6 +852,104 @@ mod tests {
         assert!(!e.start_composition(41));
         assert!(!e.commit_composition(42,"stale").is_some());
         assert!(e.start_composition(43));
+    }
+    #[test]fn max_graphemes_atomic_unicode_clusters_and_selection_replacement(){
+        let mut s=EditSession::new("a👩‍💻".into());
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("🇮🇱".into()))));
+        assert_eq!(s.buffer,"a👩‍💻");
+        assert_eq!((s.caret,s.anchor,s.undo_len()),(2,2,0));
+        s.apply(SessionAction::SelectAll);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("e\u{301}🇮🇱".into()))));
+        assert_eq!(s.buffer,"e\u{301}🇮🇱");
+        assert_eq!(grapheme_count(&s.buffer),2);
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"a👩‍💻");
+    }
+    #[test]fn combining_mark_merging_at_cap_is_not_rejected_by_scalar_count(){
+        let mut s=EditSession::new("e".into());
+        s.set_max_graphemes(Some(1));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("\u{301}".into()))));
+        assert_eq!(s.buffer,"e\u{301}");
+        assert_eq!(grapheme_count(&s.buffer),1);
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert_eq!(s.buffer,"e\u{301}");
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"e");
+    }
+    #[test]fn host_oversized_value_is_not_truncated_but_cannot_grow(){
+        let mut s=EditSession::new("ABCD".into());
+        s.set_max_graphemes(Some(2));
+        assert_eq!(s.buffer,"ABCD","Host input stays byte-exact");
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"ABC");
+        assert!(!s.apply(SessionAction::Undo),
+            "undo would grow an already-over-limit buffer");
+        assert_eq!(s.buffer,"ABC");
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"AB");
+        assert!(!s.apply(SessionAction::Undo),
+            "undo cannot raise a compliant buffer over the cap");
+        s.rebase_authority("ServerOwned".into());
+        s.set_max_graphemes(Some(2));
+        assert_eq!(s.buffer,"ServerOwned");
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]fn redo_over_limit_is_blocked_without_consuming_redo(){
+        let mut s=EditSession::new("ab".into());
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("c".into()))));
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"ab");
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"ab");
+        s.set_max_graphemes(Some(3));
+        assert!(s.apply(SessionAction::Redo),
+            "previous rejected redo must remain available");
+        assert_eq!(s.buffer,"abc");
+    }
+    #[test]fn ime_commit_enforces_cap_but_preedit_is_never_authoritative(){
+        let mut s=EditSession::new("a".into());
+        s.set_max_graphemes(Some(2));
+        assert!(s.start_composition(1));
+        assert!(s.update_composition(2,"👩‍💻🇮🇱",2));
+        assert_eq!(s.buffer,"a");
+        assert_eq!(s.commit_composition(3,"👩‍💻🇮🇱"),Some(false));
+        assert_eq!(s.buffer,"a");
+        assert_eq!(s.undo_len(),0);
+        assert!(s.start_composition(4));
+        assert!(s.update_composition(5,"👩‍💻",1));
+        assert_eq!(s.commit_composition(6,"👩‍💻"),Some(true));
+        assert_eq!(s.buffer,"a👩‍💻");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"a");
+    }
+    #[test]fn ibus_atomic_surrounding_replacement_obeys_grapheme_capacity(){
+        let mut s=EditSession::new("abcd".into());
+        s.set_max_graphemes(Some(4));
+        let epoch=s.authority_epoch();
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"abcd",4,4,-1,1,"🙂🙂",1),None);
+        assert_eq!(s.buffer,"abcd");
+        assert_eq!(s.undo_len(),0);
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"abcd",4,4,-1,1,"🇮🇱",2),Some(true));
+        assert_eq!(s.buffer,"abc🇮🇱");
+        assert_eq!(grapheme_count(&s.buffer),4);
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"abcd");
+    }
+    #[test]fn zero_cap_disallows_growth_but_still_allows_deletion(){
+        let mut s=EditSession::new("A".into());
+        s.set_max_graphemes(Some(0));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("z".into()))));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"");
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("z".into()))));
     }
     #[test]fn ime_limits_invalid_cursor_and_controls_rejected_without_sequence_advance(){
         let mut e=EditSession::new(String::new());

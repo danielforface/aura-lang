@@ -297,7 +297,9 @@ fn rule(node:&UiNode,value:&str)->Result<Option<FieldError>,()>{
         _=>return Err(()),
     };
     let min=parse_limit(prop(node,"min_graphemes"))?;
-    let max=parse_limit(prop(node,"max_graphemes"))?;
+    // The same strict Host-authored cap used by native editing. Duplicate
+    // limits are ambiguous, not a first-value-wins validation bypass.
+    let max=crate::input_policy::grapheme_limit(node)?;
     if min.zip(max).is_some_and(|(lo,hi)|lo>hi){return Err(());}
     if required && value.trim().is_empty(){return Ok(Some(FieldError::Required));}
     let n=value.graphemes(true).count();
@@ -442,6 +444,27 @@ mod tests{
             HitTarget::TextInput{on_change,..}=>Some(on_change),
             _=>None,
         }).collect()
+    }
+    #[test]
+    fn live_edit_limit_and_form_validation_share_one_fail_closed_parser(){
+        let mut root=n("App",&[],vec![n("TextInput",&[
+            ("x","20"),("y","20"),("width","180"),("height","44"),
+            ("form","reg"),("on_change","cb:10"),("value","👩‍💻🇮🇱"),
+            ("max_graphemes","2")],vec![])]);
+        let mut values=HashMap::new();
+        values.insert(10,"👩‍💻🇮🇱".to_owned());
+        let p=plan(&root);
+        assert!(assess(&root,&p,"reg",&values,&eligible(&root,&p)).valid());
+        values.insert(10,"👩‍💻🇮🇱e\u{301}".to_owned());
+        assert!(!assess(&root,&p,"reg",&values,&eligible(&root,&p)).valid(),
+            "form still rejects an over-limit value authored externally");
+        root.children[0].set_prop("max_graphemes","4097");
+        assert!(!assess(&root,&p,"reg",&values,&eligible(&root,&p)).valid());
+        root.children[0].set_prop("max_graphemes","2");
+        root.children[0].props.push(("max_graphemes".into(),"3".into()));
+        values.insert(10,"a".to_owned());
+        assert!(!assess(&root,&p,"reg",&values,&eligible(&root,&p)).valid(),
+            "duplicate limit fails closed even with short valid text");
     }
     #[test]
     fn readonly_field_remains_valid_for_required_form_submission(){

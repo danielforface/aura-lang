@@ -23,6 +23,22 @@ pub(crate) fn edit_mode(node:&UiNode)->EditMode{
     }
 }
 
+/// Maximum number of UAX29 grapheme clusters accepted by local mutations.
+/// Absent means existing unlimited editor behavior. The form validator uses
+/// the same 0..=4096 syntax; invalid/duplicated host policy fails closed.
+pub(crate) fn grapheme_limit(node:&UiNode)->Result<Option<usize>,()>{
+    if node.kind!="TextInput"{return Err(());}
+    let mut props=node.props.iter().filter(|(key,_)|key=="max_graphemes");
+    let first=props.next();
+    if props.next().is_some(){return Err(());}
+    let Some((_,value))=first else{return Ok(None);};
+    if value.is_empty() || value.len()>4 ||
+        !value.bytes().all(|b|b.is_ascii_digit()){return Err(());}
+    let value=value.parse::<usize>().map_err(|_|())?;
+    if value>4096{return Err(());}
+    Ok(Some(value))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -57,6 +73,24 @@ mod tests{
         let mut n=field(&[("read_only","false")]);
         n.props.push(("read_only".into(),"false".into()));
         assert_eq!(edit_mode(&n),EditMode::Invalid);
+    }
+    #[test]
+    fn max_graphemes_parser_matches_form_constraints_and_rejects_duplicates(){
+        let mut field=field(&[]);
+        assert_eq!(grapheme_limit(&field),Ok(None));
+        for (v,n) in [("0",0),("2",2),("4096",4096),("002",2)]{
+            field.set_prop("max_graphemes",v);
+            assert_eq!(grapheme_limit(&field),Ok(Some(n)));
+        }
+        for value in ["","-1","4097","5000","99999","2 "," 2","2.0","٢","①","\n"]{
+            field.set_prop("max_graphemes",value);
+            assert_eq!(grapheme_limit(&field),Err(()),"malformed={value:?}");
+        }
+        field.set_prop("max_graphemes","2");
+        field.props.push(("max_graphemes".into(),"3".into()));
+        assert_eq!(grapheme_limit(&field),Err(()));
+        field.props.reverse();
+        assert_eq!(grapheme_limit(&field),Err(()));
     }
     #[test]
     fn dynamic_host_transition_is_pure_and_has_no_hidden_native_cache(){
