@@ -173,3 +173,27 @@ itself already ran on the user's laptop**.
 
 Limits: 30 samples per capture, bounded parser and caseboard, no ETW, no
 kernel-level tracing, no root-cause claims, no unprompted uploads.
+
+
+### Compiler-lowering compatibility (XR-06)
+
+Windows CI #42519053084 established a reproducible **Aura C-backend
+SSA/Phi lowering defect**: the original six nested-if + \`val mut\` state
+cells successfully compiled Aura→C but generated C referenced undeclared
+\`v84\`, \`v106\`, etc., so Clang correctly refused the product build.
+Do not call an Aura-compiler PASS a native executable PASS.
+
+The XR-06 cells now express the same recurrence and verdict logic using
+bounded **single-assignment u32 algebra** in Aura, with exact integer gates
+and explicit caller preconditions instead of nested mutable branch Phi.
+This is not a replacement C implementation; the decision laws remain
+actual Aura source compiled through the ordinary backend. This
+compatibility technique is scoped to \`apps/xray\` and does not alter
+Agent A's compiler. The core bug remains a distinct candidate for
+Agent A's ownership; it is not declared fixed by this workaround.
+
+In this release, **C persists each recurrence state scalar and performs
+trusted observation grouping**; the next-state and provenance decisions
+come from Aura. Full language-native process stream storage, typed
+record ABI and native UI require separate compiler/runtime work and are
+not claimed to exist yet.

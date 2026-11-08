@@ -361,6 +361,7 @@ static int self_test(void) {
         xray06_io_streak_next(1,0,20000,1,1)!=2 ||
         xray06_io_streak_next(1,0,0,1,1)!=0 ||
         xray06_memory_remaining(16384,0,16384)!=0 ||
+        xray06_memory_remaining(16384,0,102400)!=0 ||
         xray06_memory_remaining(16384,1000,500)!=16884 ||
         xray06_memory_phase(1,0,1,1)!=2 ||
         xray06_memory_phase(1,1,3,1)!=3 ||

@@ -108,7 +108,7 @@ int xr05_build_cases(const XR05Observation *input,size_t n,XR05Casebook *book){
                 prior_sample=f->sample;
                 uint32_t growth=0,reduction=0;
                 if(!magnitude(f->delta_kib,&growth,&reduction)||
-                   growth>UINT32_MAX-remaining||
+                   growth>=UINT32_MAX-remaining||
                    (f->delta_kib>0 && observed_net>INT64_MAX-f->delta_kib)||
                    (f->delta_kib<0 && observed_net<INT64_MIN-f->delta_kib)){
                     c.phase=(uint8_t)xray06_memory_phase(c.phase,remaining,0,0);
