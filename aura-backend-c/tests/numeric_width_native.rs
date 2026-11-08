@@ -123,7 +123,11 @@ fn existing_u32_addition_remains_correct_control() {
 
 
 #[test]
-fn unqualified_wide_division_in_main_must_fail_closed_not_drop_backend_error() {
+fn unqualified_mixed_width_division_in_main_must_fail_closed_not_drop_backend_error() {
+    // U64/U64 division is now a qualified full-width native operation.
+    // Preserve this regression's original *main-error-propagation* purpose
+    // with U64/I64, which is still unqualified and must not be suppressed by
+    // a special native C main wrapper.
     let span: Span = (0, 0).into();
     let mut module = ModuleIR::new();
     module.functions.insert("main".to_string(), FunctionIR {
@@ -131,7 +135,7 @@ fn unqualified_wide_division_in_main_must_fail_closed_not_drop_backend_error() {
         span,
         params: vec![
             Param { name: "x".into(), ty: Type::U64, span, value: ValueId(0) },
-            Param { name: "y".into(), ty: Type::U64, span, value: ValueId(1) },
+            Param { name: "y".into(), ty: Type::I64, span, value: ValueId(1) },
         ],
         ret: Type::U64,
         entry: BlockId(0),
@@ -147,7 +151,7 @@ fn unqualified_wide_division_in_main_must_fail_closed_not_drop_backend_error() {
         }],
     });
     match emit_module(&module, None) {
-        Ok(_) => panic!("unqualified U64 division in main must NOT produce a successful C artifact"),
+        Ok(_) => panic!("unqualified U64/I64 division in main must NOT produce a successful C artifact"),
         Err(e) => assert!(
             e.message.contains("unqualified C numeric division"),
             "incorrect backend rejection kind: {e}"
