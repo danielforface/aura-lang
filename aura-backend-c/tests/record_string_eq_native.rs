@@ -36,7 +36,7 @@ fn unicode_record_string_eq_ne_compiles_and_executes_at_o0_o2() {
         ("line\nbreak", "line\nbreak", true), ("a%b", "a%b", true),
     ];
     let driver = concat!(
-        "#include <stdbool.h>\n#include <stdint.h>\n",
+        "#include <stdbool.h>\n#include <stdint.h>\n#include <stddef.h>\n",
         "bool equivalent(const char*,const char*);\n",
         "bool different(const char*,const char*);\n",
         "bool unicode_literal_equality(void);\n",
