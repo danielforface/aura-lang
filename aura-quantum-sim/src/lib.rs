@@ -25,6 +25,7 @@ pub mod channel_moments;
 pub mod channel_moments_json;
 pub mod channel_tomography;
 pub mod channel_tomography_json;
+pub mod conditioned_tomography_json;
 
 use std::mem::size_of;
 

@@ -167,6 +167,9 @@ fn validate_conditions(circuit:&Circuit,conditions:&[ClassicalCondition])
     if conditions.is_empty()||conditions.len()>64{
         return Err(ChannelError::InvalidCondition);
     }
+    if circuit.classical_bits()>64{
+        return Err(ChannelError::InvalidCondition);
+    }
     let mut measured=vec![false;circuit.classical_bits()];
     for op in circuit.instructions(){
         if let Instruction::Measure{into_bit,..}=op{
@@ -280,6 +283,12 @@ pub fn execute_conditioned_tomography(
 )->Result<ConditionedTomography,ChannelError>{
     let (work_factor,reserve)=preflight_reductions(circuit,selected_pairs)?;
     validate_conditions(circuit,conditions)?;
+    let work_factor=work_factor.checked_add(conditions.len())
+        .ok_or(ChannelError::Overflow)?;
+    let reserve=reserve.checked_add(
+        conditions.len().checked_mul(std::mem::size_of::<ClassicalCondition>())
+            .ok_or(ChannelError::Overflow)?
+    ).ok_or(ChannelError::Overflow)?;
     let (branches,instrument_count,peak,work,_mass)=
         enumerate_channel(circuit,budget,work_factor,reserve)?;
     let is_selected=|b:&Branch|conditions.iter().all(|c|

@@ -1,7 +1,7 @@
 //! C-021 conditioned final-classical-register tomography, true product.
 use aura_quantum_sim::channel_tomography::{
     execute_conditioned_tomography,execute_channel_tomography,
-    ClassicalCondition,MIN_CONDITION_PROBABILITY,
+    ClassicalCondition,
 };
 use aura_quantum_sim::channel_moments::ChannelError;
 use aura_quantum_sim::circuit::{Circuit,Instruction};
@@ -145,5 +145,4 @@ fn budget_and_pair_issues_fail_closed(){
     assert_eq!(execute_conditioned_tomography(
         &c,&[[1,0]],&[cond(0,false)],DEFAULT_MEMORY_BUDGET).unwrap_err(),
         ChannelError::InvalidTomographyPairs);
-    assert!(MIN_CONDITION_PROBABILITY>0.0);
 }
