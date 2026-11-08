@@ -403,7 +403,7 @@ static int self_test(void) {
        xray07_memory_gate(32768,1)!=1 ||
        xray07_memory_gate(65535,2)!=0 ||
        xray07_signal_dimensions(800,20000,40000,35000,1)!=3 ||
-       xray07_signal_dimensions(800,20000,40000,35000,2)!=0 ||
+       xray07_signal_dimensions(800,20000,30000,35000,2)!=0 ||
        xray07_coincidence_gate(2,1)!=1 ||
        xray07_coincidence_gate(2,2)!=0 ||
        xray07_coincidence_gate(3,2)!=1 ||
