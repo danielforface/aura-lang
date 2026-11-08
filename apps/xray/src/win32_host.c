@@ -22,7 +22,7 @@
 #define XR_BUILD_SHA "unknown"
 #endif
 #define XR_SCHEMA "aura.xray.capture/2"
-#define XR_VERSION "0.5.0-xr05"
+#define XR_VERSION "0.6.0-xr06"
 
 extern uint32_t xray_memory_quanta_256m(uint32_t working_set_mib);
 extern uint32_t xray_io_read_quanta_64m(uint32_t io_read_kib);
@@ -39,6 +39,12 @@ extern uint32_t xray_recovery_gate(uint32_t retraction_kib, uint32_t burst_kib);
 extern uint32_t xray_cpu_hot_gate(uint32_t cpu_millicores);
 extern uint32_t xray_cpu_streak_gate(uint32_t consecutive_samples);
 extern uint32_t xray_transfer_surge_gate(uint32_t read_kib_s, uint32_t write_kib_s);
+extern uint32_t xray06_cpu_streak_next(uint32_t prior,uint32_t cpu,uint32_t comparable,uint32_t adjacent);
+extern uint32_t xray06_io_streak_next(uint32_t prior,uint32_t read,uint32_t write,uint32_t comparable,uint32_t adjacent);
+extern uint32_t xray06_memory_remaining(uint32_t previous,uint32_t growth,uint32_t reduction);
+extern uint32_t xray06_memory_phase(uint32_t previous,uint32_t remaining,uint32_t age,uint32_t evidence_ok);
+extern uint32_t xray06_signal_dimensions(uint32_t cpu,uint32_t read,uint32_t write,uint32_t growth);
+extern uint32_t xray06_evidence_grade(uint32_t comparable,uint32_t raw,uint32_t contiguous);
 
 static void utc_now(char *out, size_t size) {
     SYSTEMTIME t;
@@ -348,25 +354,46 @@ static int self_test(void) {
         fputs("XRAY CASEBOOK CONTRACT FAIL: Aura evidence gates or temporal episode oracle\n",stderr);
         return 0;
     }
+    if (xray06_cpu_streak_next(2,900,1,1)!=3 ||
+        xray06_cpu_streak_next(2,900,1,0)!=1 ||
+        xray06_cpu_streak_next(2,900,0,1)!=0 ||
+        xray06_cpu_streak_next(4096,900,1,1)!=4096 ||
+        xray06_io_streak_next(1,0,20000,1,1)!=2 ||
+        xray06_io_streak_next(1,0,0,1,1)!=0 ||
+        xray06_memory_remaining(16384,0,16384)!=0 ||
+        xray06_memory_remaining(16384,1000,500)!=16884 ||
+        xray06_memory_phase(1,0,1,1)!=2 ||
+        xray06_memory_phase(1,1,3,1)!=3 ||
+        xray06_memory_phase(1,1,2,0)!=4 ||
+        xray06_signal_dimensions(900,20000,0,40000)!=3 ||
+        xray06_signal_dimensions(699,16383,16383,32767)!=0 ||
+        xray06_evidence_grade(1,1,1)!=3 ||
+        xray06_evidence_grade(1,0,1)!=1 ||
+        xray06_evidence_grade(0,1,1)!=0) {
+        fputs("XRAY XR06 STATE FAIL: compiled Aura transition contract\n",stderr);
+        return 0;
+    }
     puts("AURA_CORE_CONTRACT_PASS 24 vectors; source=analysis.aura; backend=c");
+    puts("AURA_XR06_STATE_PASS recurrence, memory phases, signal coincidence, provenance");
     puts("AURA_XR05_CASEBOOK_PASS memory pulse/retraction, CPU streak, transfer surge, gap/reuse isolation");
     puts("XRAY_TEMPORAL_CONTRACT_PASS baseline, rates, reset, PID reuse, unknown identity");
     return 1;
 }
 
 static void usage(FILE *out) {
-    fputs("AURA X-RAY XR-05 -- Compiled Aura Investigation Cases\n"
+    fputs("AURA X-RAY XR-06 -- Aura Temporal State Engine and Headless Casebook\n"
           "Usage:\n"
           "  AuraXRay.exe --help\n"
           "  AuraXRay.exe --version\n"
           "  AuraXRay.exe --self-test\n"
           "  AuraXRay.exe --capture --seconds N --out FILE [--report REPORT.html] [--include-names]\n"
           "  AuraXRay.exe --replay CAPTURE.jsonl --report WORKBENCH.html [--include-names]\n"
+          "  AuraXRay.exe --explain CAPTURE.jsonl --out CASES.json\n"
           "  AuraXRay.exe --compare BASELINE.jsonl CANDIDATE.jsonl --report DIFF.html [--include-names]\n"
           "Default is read-only, local-only, unprivileged, with no network.\n"
           "Process names are excluded unless --include-names is requested.\n"
           "--seconds N schedules N samples across a full N-second window.\n"
-          "XR-05: Aura-compiled memory pulse/retraction, sustained CPU, transfer surge evidence cases.\n"
+          "XR-06: Aura-compiled temporal recurrence, memory phases and evidence grade.\n"
           "Reconstructs source deltas when raw counters are available; legacy /2 remains readable.\n"
           "Strict capture/2 validation: invalid input is refused, never silently repaired.\n"
           "Offline casebook/replay/compare and topology; process names are opt-in only.\n"
@@ -397,6 +424,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--replay") == 0 && i+1 < argc && !mode) {
             mode = 1; input_path = argv[++i]; continue;
         }
+        if (strcmp(argv[i], "--explain") == 0 && i+1 < argc && !mode) {
+            mode = 3; input_path = argv[++i]; continue;
+        }
         if (strcmp(argv[i], "--compare") == 0 && i+2 < argc && !mode) {
             mode = 2; baseline_path = argv[++i]; input_path = argv[++i]; continue;
         }
@@ -424,6 +454,30 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (mode==3) {
+        if (capture || seconds || report_path || include_names || !input_path ||
+            !input_path[0] || !out_path || !out_path[0] ||
+            strcmp(out_path,input_path)==0) {
+            fputs("ERROR --explain requires an input and a NEW distinct --out JSON file (names forbidden)\n",stderr);
+            return 2;
+        }
+        FILE *json=NULL;
+        if (fopen_s(&json,out_path,"wx")!=0 || !json) {
+            fputs("ERROR casebook JSON path exists or cannot be created\n",stderr);
+            return 3;
+        }
+        char diagnostics[240]={0};
+        int ok=xr03_export_cases(json,input_path,diagnostics,sizeof diagnostics);
+        if(fclose(json)!=0)ok=0;
+        if(!ok){
+            remove(out_path);
+            fprintf(stderr,"XRAY_EXPLAIN_REJECTED %s\n",diagnostics[0]?diagnostics:"casebook output failed");
+            return 4;
+        }
+        printf("AURA_XRAY_CASEBOOK_OK mode=explain input=%s output=%s source=validated_capture2 engine=aura_state\n",
+               input_path,out_path);
+        return 0;
+    }
     if (mode) {
         if (capture || seconds || out_path || !input_path || !input_path[0] ||
             !report_path || !report_path[0] ||

@@ -16,6 +16,8 @@ typedef struct {
     uint32_t kind,pid,start,end,peak_sample,peak_value,recovered_kib;
     uint64_t creation;
     uint8_t raw_verified;
+    uint8_t phase; /* memory only: 1 pending, 2 retracted, 3 expired, 4 interrupted */
+    uint8_t grade; /* Aura-authored provenance: 0 unknown, 1 sampled, 2 exact, 3 exact+contiguous */
 } XR05Case;
 typedef struct {
     XR05Case items[XR05_MAX_CASES];

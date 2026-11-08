@@ -1,6 +1,6 @@
 # AURA X-RAY XR-03 — multidimensional offline evidence workbench
 
-**Version 0.5.0-xr05 · Windows x64 · unsigned experimental · local only**
+**Version 0.6.0-xr06 · Windows x64 · unsigned experimental · local only**
 
 XR-03 evolves the Windows process analyzer into an **importable, comparable, self-contained investigation system**. It is a real Windows EXE built with the repository's Aura C backend. Nine application-domain functions (normalization, rate calculations, activity scoring and CPU/IO/memory impact) are authored in Aura Lang and generated directly from apps/xray/src/analysis.aura. Win32 API collection, 64-bit identity checks and bounded storage are handled in C, not falsely described as fully Aura. The OS adapter does not modify process state.
 
@@ -62,7 +62,7 @@ Product ownership is limited to apps/xray/ and its scoped Windows workflow; othe
 
 User hardware verified the previous product with 2,123 process records, 1,901 complete rate vectors, ten full samples over 10.015 seconds, and no reported collector errors. XR-02 Replay had 2,195 records, 1,966 vectors and 10.016 seconds. Independent Chromium tests of Live/Replay/Compare HTML found working interactions and no JS exceptions or external requests. These results do not demonstrate better overall performance between different workload snapshots.
 
-**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.5.0-xr05. Parent PID is a **hint**, not an independently verified ancestral identity.
+**New source precision:** Windows collector records full 64-bit CPU ticks (cpu_total_100ns), cumulative read/write bytes and snapshots of parent_pid and thread_count. The old rounded CPU-ms and KiB columns remain for compatibility. Schema is still aura.xray.capture/2 with additive fields; the product version is 0.6.0-xr06. Parent PID is a **hint**, not an independently verified ancestral identity.
 
 **Import/replay evidence:** In XR-04 captures the offline importer rechecks every complete process score against the original CPU/IO raw counters, exact monotonic inter-sample clock intervals, identity and working-set deltas. Old XR-02/XR-03 captures lack those counters and continue to open with an explicitly marked **legacy score-only validation**. This consistency check is NOT a signature and cannot prove that adversarially rewritten captures are authentic. Data loss, counter rollback and unsupported input are not quietly turned into zero.
 
@@ -108,3 +108,68 @@ Windows product usage (all output paths must be new):
     .\AuraXRay.exe --compare capture-xr04.jsonl capture-xr05.jsonl --report xr05-compare.html
 
 Open the HTML file and choose **06 / Aura Investigation Cases**. This is a compiled-Aura-native classification path with an offline report; no network, ETW, global installer, security agent or Lumina native GUI.
+
+
+## XR-06 — Compiled Aura Temporal State Engine + JSON Casebook
+
+The temporal investigation engine no longer uses only isolated Aura threshold calls.
+Six additional **real Aura cells** in \`src/analysis.aura\` are compiled through the
+actual repository C backend and linked into the Windows PE:
+
+| Aura cell | Actual product responsibility |
+|---|---|
+| \`xray06_cpu_streak_next\` | consecutive hot-CPU recurrence; resets on missing/gapped observations |
+| \`xray06_io_streak_next\` | process transfer activity recurrence; groups consecutive samples |
+| \`xray06_memory_remaining\` | arithmetic state of outstanding half-burst memory retraction |
+| \`xray06_memory_phase\` | transitions between pending, observed retraction, expired bounded window and interrupted evidence |
+| \`xray06_signal_dimensions\` | measures co-occurring CPU, memory and I/O dimensions in the same process and sample |
+| \`xray06_evidence_grade\` | graded source reliability; distinguish legacy score-only from exact counter rechecks |
+
+The C adapter still safely supplies identity ordering (PID + exact creation
+FILETIME), sample continuity, bounded storage and input preconditions. That
+is a **native Aura business-logic engine**, not a claim that the OS adapter,
+JSON parser or visual interface are fully implemented in Aura. All recurrence,
+memory-state and confidence rules above are native compiled Aura calls. Native
+negative/positive acceptance is wired into \`--self-test\` and Windows CI.
+
+Four observable case types: memory pulse (with explicit retracted/pending/
+window_expired/interrupted evidence phase), CPU streak, contiguous I/O transfer
+episode, and multiple synchronous measured pressure dimensions. Cases are
+heuristic **observational evidence**, not causality, memory-leak diagnosis,
+security analysis or measured disk/device throughput. Missing counter data is
+never assumed to be zero or to imply recovery.
+
+### New headless interface
+
+In addition to \`--replay\` and \`--compare\`, execute:
+
+    .\AuraXRay.exe --explain capture-xr04.jsonl --out cases-xr06.json
+
+The offline JSON casebook (\`aura.xray.casebook/1\`) contains the original
+capture's exact build SHA, record counts, raw verification coverage, and
+bounded cases with \`kind\`, \`pid\`, \`creation_filetime\`, sample interval,
+peak sample/value, memory phase, independent counter fidelity and Aura evidence
+grade. The export deliberately excludes process names (even if capture was
+recorded with names), command lines and filesystem paths. It rejects
+invalid/tampered captures, short capacities, existing output files and any
+destination identical to the source; it never silently overwrites input.
+
+A replay command produces an offline HTML view with the same model:
+
+    .\AuraXRay.exe --replay capture-xr04.jsonl --report xr06-investigation.html
+
+The JSON and HTML are **two representations of the same validated source and
+compiled-Aura casebook**; neither performs new Win32 collection. An XR-04
+capture remains replayable with source counter verification and old /2 legacy
+sources remain marked as score-only; new live XR-06 captures also support the
+exact-counter profile of capture/2. There is no network activity or installer.
+
+Prior private Windows field recording acceptance: XR-05 replay produced three
+casebook records with 1,928 source-exact vectors from 2,153 records.
+An independent XR-06 model replay of those same observations preserved exactly
+three matching cases (PID 7140 memory pulse S2→S3, CPU streak S5→S10,
+PID 13408 transfer S7). This is a local model oracle, **not a claim that XR-06
+itself already ran on the user's laptop**.
+
+Limits: 30 samples per capture, bounded parser and caseboard, no ETW, no
+kernel-level tracing, no root-cause claims, no unprompted uploads.

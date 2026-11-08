@@ -285,3 +285,41 @@ Reject a release if any:
 **Grounded three cases on actual user's capture:** PID 7140 S2 +91932 KiB working set, S3 -106348 KiB same identity; PID 7140 S5–10 sustained 984–1190 millicores; PID 13408 S7 17243 KiB/s write. Interpretation bounded: not malware, not a proven leak or resolved leak, not causation, not physical disk throughput, not proof of actual lineage. Private files are not committed to repo. Data schema remains /2; product version 0.5.0-xr05.
 
 **Acceptance targets:** compile 14 genuine Aura cells and fail on missing generated functions, link Win32 x64 app and portable casebook engine, native self-test with 4 expected synthetic cases + negative boundary fixtures, capture actual Windows processes, reproduce score/monotonic/raw checks, replay/compare, reject falsified rate, verify standalone HTML casebook JS syntax, artifact PE x64/manifest/SHA. UI must show literal cases with original sample trail, preserved privacy and correct legacy fidelity. User-machine XR05 smoke is pending until user runs EXE. No merge outside product Draft PR #113.
+
+
+## 25. XR-06 — Aura compiled temporal state, recurring evidence and machine-readable API
+
+**Delivery goal**: replace XR-05's C-centered episode decisions with actual
+Aura-compiled recurrence, bounded retraction state, episode phase transitions,
+coincident dimensions and evidence reliability grades; export casebook/1 from
+the same strict, privacy-safe Capture/2 reader for other analysis programs.
+
+**BEFORE**: 14 Aura business cells chiefly normalize/threshold, while C owns
+memory net-retraction and CPU streak decisions. HTML casebook is the only
+external episode API. Missing future samples are not distinguished visibly
+from a truly exhausted recovery window.
+
+**AFTER candidate**: 20 Aura business cells, including six real stateful fold
+and provenance functions called per process sample (not one-off decorations).
+C performs transport, sorting, resource checks, bounds and stream grouping;
+Aura controls recurrences, memory state, phase closure, simultaneous pressure
+dimension count, and classification fidelity. Clear four-state memory outcome:
+OPEN, RETRACTED, WINDOW_EXPIRED, INTERRUPTED. Fourth case type measures
+coincident CPU/memory/I/O *observations*, not cause. New
+\`--explain CAPTURE.jsonl --out CASES.json\` emits validated private-free JSON
+with source SHA and evidence grade; files must be new, complete input required.
+
+**Independent local preflight**: read user-provided actual 177 KiB XR-05
+workbench and recompute its 2,153 event rows via a separate Python reference:
+three expected XR-06 model cases (7140 S2–S3 memory, 7140 S5–S10 CPU,
+13408 S7 transfer), no compound false positives. Real Aura native function
+and compile tests executed via exact-SHA Windows CI, not imputed from local
+reference. New negative fixtures: sample gaps, PID reuse, near-threshold
+signals, partial/unknown record, output overwrite and rate-falsification.
+Windows CI outcome must be attached to the exact final source revision.
+No automatic Merge, no shared compiler or other-agent path mutation.
+
+**Guarantee boundary**: not whole-program Aura; no third-party dependencies
+in the offline UI; no native Lumina UI, ETW, malware/root-cause label,
+systemwide physical RAM or device I/O inference. Exact provenance is from
+source observations, not from an invented runtime proof.

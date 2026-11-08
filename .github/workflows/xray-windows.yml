@@ -59,7 +59,7 @@ jobs:
           if (!(Test-Path "build/analysis/module.c")) { throw "No generated module.c" }
           if (!(Test-Path "build/analysis/aura_runtime.h")) { throw "No generated aura_runtime.h" }
           $generated = Get-Content "build/analysis/module.c" -Raw
-          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact", "xray_burst_gate", "xray_recovery_gate", "xray_cpu_hot_gate", "xray_cpu_streak_gate", "xray_transfer_surge_gate")) {
+          foreach ($fn in @("xray_working_set_mib", "xray_memory_quanta_256m", "xray_io_read_quanta_64m", "xray_read_kib_per_sec", "xray_cpu_millicores", "xray_activity_score", "xray_cpu_impact", "xray_io_impact", "xray_memory_impact", "xray_burst_gate", "xray_recovery_gate", "xray_cpu_hot_gate", "xray_cpu_streak_gate", "xray_transfer_surge_gate", "xray06_cpu_streak_next", "xray06_io_streak_next", "xray06_memory_remaining", "xray06_memory_phase", "xray06_signal_dimensions", "xray06_evidence_grade")) {
             $signature = '(?m)\buint32_t\s+' + [regex]::Escape($fn) + '\s*\('
             if (![regex]::IsMatch($generated, $signature)) {
               throw "Aura codegen ABI regression: $fn must return real uint32_t, not void or prototype"
@@ -92,8 +92,8 @@ jobs:
       - name: Execute generated Aura semantic vectors and real Windows capture
         run: |
           $selfTest = (& "dist/AuraXRay.exe" --self-test | Out-String)
-          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS')) {
-             throw "XR05 compiled-Aura evidence episode self-test failed"
+          if ($LASTEXITCODE -ne 0 -or !$selfTest.Contains('AURA_XR05_CASEBOOK_PASS') -or !$selfTest.Contains('AURA_XR06_STATE_PASS')) {
+             throw "XR06 compiled-Aura temporal state contract failed"
           }
           Write-Host $selfTest
           $version = (& "dist/AuraXRay.exe" --version | Out-String).Trim()
@@ -224,6 +224,29 @@ jobs:
           [IO.File]::WriteAllLines((Join-Path $PWD "dist/ci-rate-tampered.jsonl"),$lines)
           & "dist/AuraXRay.exe" --replay "dist/ci-rate-tampered.jsonl" --report "dist/ci-rate-forged.html" 2>$null
           if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-rate-forged.html")) { throw "XR04 accepted raw-counter-inconsistent rate" }
+          # The headless JSON uses the SAME strict parser and Aura-native cases.
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --out "dist/ci-casebook.json"
+          if ($LASTEXITCODE -ne 0) { throw "XR06 headless Aura casebook export failed" }
+          $casebook = Get-Content "dist/ci-casebook.json" -Raw | ConvertFrom-Json
+          if ($casebook.schema -ne 'aura.xray.casebook/1' -or
+              $casebook.source_build -ne $env:GITHUB_SHA -or
+              $casebook.observations -ne $p.Count -or
+              $casebook.comparable_vectors -ne $vectors.Count -or
+              $casebook.verified_raw_vectors -ne $vectors.Count -or
+              $casebook.complete_case_scope -ne $true) {
+              throw "XR06 headless casebook schema or provenance invalid"
+          }
+          $plain = Get-Content "dist/ci-casebook.json" -Raw
+          if ($plain -match '(?i)(process_name|https?://|cmdline|path_to_exe)') {
+             throw "XR06 JSON casebook violates process-name privacy"
+          }
+          & "dist/AuraXRay.exe" --explain "dist/ci-capture.jsonl" --out "dist/ci-casebook.json" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "XR06 allowed overwriting the original casebook" }
+          & "dist/AuraXRay.exe" --explain "dist/ci-rate-tampered.jsonl" --out "dist/ci-tampered-casebook.json" 2>$null
+          if ($LASTEXITCODE -eq 0 -or (Test-Path "dist/ci-tampered-casebook.json")) {
+             throw "XR06 accepted raw-counter tampering or left invalid JSON"
+          }
+          Write-Host "XR06_HEADLESS_CASEBOOK_PASS schema, source counters, privacy, no-overwrite, tamper rejection"
           Write-Host "XR04_RAW_COUNTER_ORACLE_PASS full rates, topology, tampered-rate rejection"
           Write-Host "XR03_REPLAY_COMPARE_ORACLE_PASS replay, comparison, tamper rejection, invalid JSON rejection"
           # Negative controls: reject invalid duration; never create the requested file.
@@ -253,7 +276,7 @@ jobs:
           $manifest = [ordered]@{
             schema = "aura.xray.build-manifest/1"
             product = "AuraXRay"
-            version = "0.5.0-xr05"
+            version = "0.6.0-xr06"
             source_sha = $env:GITHUB_SHA
             compiler = "aura from exact source SHA"
             backend = "aura-backend-c"
@@ -266,8 +289,8 @@ jobs:
           }
           $manifest | ConvertTo-Json -Depth 7 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding utf8
           Copy-Item "apps/xray/README.md" "dist/README.txt"
-          Copy-Item "dist/ci-report.html" "dist/XR05-EXAMPLE-REPORT.html"
-          Copy-Item "dist/ci-comparison.html" "dist/XR05-EXAMPLE-COMPARISON.html"
+          Copy-Item "dist/ci-report.html" "dist/XR06-EXAMPLE-REPORT.html"
+          Copy-Item "dist/ci-comparison.html" "dist/XR06-EXAMPLE-COMPARISON.html"
           Write-Host "AURA_XRAY_EXE_SHA256 $sha"
 
       - name: Upload deliverable Windows EXE
@@ -278,8 +301,9 @@ jobs:
             dist/AuraXRay.exe
             dist/BUILD-MANIFEST.json
             dist/README.txt
-            dist/XR05-EXAMPLE-REPORT.html
-            dist/XR05-EXAMPLE-COMPARISON.html
+            dist/ci-casebook.json
+            dist/XR06-EXAMPLE-REPORT.html
+            dist/XR06-EXAMPLE-COMPARISON.html
           retention-days: 30
           if-no-files-found: error
 

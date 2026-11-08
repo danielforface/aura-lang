@@ -193,7 +193,7 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
                 xr3_error(error,cap,"invalid capture start or unsupported schema",line_no);good=0;break;
             }
             run->raw_precision=(strncmp(run->version,"0.4.",4)==0 ||
-                                strncmp(run->version,"0.5.",4)==0);
+                                strncmp(run->version,"0.5.",4)==0 ||\n                                strncmp(run->version,"0.6.",4)==0);
             if(run->raw_precision){
                 raw_prev=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
                 raw_curr=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
@@ -516,10 +516,10 @@ static void emitrun(FILE *f,const XR3Run *r){
         for(unsigned i=0;i<r->casebook->count;i++){
             const XR05Case *c=&r->casebook->items[i];
             if(i)fputc(',',f);
-            fprintf(f,"[%u,%u,\"%llu\",%u,%u,%u,%u,%u,%u]",
+            fprintf(f,"[%u,%u,\"%llu\",%u,%u,%u,%u,%u,%u,%u,%u]",
                     c->kind,c->pid,(unsigned long long)c->creation,
                     c->start,c->end,c->peak_sample,c->peak_value,
-                    c->recovered_kib,(unsigned)c->raw_verified);
+                    c->recovered_kib,(unsigned)c->raw_verified,(unsigned)c->phase,(unsigned)c->grade);
         }
     }
     fprintf(f,"],\"caseTruncated\":%u}",r->casebook?r->casebook->truncated:0u);
@@ -577,7 +577,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           ".alert{border-left:2px solid var(--amber);padding:10px 14px;margin:9px 0;background:#192330;border-radius:5px;font-size:12px}"
           ".footer{padding-top:25px;margin-top:40px;border-top:1px solid var(--edge);color:var(--muted);font-size:12px}"
           ".hidden{display:none!important}</style></head><body><div class=\"frame\">"
-          "<header><div class=\"row\"><div><div class=\"brand\">AURA / COMPILED INVESTIGATION ENGINE / XR-05</div>"
+          "<header><div class=\"row\"><div><div class=\"brand\">AURA / COMPILED TEMPORAL ENGINE / XR-06</div>"
           "<h1>X-RAY <b>workbench</b></h1>"
           "<p>Temporal evidence you can interrogate. Identical sample times for each metric. Source: Windows Toolhelp32 / PSAPI / GetProcessTimes.</p>"
           "</div><div><span class=\"tag\">OFFLINE · VERIFIED INPUT</span><p class=\"small\">NO NETWORK · NO TELEMETRY UPLOAD</p></div></div>"
@@ -588,7 +588,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<button data-tab=\"heatmap\">03 / Process matrix</button>"
           "<button data-tab=\"integrity\">04 / Quality &amp; provenance</button>"
           "<button data-tab=\"topology\">05 / Process topology</button>"
-          "<button data-tab=\"cases\" class=\"active\">06 / Aura Investigation Cases</button>"
+          "<button data-tab=\"cases\" class=\"active\">06 / Aura State Investigation</button>"
           "</div><div class=\"grid\"><main>"
           "<section class=\"panel\" id=\"timeline\"><div class=\"row\"><h2>Multidimensional system timeline</h2>"
           "<select id=\"metric\"><option value=\"cpu\">Sum CPU · millicores</option>"
@@ -630,7 +630,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"controls\"><select id=\"caseType\" aria-label=\"Case kind\">"
           "<option value=\"0\">All evidence patterns</option>"
           "<option value=\"1\">Memory bursts</option><option value=\"2\">Sustained CPU</option>"
-          "<option value=\"3\">I/O transfer surges</option></select>"
+          "<option value=\"3\">I/O transfer surges</option><option value=\"4\">Coincident signals</option></select>"
           "<input id=\"caseFilter\" type=\"search\" placeholder=\"Filter PID\" aria-label=\"Filter cases by process PID\"></div>"
           "<p class=\"small\" id=\"caseCount\"></p><div class=\"scroll\"><table><thead><tr>"
           "<th>Process</th><th>Observed pattern</th><th>Samples</th><th>Measured maximum</th>"
@@ -647,7 +647,7 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "<div class=\"panel\" style=\"margin-top:16px\"><div class=\"k\">CURRENT vs BASELINE</div><div id=\"compareCards\"></div>"
           "<p class=\"small\">Comparisons use aggregate observed distributions, not presumed process identity across captures or causal conclusions.</p>"
           "</div></aside></div>"
-          "<div class=\"footer\">AURA ENGINE: fourteen compiled u32 cells, including five XR-05 evidence gates. "
+          "<div class=\"footer\">AURA ENGINE: twenty compiled u32 cells, including six XR-06 temporal state machines. "
           "Input validation is local and fail-closed; no external libraries. SOURCE: WINDOWS · NO NETWORK · NO EXTERNAL ASSETS."
           "<p>Build provenance is embedded in the capture, not silently inferred from this report.</p></div></div>"
           "<script>'use strict';const candidate=",out);
@@ -756,18 +756,26 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "if(!e.length){const tr=document.createElement('tr');const td=document.createElement('td');"
           "td.colSpan=6;td.textContent='Topology unavailable in legacy capture. New XR-04 recordings include parent/thread hints.';"
           "tr.append(td);rows.append(tr);}}"
-                    "const caseNames=['','Memory pulse','Sustained CPU','I/O transfer surge'];"
+                    "const caseNames=['','Memory pulse','Sustained CPU','I/O transfer surge','Synchronous pressure dimensions'];"
           "const caseUnit=c=>c[0]===1?n(c[6])+' KiB growth':"
-          "c[0]===2?n(c[6])+' millicores':n(c[6])+' KiB/s';"
+          "c[0]===2?n(c[6])+' millicores':c[0]===4?n(c[6])+' dimensions':n(c[6])+' KiB/s';"
           "function showCase(c,r){$('caseTitle').textContent=caseNames[c[0]]+' / PID '+c[1];"
-          "const subtitle=c[0]===1?(c[7]>0?"
-          "'Observed net retraction of '+n(c[7])+' KiB by sample '+c[4]+'. A pulse, not established leak.':"
-          "'No >=50% retraction verified in the next three consecutive valid samples. This is NOT proof of a leak.'):"
-          "c[0]===2?'At least three adjacent samples met the Aura >=700-millicore gate.':"
-          "'At least one transfer direction reached 16,384 KiB/s. May include non-disk I/O.';"
+          "const memoryPhases=['unknown','PENDING: capture ended before bounded decision',"
+          "'RETRACTED: >=50% recovery within observed window',"
+          "'WINDOW EXPIRED: no >=50% recovery within three comparable samples',"
+          "'INTERRUPTED: missing, nonconsecutive or invalid evidence'];"
+          "const subtitle=c[0]===1?(memoryPhases[c[9]]+"
+          "(c[9]===2?'; observed net retraction '+n(c[7])+' KiB':'')+"
+          "'. This does not establish a leak or its absence.'):"
+          "c[0]===2?'Aura recurrence counted >=3 consecutive CPU-hot samples.':"
+          "c[0]===3?'One Aura recurrence episode reached >=16,384 KiB/s. May include non-disk I/O.':"
+          "'At least two measured dimensions coincided in one complete sample; no causal inference.';"
+          "const grades=['unknown','complete vector','raw-counter reverified',"
+          "'raw-counter verified with uninterrupted episode'];"
           "$('caseNarrative').textContent='PID '+c[1]+' · creation FILETIME '+c[2]+' · S'+c[3]+'–S'+c[4]+"
-          "' · '+subtitle+' Source: '+(c[8]?'exact raw counters independently verified':"
-          "'legacy score-only check; exact counter reconstruction unavailable')+'.';"
+          "' · '+subtitle+' Evidence grade: '+(grades[c[10]]||'unknown')+"
+          "'; '+(c[8]?'exact raw counters independently verified':"
+          "'legacy score-only check; raw counter reconstruction unavailable')+'.';"
           "const out=$('caseTrail');out.replaceChildren();"
           "const trace=r.events.filter(e=>e[1]===c[1]&&e[2]===c[2]&&"
           "e[0]>=Math.max(1,c[3]-1)&&e[0]<=Math.min(r.seconds,Math.max(c[4],c[3])+3));"
@@ -787,8 +795,10 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
           "const rows=$('caseRows');rows.replaceChildren();"
           "for(const c of cases.slice(0,200)){const tr=document.createElement('tr');"
           "const values=['PID '+c[1],caseNames[c[0]],'S'+c[3]+(c[4]!==c[3]?'–S'+c[4]:''),"
-          "caseUnit(c),c[0]===1?(c[7]>0?n(c[7])+' KiB contracted':'not established'):"
-          "'not applicable',c[8]?'exact counters':'legacy only'];"
+          "caseUnit(c),c[0]===1?(c[9]===2?n(c[7])+' KiB contracted':"
+          "c[9]===4?'interrupted':c[9]===3?'window expired':'pending'):"
+          "'not applicable',c[10]===3?'exact + continuous':c[10]===2?'exact counters':"
+          "c[10]===1?'legacy only':'unknown'];"
           "for(const value of values){const td=document.createElement('td');td.textContent=value;tr.append(td);}"
           "tr.addEventListener('click',()=>showCase(c,r));rows.append(tr);}"
           "if(cases.length)showCase(cases[0],r);else{"
@@ -811,4 +821,67 @@ int xr03_render(FILE *out,const char *candidate_path,const char *baseline_path,
     free(candidate->casebook);free(candidate->events);free(candidate);
     if(baseline){free(baseline->casebook);free(baseline->events);free(baseline);}
     return passed;
+}
+
+
+/*
+ * XR-06 non-HTML interface. Reuses the exact same fail-closed parser and Aura
+ * casebook as replay. No process names or raw private counters are exported.
+ * A partial casebook is rejected, rather than claimed comprehensive.
+ */
+int xr03_export_cases(FILE *out,const char *path,char *error,size_t cap){
+    if(!out || !path || !path[0]){
+        xr3_error(error,cap,"missing casebook output or input",0);return 0;
+    }
+    XR3Run *r=(XR3Run*)calloc(1,sizeof(*r));
+    if(!r){xr3_error(error,cap,"casebook allocation failed",0);return 0;}
+    int ok=parsefile(path,r,0,error,cap);
+    if(ok)ok=xr3_prepare_cases(r);
+    if(ok && (r->truncated || r->casebook->truncated || r->kept!=r->records)){
+        xr3_error(error,cap,"casebook record capacity insufficient for complete export",0);
+        ok=0;
+    }
+    if(!ok){
+        if(error && cap && !error[0])xr3_error(error,cap,"case engine failed",0);
+        free(r->casebook);free(r->events);free(r);return 0;
+    }
+    fprintf(out,"{\"schema\":\"aura.xray.casebook/1\",\"source_schema\":\"aura.xray.capture/2\","
+                "\"source_build\":");
+    jsonquote(out,r->sha);
+    fprintf(out,",\"engine\":\"aura-compiled-state-machine/1\","
+                "\"seconds\":%u,\"elapsed_ms\":%llu,\"observations\":%llu,"
+                "\"comparable_vectors\":%llu,\"verified_raw_vectors\":%llu,"
+                "\"source_precision\":\"%s\",\"cases\":[",
+                r->seconds,(unsigned long long)r->elapsed_ms,
+                (unsigned long long)r->records,(unsigned long long)r->derived,
+                (unsigned long long)r->source_rate_verified,
+                r->raw_precision?"exact_counter_verified":"legacy_score_only");
+    for(unsigned i=0;i<r->casebook->count;i++){
+        const XR05Case *c=&r->casebook->items[i];
+        const char *kind=c->kind==1?"memory_pulse":
+                         c->kind==2?"cpu_streak":
+                         c->kind==3?"io_transfer_episode":"coincident_signals";
+        const char *phase=c->kind!=1?"not_applicable":
+                          c->phase==1?"pending":
+                          c->phase==2?"retracted":
+                          c->phase==3?"window_expired":
+                          c->phase==4?"interrupted":"unknown";
+        if(i)fputc(',',out);
+        fprintf(out,"{\"kind\":\"%s\",\"identity\":{\"pid\":%u,"
+                    "\"creation_filetime\":\"%llu\"},"
+                    "\"sample_start\":%u,\"sample_end\":%u,"
+                    "\"peak_sample\":%u,\"peak_value\":%u,"
+                    "\"retracted_kib\":%u,\"phase\":\"%s\","
+                    "\"raw_verified\":%s,\"evidence_grade\":%u}",
+                    kind,c->pid,(unsigned long long)c->creation,
+                    c->start,c->end,c->peak_sample,c->peak_value,
+                    c->recovered_kib,phase,c->raw_verified?"true":"false",
+                    (unsigned)c->grade);
+    }
+    fputs("],\"scope\":\"observed_pattern_only_not_causation\","
+          "\"complete_case_scope\":true,\"truncated_cases\":0}\n",out);
+    int success=!ferror(out);
+    if(!success)xr3_error(error,cap,"casebook output write failed",0);
+    free(r->casebook);free(r->events);free(r);
+    return success;
 }

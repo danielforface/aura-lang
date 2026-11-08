@@ -7,4 +7,7 @@
 int xr03_render(FILE *out, const char *candidate_path,
                 const char *baseline_path, int include_names,
                 char *error, size_t error_capacity);
+/* Strict source-data -> headless JSON casebook (no names, fail-closed). */
+int xr03_export_cases(FILE *out, const char *capture_path,
+                      char *error, size_t error_capacity);
 #endif
