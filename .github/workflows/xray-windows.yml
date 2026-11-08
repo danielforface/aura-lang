@@ -178,8 +178,12 @@ jobs:
           if (!(Test-Path "dist/ci-report.html")) { throw "No offline field report" }
           $html = Get-Content "dist/ci-report.html" -Raw
           if ($html.Length -lt 9000 -or !$html.Contains('id="filter"') -or !$html.Contains('id="metric"') -or !$html.Contains('id="matrix"') -or !$html.Contains('id="topoRows"') -or !$html.Contains('id="caseRows"') -or !$html.Contains('NATIVE AURA DECISION GATES') -or !$html.Contains("SOURCE: WINDOWS") -or !$html.Contains("NO NETWORK")) { throw "XR-04 evidence workbench missing required topology/integrity features" }
-          if (!$html.Contains('"rawPrecision":1') -or !$html.Contains(('"rateVerified":' + $vectors.Count)) -or !$html.Contains('"cases":[')) {
-             throw "XR05 generated casebook or XR04 exact-counter evidence missing"
+          $htmlRaw=([regex]::Match($html,'"rawPrecision":(\d+)')).Groups[1].Value
+          $htmlVerified=([regex]::Match($html,'"rateVerified":(\d+)')).Groups[1].Value
+          $htmlCases=$html.Contains('"cases":[')
+          Write-Host "XR08_HTML_AUDIT rawPrecision=$htmlRaw rateVerified=$htmlVerified expectedVectors=$($vectors.Count) hasCases=$htmlCases bytes=$($html.Length)"
+          if ($htmlRaw -ne '1' -or $htmlVerified -ne [string]$vectors.Count -or !$htmlCases) {
+             throw "XR05 casebook/raw evidence mismatch: raw=$htmlRaw audited=$htmlVerified scored=$($vectors.Count) cases=$htmlCases"
           }
           # Parse the actual emitted JavaScript rather than assuming success
           # from static HTML tags. Node check uses no external libraries.
@@ -431,6 +435,8 @@ jobs:
             build/analysis/aura_runtime.h
             build/studio/module.c
             build/studio/aura_runtime.h
+            dist/ci-capture.jsonl
+            dist/ci-report.html
           retention-days: 7
           if-no-files-found: ignore
 
