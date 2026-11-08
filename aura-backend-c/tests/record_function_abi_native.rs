@@ -17,6 +17,10 @@ mod record_comparison_type_guards;
 #[path = "record_f64_division_native.rs"]
 mod checked_f64_record_division;
 
+// Required Q03 Native suite: IEEE-754 F64 value comparisons on nominal Records.
+#[path = "record_f64_comparisons_native.rs"]
+mod checked_f64_record_comparisons;
+
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{run_oracle_entry, validate_module, InstKind, OracleConfig, OracleValue, Type};

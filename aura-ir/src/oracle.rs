@@ -965,6 +965,18 @@ fn eval_binary(op: BinOp, l: &OracleValue, r: &OracleValue) -> Result<OracleValu
         (Mul, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a * b)),
         (Div, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a / b)),
 
+        // Already-typed F64 relational operations are IEEE-754 value
+        // comparisons, exactly as native C emits for matching double operands.
+        // In particular NaN is unordered (all order tests false, != true),
+        // and +0/-0 compare equal. This does not authorize source Float
+        // inference or an F32/ABI/schema widening.
+        (Eq, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a == b)),
+        (Ne, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a != b)),
+        (Lt, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a < b)),
+        (Gt, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a > b)),
+        (Le, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a <= b)),
+        (Ge, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::Bool(a >= b)),
+
         (Eq, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a == b)),
         (Ne, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a != b)),
         (Lt, OracleValue::U32(a), OracleValue::U32(b)) => Ok(OracleValue::Bool(a < b)),
