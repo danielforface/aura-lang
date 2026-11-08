@@ -917,3 +917,60 @@ fn native_x11_route_draft_foreign_ineligible_key_claim_revokes_private_cache(){
         "malformed sensitive foreign key claim must also purge Mq");
     eprintln!("LUMINA_ROUTE_FOREIGN_CLAIM_X11 hidden_disabled_claim_revokes=true malformed_password_claim_revokes=true original_host_value_wins=true no_private_draft_replay=true");
 }
+
+
+/// Genuine native X11/XTest acceptance for the deterministic bounded route
+/// cache: on one screen the user edits nine different opted-in TextInputs.
+/// Only eight can survive unmount; the eight most recently focused do, not
+/// an arbitrary subset selected by HashMap randomized iteration order.
+#[test]
+fn native_x11_ninth_retained_draft_evicts_least_recently_focused_field(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut screen=node("App",&[("bg","#121212"),
+        ("draft_active_scope","window-session-1")],vec![]);
+    for i in 0..9usize{
+        let mut field=node("TextInput",&[
+            ("x","20"),("width","245"),("height","40"),
+            ("value","A"),("value_revision","1"),
+            ("retain_draft","route"),("draft_scope","window-session-1"),
+            ("form","checkout"),
+        ],vec![]);
+        field.set_prop("y",&format!("{}",14+i*53));
+        field.set_prop("draft_key",&format!("checkout.field.{i:02}"));
+        field.set_prop("on_change",&format!("cb:{}",401+i));
+        screen.children.push(field);
+    }
+    let away=node("App",&[("bg","#121212"),
+        ("draft_active_scope","window-session-1")],
+        vec![node("Text",&[("x","20"),("y","20"),
+            ("text","Review nine inputs")],vec![])]);
+    frames(&plugin,&screen,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,560));
+    frames(&plugin,&screen,&mut ctx,4);
+    let found=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let id=found.lines().next().expect("real X11 native window");
+    xdo(&["windowfocus","--sync",id]);
+    for i in 0..9usize{
+        assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+        let edited=press(&plugin,&screen,&mut ctx,"x",false);
+        assert!(has(&edited,(401+i) as u64,"Ax"),
+            "all nine fields must accept a real focused edit: field={i} {edited:?}");
+    }
+    assert!(frames(&plugin,&away,&mut ctx,4).is_empty(),
+        "route removal cannot emit synthetic text callbacks");
+    assert!(frames(&plugin,&screen,&mut ctx,4).is_empty(),
+        "route reentry cannot steal focus or send callbacks");
+    for i in 0..9usize{
+        assert!(button_key(&plugin,&screen,&mut ctx,"Tab").is_empty());
+        let edit=press(&plugin,&screen,&mut ctx,"q",false);
+        let expected=if i==0{"Aq"}else{"Axq"};
+        assert!(has(&edit,(401+i) as u64,expected),
+            "field={i} must follow last-focus capacity ordering \
+             (evict oldest only): expected={expected:?} feedback={edit:?}");
+    }
+    eprintln!("LUMINA_ROUTE_CAPACITY_X11 nine_fields_edited=true \
+        last_eight_retained=true least_recent_evicted=true \
+        no_random_hashmap_survivors=true host_scope_unchanged=true \
+        focus_not_stolen=true normal_fields_still_editable=true");
+}

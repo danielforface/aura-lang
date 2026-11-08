@@ -353,6 +353,9 @@ struct LuminaWindow {
     /// EditSession + bounded Undo may be rebound only to the same callback,
     /// logical key/form and nondecreasing host value_revision.
     retained_drafts:HashMap<u64,RetainedDraft>,
+    /// Incremented on native TextInput focus; used only for
+    /// deterministic bounded draft admission, never as Host text authority.
+    retention_focus_seq:u64,
     last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
@@ -371,6 +374,7 @@ struct FocusedTextInput {
     session: text_input::EditSession,
     scroll_x: f32,
     visual_affinity: Option<usize>,
+    last_focus:u64,
 }
 #[cfg(feature="raylib")]
 struct RetainedDraft {
@@ -443,7 +447,14 @@ fn initial_autofocus_target(
 #[cfg(feature = "raylib")]
 fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
-        if active.on_change == *new_id { return; }
+        if active.on_change == *new_id {
+            // A new intentional click/focus of this editor counts as use.
+            win.retention_focus_seq=win.retention_focus_seq.saturating_add(1);
+            if let Some(editor)=win.focused_input.as_mut(){
+                editor.last_focus=win.retention_focus_seq;
+            }
+            return;
+        }
     }
     if let Some(mut previous) = win.focused_input.take() {
         // Blurring a field cancels the uncommitted composition. It may never
@@ -458,7 +469,10 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             session: text_input::EditSession::new(source_value.clone()),
             scroll_x: 0.0,
             visual_affinity: None,
+            last_focus:0,
         });
+        win.retention_focus_seq=win.retention_focus_seq.saturating_add(1);
+        entry.last_focus=win.retention_focus_seq;
         if entry.revision.observe(&source_value,revision)
             == text_revision::Decision::Rebase
             && (entry.session.buffer != source_value || revision.is_some()) {
@@ -552,15 +566,15 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
         entry.visual_affinity=None; // Run indices belong to a particular layout.
         let bytes=entry.session.retained_bytes()
             .saturating_add(entry.revision.retained_bytes());
-        let total=win.retained_drafts.values()
-            .fold(0usize,|sum,item|sum.saturating_add(item.bytes));
         if entry.revision.version()!=Some(old.revision)
             || !catalog.scope_gate.allows(&old.scope)
             || catalog.conflicts_with(*id,old)
-            || !draft_retention::within_budget(
-                bytes,win.retained_drafts.len(),total) {
+            || bytes>draft_retention::MAX_ENTRY_BYTES {
             continue;
         }
+        // Evaluate the complete candidate set AFTER all routes disappear;
+        // HashMap traversal order must not select arbitrary cache survivors.
+        // This transient collection is made from already-live edit sessions.
         win.retained_drafts.insert(*id,RetainedDraft{
             identity:old.clone(),entry,bytes,
         });
@@ -589,6 +603,15 @@ fn reconcile_retained_drafts(win:&mut LuminaWindow,
         !catalog.present.contains(id)
         && catalog.scope_gate.allows(&saved.identity.scope)
         && !catalog.conflicts_with(*id,&saved.identity));
+    let selected={
+        let ranked:Vec<_>=win.retained_drafts.iter().map(|(id,saved)|
+            draft_retention::RetentionCandidate{
+                callback:*id,last_focus:saved.entry.last_focus,
+                bytes:saved.bytes,identity:&saved.identity,
+            }).collect();
+        draft_retention::select_retained(&ranked)
+    };
+    win.retained_drafts.retain(|id,_|selected.contains(id));
 }
 
 /// Keep local edits when same revision host values echo older locally
@@ -1431,6 +1454,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     input_sessions: HashMap::new(),
                     retention_active:HashMap::new(),
                     retained_drafts:HashMap::new(),
+                    retention_focus_seq:0,
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                     fonts: HashMap::new(),

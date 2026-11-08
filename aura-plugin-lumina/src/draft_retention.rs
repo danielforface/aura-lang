@@ -15,6 +15,37 @@ pub(crate) fn within_budget(bytes:usize,entries:usize,already:usize)->bool{
         && bytes<=MAX_DRAFT_BYTES-already
 }
 
+/// Stable, deterministic admission independent of HashMap iteration order.
+/// Prefer editors most recently focused, including initial opt-in autofocus. On equal
+/// focus epochs, compare logical scope/key/form and then callback ID.
+/// Admission remains fail-closed: no partial Undo truncation or payload edits.
+pub(crate) struct RetentionCandidate<'a>{
+    pub(crate) callback:u64,
+    pub(crate) last_focus:u64,
+    pub(crate) bytes:usize,
+    pub(crate) identity:&'a Identity,
+}
+pub(crate) fn select_retained(candidates:&[RetentionCandidate<'_>])
+    ->HashSet<u64>{
+    let mut sorted:Vec<_>=candidates.iter().collect();
+    sorted.sort_by(|a,b|
+        b.last_focus.cmp(&a.last_focus)
+            .then_with(||a.identity.scope.cmp(&b.identity.scope))
+            .then_with(||a.identity.key.cmp(&b.identity.key))
+            .then_with(||a.identity.form.cmp(&b.identity.form))
+            .then_with(||a.callback.cmp(&b.callback)));
+    let mut selected=HashSet::new();
+    let mut bytes=0usize;
+    for candidate in sorted{
+        if !selected.contains(&candidate.callback)
+            && within_budget(candidate.bytes,selected.len(),bytes){
+            bytes+=candidate.bytes; // checked by within_budget
+            selected.insert(candidate.callback);
+        }
+    }
+    selected
+}
+
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(crate) struct Identity{
     pub(crate) scope:String,
@@ -235,6 +266,105 @@ mod tests{
         node
     }
 
+    fn sampled_identity(key:&str)->Identity{
+        Identity{
+            scope:"window-session-1".into(),
+            key:key.into(),
+            form:Some("checkout".into()),
+            type_kind:"text".into(),
+            revision:1,
+        }
+    }
+    #[test]
+    fn deterministic_ninth_field_eviction_keeps_last_eight_focused(){
+        let identities:Vec<_>=(0..9).map(|i|sampled_identity(&format!("field.{i}"))).collect();
+        let list:Vec<_>=identities.iter().enumerate().map(|(i,identity)|
+            RetentionCandidate{callback:100+i as u64,last_focus:i as u64+1,
+                bytes:10,identity}
+        ).collect();
+        let chosen=select_retained(&list);
+        assert_eq!(chosen.len(),MAX_DRAFTS);
+        assert!(!chosen.contains(&100),"least recently focused field is evicted");
+        for i in 101..109{assert!(chosen.contains(&i));}
+        for shift in 0..list.len(){
+            let mut permuted=list.iter().collect::<Vec<_>>();
+            permuted.rotate_left(shift);
+            let copied=permuted.iter().map(|c|RetentionCandidate{
+                callback:c.callback,last_focus:c.last_focus,
+                bytes:c.bytes,identity:c.identity,
+            }).collect::<Vec<_>>();
+            assert_eq!(select_retained(&copied),chosen,
+                "iteration order cannot change selected fields");
+        }
+    }
+    #[test]
+    fn retained_bytes_budget_is_ranked_and_skips_oversized_candidates(){
+        let identities:Vec<_>=(0..10).map(|i|sampled_identity(&format!("key.{i}"))).collect();
+        let list:Vec<_>=identities.iter().enumerate().map(|(i,identity)|{
+            RetentionCandidate{callback:i as u64+1,
+                last_focus:(100-i) as u64,
+                bytes:match i{
+                    0=>MAX_ENTRY_BYTES+1, // reject despite highest priority
+                    1..=4=>32*1024,
+                    5=>1024, // cannot fit after four 32KiB choices
+                    _=>0,
+                },
+                identity}
+        }).collect();
+        let chosen=select_retained(&list);
+        assert!(!chosen.contains(&1),"oversized entry must not be truncated");
+        for id in 2..=5{assert!(chosen.contains(&id));}
+        assert!(!chosen.contains(&6),
+            "cannot overrun the 128KiB aggregate even for a valid entry");
+        assert_eq!(chosen.len(),8,
+            "zero-byte fields may fill remaining entry slots after byte budget");
+        let mut reverse=list.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(select_retained(&reverse),chosen);
+        reverse.reverse();
+        assert_eq!(select_retained(&reverse),chosen);
+    }
+    #[test]
+    fn stable_tie_break_uses_logical_key_and_callback_not_insertion_order(){
+        let identities:Vec<_>=(0..10).rev()
+            .map(|i|sampled_identity(&format!("key.{i:02}"))).collect();
+        let list=identities.iter().enumerate().map(|(i,identity)|
+            RetentionCandidate{callback:(i+10) as u64,last_focus:7,
+                bytes:12,identity}
+        ).collect::<Vec<_>>();
+        let chosen=select_retained(&list);
+        assert_eq!(chosen.len(),8);
+        for (i,identity) in identities.iter().enumerate(){
+            assert_eq!(chosen.contains(&((i+10) as u64)),
+                identity.key.as_str()<"key.08",
+                "tie-breaking must prefer first eight keys lexically");
+        }
+        let reverse=list.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(select_retained(&reverse),chosen);
+    }
+    #[test]
+    fn byte_budget_prefers_recent_editor_then_fits_older_small_session(){
+        let ids=(0..4).map(|i|sampled_identity(&format!("x{i}"))).collect::<Vec<_>>();
+        let choices=[
+            (10,4,80*1024),
+            (11,3,32*1024),
+            (12,2,32*1024),
+            (13,1,16*1024),
+        ];
+        let list=choices.iter().enumerate().map(|(i,(cb,focus,bytes))|
+            RetentionCandidate{callback:*cb,last_focus:*focus,bytes:*bytes,
+                identity:&ids[i]}
+        ).collect::<Vec<_>>();
+        let chosen=select_retained(&list);
+        assert!(!chosen.contains(&10),
+            "single entry above 32KiB must fail closed");
+        assert!(chosen.contains(&11));
+        assert!(chosen.contains(&12));
+        assert!(chosen.contains(&13));
+        assert_eq!(select_retained(&list.iter().rev().map(|c|RetentionCandidate{
+            callback:c.callback,last_focus:c.last_focus,
+            bytes:c.bytes,identity:c.identity,
+        }).collect::<Vec<_>>()),chosen);
+    }
     #[test]
     fn root_scope_rotation_is_explicit_and_strictly_single_valued(){
         let mut root=n("App",&[],vec![field(&[])]);
