@@ -13,6 +13,10 @@ mod source_string_record_equality;
 #[path = "record_comparison_type_guards_native.rs"]
 mod record_comparison_type_guards;
 
+// Native typed-f64 division must run under the mandatory Q03 Record suite.
+#[path = "record_f64_division_native.rs"]
+mod checked_f64_record_division;
+
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{run_oracle_entry, validate_module, InstKind, OracleConfig, OracleValue, Type};

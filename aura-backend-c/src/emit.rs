@@ -2886,9 +2886,8 @@ fn emit_binop(
 
     let pair = match op {
         // Preserve the original bounded U32 division rule ONLY for U32.
-        // 64-bit, signed and floating division require their own zero and
-        // overflow policy before being accepted; the old u32 divisor cast
-        // silently corrupted these types.
+        // Non-U32 division needs a width/type-specific contract: never
+        // cast its divisor to u32 as the original backend did.
         Div if lhs_type == CType::U32 && rhs_type == CType::U32 => (
             CType::U32,
             format!(
@@ -2901,6 +2900,16 @@ fn emit_binop(
         Div if lhs_type == CType::I64 && rhs_type == CType::I64 => (
             CType::I64,
             format!("aura_i64_div_checked({l}, {r})"),
+        ),
+        // IEEE-754 binary64 division defines the zero-divisor and overflow
+        // outcomes (+/-Infinity, NaN, signed zero). Unlike integer division
+        // these are valid results, not integer C UB or runtime traps. The
+        // emitted runtime already asserts the native double/binary64 ABI.
+        // Restrict to exactly F64/F64; source Float expression inference is
+        // a separate cross-agent contract, not implicitly authorized here.
+        Div if lhs_type == CType::F64 && rhs_type == CType::F64 => (
+            CType::F64,
+            format!("({l}) / ({r})"),
         ),
         Div => return Err(CBackendError {
             message: format!(
