@@ -6,6 +6,7 @@ use crate::factorized::{
 use crate::{SimError,NORM_TOLERANCE};
 
 pub const MAX_MOMENT_WORK_UNITS:usize=16_777_216;
+pub const MOMENTS_RESULT_SCHEMA:&str="aura.quantum.moments-result/1";
 
 #[derive(Debug,Clone,PartialEq)]
 pub struct HamiltonianMoments {
