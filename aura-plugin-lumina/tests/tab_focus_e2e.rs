@@ -1100,7 +1100,9 @@ fn native_x11_read_only_textinput_ime_undo_focus_and_host_rebase(){
     root.children[0].set_prop("read_only","false");
     assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
     let enabled=press(&plugin,&root,&mut ctx,"q",false);
-    assert!(has(&enabled,901,"Lockedq"),"Host unlocks without focus theft: {enabled:?}");
+    assert!(has(&enabled,901,"q"),
+        "Ctrl+A selection remains nonmutating while locked, then a real edit \
+         replaces the selected Host text after unlock: {enabled:?}");
     assert!(plugin.submit_composition_event(CompositionEvent::Start{
         callback_id:901,sequence:10}));
     assert!(plugin.submit_composition_event(CompositionEvent::Update{
@@ -1134,5 +1136,5 @@ fn native_x11_read_only_textinput_ime_undo_focus_and_host_rebase(){
     assert!(frames(&plugin,&root,&mut ctx,3).is_empty());
     assert!(press(&plugin,&root,&mut ctx,"p",false).is_empty(),
         "ambiguous duplicate readonly policy fails closed");
-    eprintln!("LUMINA_READ_ONLY_X11 focusable=true visible_blue_native_border=true no_mutation_or_submit=true no_undo_redo=true bridge_preedit_rejected=true normal_sibling_editable=true host_unlock=true lock_cancels_live_preedit=true new_host_revision_rebases=true malformed_and_duplicate_fail_closed=true");
+    eprintln!("LUMINA_READ_ONLY_X11 focusable=true visible_blue_native_border=true no_mutation_or_submit=true no_undo_redo=true bridge_preedit_rejected=true normal_sibling_editable=true host_unlock_replaces_preserved_selection=true lock_cancels_live_preedit=true new_host_revision_rebases=true malformed_and_duplicate_fail_closed=true");
 }
