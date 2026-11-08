@@ -15,8 +15,7 @@ fn run(raw:&[u8],flags:&[&str])->Output {
         .stderr(Stdio::piped()).spawn().unwrap();
     let written=p.stdin.take().unwrap().write_all(raw);
     if flags.is_empty(){written.unwrap();}
-    let result=p.wait_with_output().unwrap();
-    result
+    p.wait_with_output().unwrap()
 }
 #[test]
 fn full_128_wire_vqe_style_hamiltonian_real_process_is_finite_and_bounded(){
