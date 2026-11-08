@@ -26,6 +26,13 @@ from qiskit.quantum_info import DensityMatrix, Operator, Pauli
 
 PKGS = {"qiskit": "2.6.1", "numpy": "2.3.4"}
 TOL = 8e-11
+# Qiskit density-matrix U rho U† accumulates roundoff at *known impossible*
+# reset outcomes.  This is an oracle-only numerical-resolution floor, NOT
+# a change to Rust: Rust independently rejects representable underflow.
+# This corpus deliberately has no physical rare branch near this threshold;
+# fail closed if the smallest admitted nonzero branch is too small.
+ORACLE_GHOST_TOL = 1e-13
+MIN_TEST_PHYSICAL_BRANCH = 1e-9
 REQUEST = "aura.quantum.channel-moments-request/1"
 RESULT = "aura.quantum.channel-moments-result/1"
 
@@ -138,6 +145,9 @@ def reference(case: dict) -> dict:
     ]
     gates: dict[str, np.ndarray] = {}
     masks = np.arange(dim, dtype=np.int64)
+    discarded_numeric_ghosts = 0
+    maximum_numeric_ghost_mass = 0.0
+    minimum_admitted_branch_probability = 1.0
 
     def gate_operator(g: dict) -> np.ndarray:
         name = json.dumps(g, sort_keys=True)
@@ -164,10 +174,26 @@ def reference(case: dict) -> dict:
                     selected = ((masks >> q) & 1) == int(bit)
                     conditional = rho * np.outer(selected, selected)
                     weight = float(np.trace(conditional).real)
-                    if weight < -1e-14:
+                    if weight < -ORACLE_GHOST_TOL:
                         raise AssertionError("invalid negative density probability")
-                    if weight <= 0:
+                    if weight <= ORACLE_GHOST_TOL:
+                        # A 1e-16 unitary roundoff residue in an otherwise
+                        # exactly impossible Z instrument outcome is NOT a
+                        # new physical classical branch. Track, bound and
+                        # report discarded numerical ghosts explicitly.
+                        if weight != 0.0:
+                            discarded_numeric_ghosts += 1
+                            maximum_numeric_ghost_mass = max(
+                                maximum_numeric_ghost_mass, abs(weight))
                         continue
+                    parent_mass = float(np.trace(rho).real)
+                    conditional_probability = weight / parent_mass
+                    if conditional_probability < MIN_TEST_PHYSICAL_BRANCH:
+                        raise AssertionError(
+                            "independent density oracle cannot resolve a "
+                            "genuinely rare conditional outcome at this precision")
+                    minimum_admitted_branch_probability = min(
+                        minimum_admitted_branch_probability, conditional_probability)
                     new_bits = list(bits)
                     if kind == "measure":
                         new_bits[op["into_bit"]] = bit
@@ -225,6 +251,10 @@ def reference(case: dict) -> dict:
         "final_branch_count": len(branches),
         "instrument_count": sum(x["op"] in ("measure", "reset")
                                 for x in case["instructions"]),
+        "discarded_numeric_ghosts": discarded_numeric_ghosts,
+        "maximum_numeric_ghost_mass": maximum_numeric_ghost_mass,
+        "minimum_admitted_branch_probability":
+            minimum_admitted_branch_probability,
     }
 
 
@@ -252,7 +282,12 @@ def compare(result: dict, expected: dict, name: str) -> float:
         or result["final_branch_count"] != expected["final_branch_count"]
         or set(result["classical_probabilities"]) !=
             set(expected["classical_probabilities"])):
-        raise AssertionError(f"{name}: branch count or classical keys disagree")
+        raise AssertionError(
+            f"{name}: branch count or classical keys disagree: "
+            f"rust={result['final_branch_count']}/"
+            f"{result['classical_probabilities']} "
+            f"qiskit={expected['final_branch_count']}/"
+            f"{expected['classical_probabilities']}")
     max_diff = 0.0
     for field, value in expected["numbers"].items():
         diff = abs(float(result[field]) - value)
@@ -290,6 +325,10 @@ def main(binary: Path, fixtures: Path, report_path: Path) -> dict:
         "invalid_protocol_controls": 0,
         "max_component_delta": 0.0,
         "highest_qubit_width": 0,
+        "oracle_roundoff_ghosts_bounded": 0,
+        "max_oracle_ghost_mass": 0.0,
+        "minimum_admitted_branch_probability": 1.0,
+        "oracle_ghost_resolution_floor": ORACLE_GHOST_TOL,
         "qpu_hardware_jobs": 0,
         "measurement_scope": "all_represented_unconditioned_ideal_instrument_outcomes",
         "independent_reference": "Qiskit-DensityMatrix-Operator-Kraus-not-Statevector",
@@ -305,6 +344,14 @@ def main(binary: Path, fixtures: Path, report_path: Path) -> dict:
         report["tested_instrument_histories"] += qiskit["final_branch_count"]
         report["highest_qubit_width"] = max(
             report["highest_qubit_width"], req["qubits"])
+        report["oracle_roundoff_ghosts_bounded"] += qiskit[
+            "discarded_numeric_ghosts"]
+        report["max_oracle_ghost_mass"] = max(
+            report["max_oracle_ghost_mass"], qiskit[
+                "maximum_numeric_ghost_mass"])
+        report["minimum_admitted_branch_probability"] = min(
+            report["minimum_admitted_branch_probability"], qiskit[
+                "minimum_admitted_branch_probability"])
         # Deliberately corrupt the *Rust result*, then require independent
         # density oracle detection. No self-oracle fabricated success.
         mutated = dict(actual)
