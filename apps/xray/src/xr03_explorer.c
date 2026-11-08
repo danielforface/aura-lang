@@ -203,7 +203,8 @@ static int parsefile(const char *path,XR3Run *run,int allow_names,char *error,si
             run->raw_precision=(strncmp(run->version,"0.4.",4)==0 ||
                                 strncmp(run->version,"0.5.",4)==0 ||
                                 strncmp(run->version,"0.6.",4)==0 ||
-                                strncmp(run->version,"0.7.",4)==0);
+                                strncmp(run->version,"0.7.",4)==0 ||
+                                strncmp(run->version,"0.8.",4)==0);
             if(run->raw_precision){
                 raw_prev=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
                 raw_curr=(XR3Raw*)calloc(4096,sizeof(XR3Raw));
