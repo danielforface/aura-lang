@@ -16,7 +16,7 @@ pub enum ChannelError{
     InvalidWidth,InvalidClassicalBits,InvalidInstructions,InvalidInstruments,
     InvalidTerms,InvalidCoefficient,InvalidPauli{term:usize,wire:usize},
     InvalidBit,ReadBeforeWrite{instruction:usize,bit:usize},
-    InvalidBudget,BudgetExceeded,WorkLimit,BranchLimit,ProbabilityUnderflow,
+    InvalidBudget,BudgetExceeded,WorkLimit,BranchLimit,InvalidTomographyPairs,ProbabilityUnderflow,
     ProbabilityMass,Numeric,Overflow,Allocation,Simulator(SimError),
 }
 impl From<SimError> for ChannelError{
@@ -37,7 +37,7 @@ pub struct ChannelMoments{
     pub reserved_peak_logical_bytes:usize,pub work_units:usize,
     pub roundoff_clamped:bool,
 }
-struct Branch{state:Statevector,bits:Vec<Option<bool>>,weight:f64}
+pub(crate) struct Branch{pub(crate) state:Statevector,pub(crate) bits:Vec<Option<bool>>,pub(crate) weight:f64}
 fn plus(a:usize,b:usize)->Result<usize,ChannelError>{
     a.checked_add(b).ok_or(ChannelError::Overflow)
 }
@@ -65,14 +65,9 @@ fn gate_valid(g:&Gate,n:usize)->Result<(),ChannelError>{
         }
     }
 }
-fn admit(c:&Circuit,terms:&[PauliTerm],budget:usize)
-    ->Result<(usize,usize,usize),ChannelError>{
+fn validate_pauli_terms(c:&Circuit,terms:&[PauliTerm])->Result<(),ChannelError>{
     let n=c.qubits();
-    if !(1..=MAX_CHANNEL_QUBITS).contains(&n){return Err(ChannelError::InvalidWidth);}
-    if c.classical_bits()>64{return Err(ChannelError::InvalidClassicalBits);}
-    if c.instructions().len()>MAX_CHANNEL_INSTRUCTIONS{return Err(ChannelError::InvalidInstructions);}
     if !(1..=MAX_PAULI_TERMS).contains(&terms.len()){return Err(ChannelError::InvalidTerms);}
-    if budget==0||budget>DEFAULT_MEMORY_BUDGET{return Err(ChannelError::InvalidBudget);}
     for (i,t) in terms.iter().enumerate(){
         if !t.coefficient.is_finite()||t.coefficient.abs()>MAX_ABS_PAULI_COEFFICIENT{
             return Err(ChannelError::InvalidCoefficient);
@@ -84,6 +79,15 @@ fn admit(c:&Circuit,terms:&[PauliTerm],budget:usize)
             }
         }
     }
+    Ok(())
+}
+fn admit(c:&Circuit,budget:usize,observable_work:usize)
+    ->Result<(usize,usize,usize),ChannelError>{
+    let n=c.qubits();
+    if !(1..=MAX_CHANNEL_QUBITS).contains(&n){return Err(ChannelError::InvalidWidth);}
+    if c.classical_bits()>64{return Err(ChannelError::InvalidClassicalBits);}
+    if c.instructions().len()>MAX_CHANNEL_INSTRUCTIONS{return Err(ChannelError::InvalidInstructions);}
+    if budget==0||budget>DEFAULT_MEMORY_BUDGET{return Err(ChannelError::InvalidBudget);}
     let mut written=vec![false;c.classical_bits()];
     let mut instruments=0usize;
     for (index,op) in c.instructions().iter().enumerate(){
@@ -123,7 +127,7 @@ fn admit(c:&Circuit,terms:&[PauliTerm],budget:usize)
         plus(times(state_bytes,2)?,times(branches,plus(c.classical_bits(),128)?)?)?,
     )?;
     if required>budget{return Err(ChannelError::BudgetExceeded);}
-    let operations=plus(c.instructions().len().max(1),times(terms.len(),n+1)?)?;
+    let operations=plus(c.instructions().len().max(1),times(observable_work,n+1)?)?;
     let work=times(times(branches,dim)?,operations)?;
     if work>MAX_CHANNEL_WORK{return Err(ChannelError::WorkLimit);}
     Ok((instruments,required,work))
@@ -210,9 +214,14 @@ fn pure_moments(state:&Statevector,terms:&[PauliTerm])
 }
 /// Unconditioned moments after ALL representable ideal instrument outcomes.
 /// Does not take an RNG seed. A dense <=8q profile, NOT arbitrary 128q.
-pub fn execute_channel_moments(c:&Circuit,terms:&[PauliTerm],budget:usize)
-    ->Result<ChannelMoments,ChannelError>{
-    let (instrument_count,peak,work)=admit(c,terms,budget)?;
+/// Shared, *single* source of physical branching semantics for channel
+/// moments and reduced-density tomography. Preserves reset/If/Born behavior.
+pub(crate) fn enumerate_channel(
+    c:&Circuit,budget:usize,observable_work:usize,extra_reserved_bytes:usize,
+)->Result<(Vec<Branch>,usize,usize,usize,f64),ChannelError>{
+    let (instrument_count,base_peak,work)=admit(c,budget,observable_work)?;
+    let peak=plus(base_peak,extra_reserved_bytes)?;
+    if peak>budget{return Err(ChannelError::BudgetExceeded);}
     let mut branches=vec![Branch{
         state:Statevector::zero(c.qubits(),budget)?,
         bits:vec![None;c.classical_bits()],weight:1.0,
@@ -239,6 +248,15 @@ pub fn execute_channel_moments(c:&Circuit,terms:&[PauliTerm],budget:usize)
     if !mass.is_finite()||(mass-1.0).abs()>NORM_TOLERANCE{
         return Err(ChannelError::ProbabilityMass);
     }
+    Ok((branches,instrument_count,peak,work,mass))
+}
+/// Unconditioned moments after ALL represented ideal instrument outcomes.
+/// Does not use random seeds. Preserves the original channel-moments/1 API.
+pub fn execute_channel_moments(c:&Circuit,terms:&[PauliTerm],budget:usize)
+    ->Result<ChannelMoments,ChannelError>{
+    validate_pauli_terms(c,terms)?;
+    let (branches,instrument_count,peak,work,mass)=
+        enumerate_channel(c,budget,terms.len(),0)?;
     let mut mean=0.0;let mut second=0.0;let mut within=0.0;
     let mut roundoff_clamped=false;
     let mut conditional=Vec::<(f64,f64)>::new();
