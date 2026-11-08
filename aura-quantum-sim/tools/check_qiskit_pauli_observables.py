@@ -228,3 +228,17 @@ if __name__=="__main__":
     if len(sys.argv)!=4:
         raise SystemExit("usage: check_qiskit_pauli_observables.py binary 128-fixture report")
     main(Path(sys.argv[1]),Path(sys.argv[2]),Path(sys.argv[3]))
+    # C-019 independent *density-matrix* oracle for the new real ideal-channel
+    # Rust CLI.  Keep this in the existing C-owned check step: no shared workflow
+    # edit, no hidden skipped gate, and preserve the original C-016 contract.
+    from check_qiskit_channel_moments import main as channel_density_oracle
+    crate = Path(__file__).resolve().parents[1]
+    channel_binary = crate / "target/release/aura-quantum-channel-moments-run"
+    subprocess.run([
+        "cargo", "build", "--release", "--manifest-path", str(crate / "Cargo.toml"),
+        "--bin", "aura-quantum-channel-moments-run",
+    ], check=True, timeout=180)
+    channel_density_oracle(
+        channel_binary, crate / "fixtures",
+        Path(sys.argv[3]).with_name("c019-channel-density-qiskit.json"),
+    )
