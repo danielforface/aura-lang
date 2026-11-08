@@ -124,7 +124,7 @@ fn ten_wire_entangled_factor_and_outside_wire_support_sparse_queries() {
     }
 }
 #[test]
-fn 128q_nonclifford_bell_product_has_exact_analytic_hamiltonian_energy() {
+fn quantum_128_nonclifford_bell_product_has_exact_analytic_hamiltonian_energy() {
     let mut p=FactorCircuit::new(128,0);
     for q in (0..128).step_by(2) {
         p.push(Instruction::Gate(Gate::H(q)));
