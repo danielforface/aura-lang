@@ -298,8 +298,17 @@ mod tests{
         let saved=identity(&original).unwrap();
         for name in IDENTITY_PROPS{
             let mut node=original.clone();
-            let original_value=prop(&node,name).unwrap_or("different");
-            node.props.push((name.to_owned(),original_value.to_owned()));
+            // Optional identity props may be absent in the base fixture.
+            // Install a valid first occurrence before adding a duplicate;
+            // a lone newly-added prop is not an ambiguous duplicate.
+            let first=prop(&node,name).unwrap_or(match name{
+                "type"|"input_type"=>"text",
+                "sensitive"=>"false",
+                "surrounding_text"=>"full",
+                _=>"value",
+            }).to_owned();
+            node.set_prop(name,&first);
+            node.props.push((name.to_owned(),first));
             assert!(identity(&node).is_none(),"duplicate {name} cannot qualify");
             let root=n("App",&[],vec![node]);
             let p=layout::arrange(&root,Bounds::new(0.,0.,600.,400.));
