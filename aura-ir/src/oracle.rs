@@ -945,12 +945,19 @@ fn eval_binary(op: BinOp, l: &OracleValue, r: &OracleValue) -> Result<OracleValu
         (Sub, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::I64(a.wrapping_sub(*b))),
         (Mul, OracleValue::I64(a), OracleValue::I64(b)) => Ok(OracleValue::I64(a.wrapping_mul(*b))),
         (Div, OracleValue::I64(a), OracleValue::I64(b)) => {
-            if *b == 0 {
-                return Err(OracleError {
-                    message: "oracle: division by zero".to_string(),
-                });
-            }
-            Ok(OracleValue::I64(a / b))
+            // Signed division has TWO invalid cases. Both zero-divisor
+            // and i64::MIN / -1 are rejected by the native C guard.
+            // A direct Rust '/' panics for the latter even in release builds,
+            // turning a malformed IR program into an Oracle process panic.
+            // Keep both failures inside the Oracle's Result contract.
+            let quotient = a.checked_div(*b).ok_or_else(|| OracleError {
+                message: if *b == 0 {
+                    "oracle: division by zero".to_string()
+                } else {
+                    "oracle: signed i64 division overflow".to_string()
+                },
+            })?;
+            Ok(OracleValue::I64(quotient))
         }
 
         (Add, OracleValue::F64(a), OracleValue::F64(b)) => Ok(OracleValue::F64(a + b)),

@@ -200,3 +200,54 @@ int main(int argc, char **argv) {
         }
     }
 }
+
+
+#[test]
+fn typed_i64_record_oracle_reports_division_faults_without_panicking() {
+    let original = typed_record_division();
+    validate_module(&original).expect("original typed i64 Record valid");
+    let mut optimized = original.clone();
+    optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized typed i64 Record valid");
+
+    // A panic here escapes the Oracle's Result API, can kill a translation
+    // validation worker, and used to occur for i64::MIN / -1 even in release.
+    // Validate both fault classes on the same IR consumed by native C tests.
+    for (profile, ir) in [("original", &original), ("optimized", &optimized)] {
+        for (lhs, rhs, message) in [
+            (i64::MIN, -1, "signed i64 division overflow"),
+            (i64::MIN, 0, "division by zero"),
+            (0, 0, "division by zero"),
+            (123, 0, "division by zero"),
+            (i64::MAX, 0, "division by zero"),
+        ] {
+            let failure = run_oracle_entry(
+                ir, "divide_record",
+                &[OracleValue::I64(lhs), OracleValue::I64(rhs)],
+                OracleConfig::default(),
+            ).expect_err("Oracle must return an error rather than panic or accept invalid division");
+            assert!(failure.message.contains(message),
+                "{profile}: {lhs}/{rhs} must return {message:?}, got {}", failure.message);
+        }
+
+        // Distinguish the signed overflow from the legal neighboring values:
+        // rejecting every MIN/-1-like expression would be a regression.
+        for (lhs, rhs, expected) in [
+            (i64::MIN, 1, i64::MIN),
+            (i64::MIN, 2, i64::MIN / 2),
+            (i64::MIN + 1, -1, i64::MAX),
+            (i64::MAX, -1, -i64::MAX),
+            (0, -1, 0),
+            (1, -1, -1),
+        ] {
+            let result = run_oracle_entry(
+                ir, "divide_record",
+                &[OracleValue::I64(lhs), OracleValue::I64(rhs)],
+                OracleConfig::default(),
+            ).expect("valid signed i64 division remains modelled");
+            assert!(result.ok && result.stderr.is_empty(), "{profile}: valid {lhs}/{rhs}");
+            assert_eq!(result.return_value, Some(OracleValue::I64(expected)),
+                "{profile}: incorrect legal quotient for {lhs}/{rhs}");
+        }
+    }
+}
