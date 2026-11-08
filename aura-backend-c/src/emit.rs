@@ -2857,6 +2857,33 @@ fn emit_binop(
         return Ok((lhs_type, format!("({l}) {symbol} ({r})")));
     }
 
+    // Fail closed on forged or otherwise unqualified typed IR. C silently
+    // permits mixed signed/unsigned comparisons, truthiness in &&/||, and
+    // some unsupported operand categories. The IR Oracle does not interpret
+    // these implicit C conversions as Aura semantics. No AST/IR wire format
+    // or valid same-type numeric/Boolean comparison ABI is changed.
+    let qualified = match op {
+        Eq | Ne => lhs_type == rhs_type && matches!(
+            lhs_type, CType::Bool | CType::U8 | CType::U16 |
+                CType::U32 | CType::U64 | CType::I8 | CType::I16 |
+                CType::I32 | CType::I64 | CType::F32 | CType::F64
+        ),
+        Lt | Gt | Le | Ge => lhs_type == rhs_type && matches!(
+            lhs_type, CType::U8 | CType::U16 | CType::U32 |
+                CType::U64 | CType::I8 | CType::I16 | CType::I32 |
+                CType::I64 | CType::F32 | CType::F64
+        ),
+        And | Or => lhs_type == CType::Bool && rhs_type == CType::Bool,
+        _ => true, // Arithmetic and division have their own exact-type guards.
+    };
+    if !qualified {
+        return Err(CBackendError {
+            message: format!(
+                "unqualified C comparison/logical operands: {op:?} {lhs_type:?} vs {rhs_type:?}"
+            ),
+        });
+    }
+
     let pair = match op {
         // Preserve the original bounded U32 division rule ONLY for U32.
         // 64-bit, signed and floating division require their own zero and

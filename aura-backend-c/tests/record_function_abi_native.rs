@@ -9,6 +9,10 @@ mod checked_i64_record_division;
 #[path = "record_string_eq_native.rs"]
 mod source_string_record_equality;
 
+// The Q03 required Native ABI gate also executes IR comparison trust guards.
+#[path = "record_comparison_type_guards_native.rs"]
+mod record_comparison_type_guards;
+
 use aura_backend_c::emit_module;
 use aura_core::{lower_program, Checker};
 use aura_ir::{run_oracle_entry, validate_module, InstKind, OracleConfig, OracleValue, Type};
