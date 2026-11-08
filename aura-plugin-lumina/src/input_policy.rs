@@ -28,7 +28,7 @@ mod tests{
     use super::*;
     fn field(props:&[(&str,&str)])->UiNode{
         let mut n=UiNode::new("TextInput");
-        for (k,v) in props {n.set_prop(k,v);}
+        for (k,v) in props {n.set_prop(*k,*v);}
         n
     }
     #[test]
