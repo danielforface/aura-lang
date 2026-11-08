@@ -19,6 +19,7 @@ pub mod factorized;
 pub mod factorized_json;
 pub mod factorized_counts_json;
 pub mod observable_json;
+pub mod moments;
 
 use std::mem::size_of;
 
