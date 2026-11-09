@@ -33,7 +33,8 @@ jobs:
             'apps/xray-pure/fixtures/00_cell_basic.aura',
             'apps/xray-pure/fixtures/01_cell_yield.aura',
             'apps/xray-pure/fixtures/08_nested_if.aura',
-            'apps/xray-pure/policy.aura'
+            'apps/xray-pure/policy.aura',
+            'apps/xray-pure/fixtures/09_declared_ui.aura'
           )
           $uiSyntax=@(
             'apps/xray-pure/fixtures/03_layout_native.aura',

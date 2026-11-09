@@ -1,0 +1,16 @@
+# Agent B's Lumina constructors are runtime-builtins, but not registered
+# in current Aura Core Checker. Source-local typed declarations are a pure
+# Aura compatibility bridge, with no C/Rust/JS implementation in the app.
+trusted extern cell VStack(spacing: u32) -> Unit
+trusted extern cell Text(text: String, style: Style) -> Unit
+trusted extern cell Button(label: String, style: Style) -> Unit
+
+cell main():
+    layout:
+        VStack(spacing: 12) {
+            render: Text(text: "hello", style: Style { fg: "#65EAD5", size: 18 })
+            render: Button(label: "PASS", style: Style { bg: "#238636", fg: "#E6EDF3", radius: 12, width: 160, height: 40 }) {
+                on_click: ~> { ui.set_text(key: "status", value: "clicked") }
+            }
+            render: Text(text: ui.get_text(key: "status"), style: Style { fg: "#65EAD5", size: 16 })
+        }
