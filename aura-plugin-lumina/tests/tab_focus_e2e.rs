@@ -1543,3 +1543,81 @@ fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
     drop(plugin);
     eprintln!("LUMINA_NATIVE_CLIPBOARD_X11 external_selection=true unicode_copy=true cut_one_event=true undo_restores=true paste_one_event=true redo=true grapheme_cap=true bidi_control_rejected=true multiline_rejected=true host_rebase=true sensitive_private=true readonly_copy_only=true malformed_and_duplicate_fail_closed=true");
 }
+
+
+/// Real XTest Ctrl+word keyboard actions share the same EditSession as
+/// typing, Undo/Redo, host value revision and immutable read-only fields.
+fn word_key(p:&AuraLuminaPlugin,root:&UiNode,ctx:&mut NexusContext,
+    key:&str,shift:bool)->Vec<UiTextInputEvent>{
+    xdo(&["keydown","Control_L"]);
+    frames(p,root,ctx,2);
+    if shift {
+        xdo(&["keydown","Shift_L"]);
+        frames(p,root,ctx,2);
+    }
+    let result=press(p,root,ctx,key,false);
+    if shift {
+        xdo(&["keyup","Shift_L"]);
+        frames(p,root,ctx,2);
+    }
+    xdo(&["keyup","Control_L"]);
+    frames(p,root,ctx,2);
+    result
+}
+#[test]
+fn native_x11_unicode_word_selection_delete_and_host_rebase(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","320"),
+            ("height","44"),("value","alpha beta gamma"),
+            ("value_revision","1"),("autofocus","true"),
+            ("on_change","cb:871")],vec![]),
+        node("TextInput",&[("x","20"),("y","100"),("width","320"),
+            ("height","44"),("value","locked text"),("value_revision","1"),
+            ("read_only","true"),("on_change","cb:872")],vec![]),
+    ]);
+    frames(&plugin,&root,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,320));
+    frames(&plugin,&root,&mut ctx,3);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=windows.lines().next().expect("real native X11 window");
+    xdo(&["windowfocus","--sync",win]);
+
+    assert!(word_key(&plugin,&root,&mut ctx,"Left",true).is_empty(),
+        "Ctrl+Shift+Left only selects a complete word");
+    let inserted=press(&plugin,&root,&mut ctx,"q",false);
+    assert!(has(&inserted,871,"alpha beta q"),
+        "word selection must replace only last word: {inserted:?}");
+    let erased=word_key(&plugin,&root,&mut ctx,"BackSpace",false);
+    assert!(has(&erased,871,"alpha beta "),
+        "Ctrl+Backspace must delete previous word atomically: {erased:?}");
+    assert_eq!(erased.iter().filter(|e|e.callback_id==871&&!e.submitted).count(),1);
+    assert!(word_key(&plugin,&root,&mut ctx,"Left",false).is_empty());
+    let forward=word_key(&plugin,&root,&mut ctx,"Delete",false);
+    assert!(has(&forward,871,"alpha "),
+        "Ctrl+Delete must delete through next word boundary: {forward:?}");
+    assert_eq!(forward.iter().filter(|e|e.callback_id==871&&!e.submitted).count(),1);
+    assert!(has(&word_key(&plugin,&root,&mut ctx,"z",false),871,"alpha beta "),
+        "word delete one Undo step");
+    assert!(has(&word_key(&plugin,&root,&mut ctx,"y",false),871,"alpha "),
+        "word delete one Redo step");
+
+    root.children[0].set_prop("value","אבג 👩‍💻 עולם");
+    root.children[0].set_prop("value_revision","2");
+    frames(&plugin,&root,&mut ctx,3);
+    let unicode=word_key(&plugin,&root,&mut ctx,"BackSpace",false);
+    assert!(has(&unicode,871,"אבג 👩‍💻 "),
+        "Unicode word delete preserves whole emoji grapheme: {unicode:?}");
+    assert!(has(&word_key(&plugin,&root,&mut ctx,"z",false),
+        871,"אבג 👩‍💻 עולם"),"new Host epoch owns fresh Undo");
+    assert!(button_key(&plugin,&root,&mut ctx,"Tab").is_empty());
+    assert!(word_key(&plugin,&root,&mut ctx,"BackSpace",false).is_empty());
+    assert!(word_key(&plugin,&root,&mut ctx,"Delete",false).is_empty(),
+        "read-only field must remain unchanged");
+    assert!(word_key(&plugin,&root,&mut ctx,"Left",true).is_empty());
+    assert!(press(&plugin,&root,&mut ctx,"k",false).is_empty(),
+        "read-only selection must never permit replacing typed text");
+    drop(plugin);
+    eprintln!("LUMINA_WORD_SHORTCUTS_X11 real_ctrl_shift_word_selection=true one_edit_callback=true unicode_word_delete=true undo_redo=true host_revision=true readonly=true unchanged_nexus_schema=true");
+}

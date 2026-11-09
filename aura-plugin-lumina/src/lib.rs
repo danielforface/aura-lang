@@ -1587,6 +1587,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
             let undo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Z);
             let redo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Y);
+            // Reserve Ctrl+word shortcuts for the local unshaped editor.
+            // Never reinterpret Alt/Super combinations or fake a physical
+            // visual word stop in the opt-in GSUB/UAX9 shaped path.
+            let word_shortcut=ctrl && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
             #[cfg(target_os="linux")]
             let clipboard_shortcut=ctrl
                 && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
@@ -2078,8 +2085,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                     if left||right {
                         if !opted {
-                            if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
-                            if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                            if left {fi.session.apply(SessionAction::Move(
+                                if word_shortcut{EditCommand::WordLeft}else{EditCommand::Left},
+                                extend_selection));}
+                            if right {fi.session.apply(SessionAction::Move(
+                                if word_shortcut{EditCommand::WordRight}else{EditCommand::Right},
+                                extend_selection));}
                         }else if let Some(shape)=geometry {
                             if let Some(stop)=bidi_editor::navigate(shape,fi.session.caret,
                                 fi.visual_affinity,right,extend_selection,fi.session.selection()){
@@ -2101,8 +2112,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     if focused_edit_mode.editable(){
                         if undo {changed|=fi.session.apply(SessionAction::Undo);}
                         if redo {changed|=fi.session.apply(SessionAction::Redo);}
-                        if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
-                        if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
+                        if backspace {changed|=fi.session.apply(SessionAction::Edit(
+                            if word_shortcut&&!opted{EditCommand::WordBackspace}
+                            else{EditCommand::Backspace}));}
+                        if delete {changed|=fi.session.apply(SessionAction::Edit(
+                            if word_shortcut&&!opted{EditCommand::WordDelete}
+                            else{EditCommand::Delete}));}
                         if !ctrl && !typed.is_empty() {
                             changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
                         }
