@@ -55,7 +55,7 @@ fn asymmetric_pauli_mixture_contracts_x_y_z_by_distinct_factors(){
         (Gate::X(0),0.0,0.0),
     ]{
         let mut r=DensityMatrix::zero(1,DEFAULT_MEMORY_BUDGET).unwrap();
-        r.apply_gate(prep).unwrap();
+        r.apply_gate(prep.clone()).unwrap();
         r.apply_noise(NoiseChannel::PauliMixture{
             qubit:0,p_x:0.2,p_y:0.3,p_z:0.1,
         }).unwrap();

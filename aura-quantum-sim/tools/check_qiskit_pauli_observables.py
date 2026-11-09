@@ -266,3 +266,15 @@ if __name__=="__main__":
         conditional_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c021-conditioned-tomography-qiskit.json"),
     )
+    # C-022 real noisy-request/1 CLI vs independent Qiskit Kraus CPTP maps.
+    # No new shared workflow and no replacement of C-016..021 certification.
+    from check_qiskit_noisy_cptp import main as noisy_cptp_oracle
+    noisy_binary = crate / "target/release/aura-quantum-noisy-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-noisy-run",
+    ],check=True,timeout=180)
+    noisy_cptp_oracle(
+        noisy_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c022-noisy-cptp-kraus-qiskit.json"),
+    )
