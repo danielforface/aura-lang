@@ -1,0 +1,106 @@
+name: AURA X-RAY Pure Aura Windows runtime
+
+on:
+  push:
+    branches: [product/xray-pure-aura-v1]
+    paths:
+      - "apps/xray-pure/**"
+      - ".github/workflows/xray-pure-aura-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xray-pure-aura-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pure-aura:
+    name: Compile real Aura Core+Lumina and run user Aura cells (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 65
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout pinned integration-derived source
+        uses: actions/checkout@v4
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build Aura AVM independent of graphic system
+        run: |
+          cargo build -p aura --no-default-features --locked
+          if($LASTEXITCODE -ne 0){throw "AURA Core AVM build failure"}
+      - name: Run pure Aura source with real nested user-cell calls, no UI dependency
+        run: |
+          $env:AURA_AVM_NO_Z3='1'
+          $env:AURA_UI_MAX_FRAMES='2'
+          $env:AURA_UI_DEBUG='1'
+          $result=(& "target/debug/aura.exe" run "apps/xray-pure/main.aura" --mode avm 2>&1 | Out-String)
+          Write-Host $result
+          if($LASTEXITCODE -ne 0 -or !$result.Contains("XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2") -or $result.Contains("XR09_PURE_AURA_MODEL_FAIL")){
+            throw "Pure Aura cross-cell policy oracle or UI AST execution failed"
+          }
+          Write-Host "XR09_PURE_AURA_POLICY_PASS 24 actual Aura cells; independent AVM execution"
+      - name: Build real Windows Lumina-enabled Aura runtime
+        run: |
+          cargo build -p aura --locked
+          if($LASTEXITCODE -ne 0){throw "Aura Lumina runtime build failure"}
+          if(!(Test-Path "target/debug/aura.exe")){throw "No Windows Aura runtime executable"}
+      - name: Launch Aura-native UI through Lumina and exercise bounded loop
+        run: |
+          $env:AURA_AVM_NO_Z3='1'
+          $env:AURA_UI_MAX_FRAMES='2'
+          $env:AURA_UI_DEBUG='1'
+          $result=(& "target/debug/aura.exe" run "apps/xray-pure/main.aura" --mode avm 2>&1 | Out-String)
+          Write-Host $result
+          if($LASTEXITCODE -ne 0 -or !$result.Contains("XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2")){
+              throw "Pure Aura Lumina GUI smoke failed"
+          }
+          Write-Host "XR09_PURE_AURA_LUMINA_PASS actual Aura source with real Windows window/runtime"
+      - name: Provenance purity and PE architecture
+        run: |
+          $src = Get-Content "apps/xray-pure/main.aura" -Raw
+          if(([regex]::Matches($src,'(?m)^cell\s+')).Count -ne 24){throw "Unexpected Aura-owned domain/UI cell count"}
+          $foreign=@(Get-ChildItem -Path "apps/xray-pure" -Recurse -File | Where-Object { $_.Extension -match '^\.(c|cpp|h|rs|js|ts|html|py)$' })
+          if($foreign.Count -ne 0){throw "Foreign product implementation code in Pure Aura app"}
+          $exe = [IO.File]::ReadAllBytes((Join-Path $PWD "target/debug/aura.exe"))
+          if($exe.Length -lt 1024 -or $exe[0] -ne 77 -or $exe[1] -ne 90){throw "Missing MZ binary"}
+          $offset=[BitConverter]::ToInt32($exe,60)
+          if([BitConverter]::ToUInt16($exe,$offset+4) -ne 0x8664){throw "Not PE x64"}
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/debug/aura.exe" "dist/aura.exe"
+          Copy-Item "apps/xray-pure/main.aura" "dist/main.aura"
+          Copy-Item "apps/xray-pure/README.md" "dist/README.txt"
+          $sha = (Get-FileHash "dist/aura.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          [ordered]@{
+            schema="aura.xray.pure-runtime/1"
+            source_sha=$env:GITHUB_SHA
+            runtime="aura AVM + Lumina"
+            engine_version="XR09-AURA-LANGUAGE-ONLY-POC"
+            application_source="main.aura"
+            runtime_binary="aura.exe"
+            runtime_sha256=$sha
+            gui="Windows Aura runtime + Lumina plugin"
+            safety="synthetic_fixture_only; not XR08 capture parity"
+            z3="DISABLED_IN_AVM_NO_PROOF_CLAIM"
+            limitations=@("no arbitrary JSONL importer","no trusted Win32 process sampler Aura ABI","not single native compiled app EXE","requires bundled Aura runtime")
+          } | ConvertTo-Json -Depth 6 | Set-Content "dist/BUILD-MANIFEST.json" -Encoding UTF8
+          Write-Host "XR09_PURE_AURA_SOURCE_SHA $env:GITHUB_SHA"
+          Write-Host "XR09_AURA_RUNTIME_SHA256 $sha"
+      - name: Upload pure Aura source + executable runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraXRay-pure-aura-windows-x64-${{ github.sha }}
+          path: |
+            dist/aura.exe
+            dist/main.aura
+            dist/README.txt
+            dist/BUILD-MANIFEST.json
+          retention-days: 30
+          if-no-files-found: error

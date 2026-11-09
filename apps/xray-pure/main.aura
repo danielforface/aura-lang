@@ -1,0 +1,252 @@
+# AURA X-RAY / PURE AURA LAB — NO PRODUCT C/RUST/JS/HTML.
+# Executable Aura source for the qualified A+Lumina combined runtime.
+# This is an intentionally SYNTHETIC capture fixture, not private user data.
+# Runtime limitation: no qualified JSONL streaming/indexing or OS process sampler
+# is exposed to application Aura code yet. Do NOT call it full XR-08 parity.
+import aura::lumina
+
+cell xr09_cpu_threshold(policy: u32):
+    yield 500 + 200 * policy + 50 * (policy / 2)
+
+cell xr09_io_threshold(policy: u32):
+    yield 8192 * (1 + policy + (policy / 2))
+
+cell xr09_memory_threshold(policy: u32):
+    yield 16384 * (1 + policy + (policy / 2))
+
+cell xr09_cpu_min(policy: u32):
+    yield 2 + policy
+
+cell xr09_io_min(policy: u32):
+    yield 1 + (policy / 2)
+
+cell xr09_cpu_sample(sample: u32):
+    val value: u32 = 0
+    if sample == 5:
+        value = 1030
+    if sample == 6:
+        value = 1062
+    if sample == 7:
+        value = 1078
+    if sample == 8:
+        value = 1078
+    if sample == 9:
+        value = 1190
+    if sample == 10:
+        value = 984
+    yield value
+
+cell xr09_io_sample(sample: u32):
+    val value: u32 = 0
+    if sample == 7:
+        value = 17243
+    yield value
+
+cell xr09_memory_sample(sample: u32):
+    val value: u32 = 0
+    if sample == 2:
+        value = 91932
+    yield value
+
+cell xr09_memory_retracted():
+    yield 106348
+
+cell xr09_cpu_streak(policy: u32):
+    val threshold: u32 = xr09_cpu_threshold(policy)
+    val streak: u32 = 0
+    if xr09_cpu_sample(5) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(6) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(7) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(8) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(9) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(10) >= threshold:
+        streak = streak + 1
+    yield streak
+
+cell xr09_memory_case(policy: u32):
+    val decision: u32 = 0
+    if xr09_memory_sample(2) >= xr09_memory_threshold(policy):
+        if xr09_memory_retracted() >= xr09_memory_sample(2) / 2:
+            decision = 1
+    yield decision
+
+cell xr09_cpu_case(policy: u32):
+    val decision: u32 = 0
+    if xr09_cpu_streak(policy) >= xr09_cpu_min(policy):
+        decision = 1
+    yield decision
+
+cell xr09_io_case(policy: u32):
+    val decision: u32 = 0
+    if xr09_io_sample(7) >= xr09_io_threshold(policy):
+        if xr09_io_min(policy) == 1:
+            decision = 1
+    yield decision
+
+cell xr09_case_count(policy: u32):
+    yield xr09_memory_case(policy) + xr09_cpu_case(policy) + xr09_io_case(policy)
+
+cell xr09_policy_code(value: String):
+    val code: u32 = 1
+    if value == "sensitive":
+        code = 0
+    if value == "strict":
+        code = 2
+    yield code
+
+cell xr09_case_code(value: String):
+    val code: u32 = 1
+    if value == "cpu":
+        code = 2
+    if value == "io":
+        code = 3
+    yield code
+
+cell xr09_case_peak(which: u32):
+    val result: u32 = 91932
+    if which == 2:
+        result = 1190
+    if which == 3:
+        result = 17243
+    yield result
+
+cell xr09_case_title(which: u32):
+    val result: String = "MEMORY PULSE / OBSERVED RETRACTION"
+    if which == 2:
+        result = "CPU STREAK / 6 CONTIGUOUS SAMPLES"
+    if which == 3:
+        result = "I/O TRANSFER / SINGLE OBSERVED SPIKE"
+    yield result
+
+cell xr09_case_source(which: u32):
+    val result: String = "S2: +91932 KiB | S3: -106348 KiB"
+    if which == 2:
+        result = "S5..S10: 1030 1062 1078 1078 1190 984 millicores"
+    if which == 3:
+        result = "S7: write transfer 17243 KiB/s | strict=no case"
+    yield result
+
+cell xr09_sample_score(sample: u32):
+    yield xr09_cpu_sample(sample) / 100 + xr09_io_sample(sample) / 2048 + xr09_memory_sample(sample) / 1024 * 2
+
+cell xr09_bar_height(sample: u32):
+    yield 5 + xr09_sample_score(sample) * 2
+
+cell xr09_support(which: u32):
+    val result: u32 = 3
+    if which == 3:
+        result = 2
+    yield result
+
+cell xr09_proof():
+    val result: u32 = 0
+    if xr09_case_count(0) == 3:
+        if xr09_case_count(1) == 3:
+            if xr09_case_count(2) == 2:
+                if xr09_cpu_streak(2) == 6:
+                    if xr09_memory_case(2) == 1:
+                        if xr09_io_case(2) == 0:
+                            if xr09_case_peak(1) == 91932:
+                                if xr09_sample_score(2) == 178:
+                                    result = 1
+    yield result
+
+cell main():
+    # This path is part of the actual Aura program, not an external fixture runner.
+    if xr09_proof() == 1:
+        io.println("XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2")
+    else:
+        io.println("XR09_PURE_AURA_MODEL_FAIL")
+    ui.set_text(key: "policy", value: "standard")
+    ui.set_text(key: "selection", value: "memory")
+    render:
+        App(title: "AURA X-RAY / PURE AURA LAB", bg: "#080D16") {
+            VStack(padding: 28, spacing: 16) {
+                render: Text(text: "AURA   /   X-RAY   /   LANGUAGE-NATIVE LAB", style: Style { fg: "#65EAD5", size: 17 })
+                render: Text(text: "THE EVIDENCE IS THE INTERFACE.", style: Style { fg: "#E6F2F7", size: 38 })
+                render: Text(text: "100% application source: Aura  |  Runtime: AURA AVM + Lumina  |  Synthetic capture", style: Style { fg: "#94A6B9", size: 16 })
+                render: Rect(width: 1300, height: 2, color: "#2A4557")
+                render: HStack(spacing: 14) {
+                    render: Button(label: "SENSITIVE", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
+                        on_click: ~> { ui.set_text(key: "policy", value: "sensitive") }
+                    }
+                    render: Button(label: "STANDARD", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
+                        on_click: ~> { ui.set_text(key: "policy", value: "standard") }
+                    }
+                    render: Button(label: "STRICT", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
+                        on_click: ~> { ui.set_text(key: "policy", value: "strict") }
+                    }
+                    render: Text(text: ui.get_text(key: "policy"), style: Style { fg: "#65EAD5", size: 24 })
+                }
+                render: HStack(spacing: 24) {
+                    render: Box(bg: "#10202E", padding: 17, radius: 16, width: 270, height: 100) {
+                        VStack(spacing: 8) {
+                            render: Text(text: "DETECTED CASES", style: Style { fg: "#8FA8B9", size: 15 })
+                            render: Text(text: xr09_case_count(xr09_policy_code(ui.get_text(key: "policy"))), style: Style { fg: "#65EAD5", size: 39 })
+                        }
+                    }
+                    render: Box(bg: "#10202E", padding: 17, radius: 16, width: 270, height: 100) {
+                        VStack(spacing: 8) {
+                            render: Text(text: "CPU THRESHOLD / MILLI", style: Style { fg: "#8FA8B9", size: 15 })
+                            render: Text(text: xr09_cpu_threshold(xr09_policy_code(ui.get_text(key: "policy"))), style: Style { fg: "#E6F2F7", size: 34 })
+                        }
+                    }
+                    render: Box(bg: "#10202E", padding: 17, radius: 16, width: 270, height: 100) {
+                        VStack(spacing: 8) {
+                            render: Text(text: "I/O THRESHOLD / KIB/S", style: Style { fg: "#8FA8B9", size: 15 })
+                            render: Text(text: xr09_io_threshold(xr09_policy_code(ui.get_text(key: "policy"))), style: Style { fg: "#E6F2F7", size: 34 })
+                        }
+                    }
+                }
+                render: HStack(spacing: 24) {
+                    render: VStack(spacing: 15) {
+                        render: Text(text: "SOURCE-CONNECTED PATTERNS", style: Style { fg: "#65EAD5", size: 19 })
+                        render: Button(label: "01  MEMORY PULSE", style: Style { bg: "#173348", fg: "#E6F2F7", radius: 12, width: 360, height: 55 }) {
+                            on_click: ~> { ui.set_text(key: "selection", value: "memory") }
+                        }
+                        render: Button(label: "02  CPU STREAK", style: Style { bg: "#173348", fg: "#E6F2F7", radius: 12, width: 360, height: 55 }) {
+                            on_click: ~> { ui.set_text(key: "selection", value: "cpu") }
+                        }
+                        render: Button(label: "03  IO TRANSFER", style: Style { bg: "#173348", fg: "#E6F2F7", radius: 12, width: 360, height: 55 }) {
+                            on_click: ~> { ui.set_text(key: "selection", value: "io") }
+                        }
+                        render: Text(text: "Policy sensitivity is not statistical confidence.", style: Style { fg: "#889FB1", size: 14 })
+                    }
+                    render: VStack(spacing: 14) {
+                        render: Text(text: "CASE INSPECTOR  /  ACTUAL SYNTHETIC WITNESSES", style: Style { fg: "#65EAD5", size: 19 })
+                        render: Text(text: xr09_case_title(xr09_case_code(ui.get_text(key: "selection"))), style: Style { fg: "#E6F2F7", size: 20 })
+                        render: Text(text: xr09_case_source(xr09_case_code(ui.get_text(key: "selection"))), style: Style { fg: "#A4BECF", size: 16 })
+                        render: HStack(spacing: 14) {
+                            render: Text(text: "Peak measured:", style: Style { fg: "#8FA8B9", size: 17 })
+                            render: Text(text: xr09_case_peak(xr09_case_code(ui.get_text(key: "selection"))), style: Style { fg: "#65EAD5", size: 23 })
+                        }
+                        render: HStack(spacing: 14) {
+                            render: Text(text: "Matching policies / 3:", style: Style { fg: "#8FA8B9", size: 17 })
+                            render: Text(text: xr09_support(xr09_case_code(ui.get_text(key: "selection"))), style: Style { fg: "#65EAD5", size: 23 })
+                        }
+                        render: Rect(width: 620, height: 2, color: "#2A4557")
+                        render: Text(text: "Activity timeline / one sample, one source timestamp", style: Style { fg: "#8FA8B9", size: 15 })
+                        render: HStack(spacing: 9) {
+                            render: Rect(width: 28, height: xr09_bar_height(1), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(2), color: "#65EAD5")
+                            render: Rect(width: 28, height: xr09_bar_height(3), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(4), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(5), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(6), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(7), color: "#F7BE7B")
+                            render: Rect(width: 28, height: xr09_bar_height(8), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(9), color: "#3F7399")
+                            render: Rect(width: 28, height: xr09_bar_height(10), color: "#3F7399")
+                        }
+                    }
+                }
+                render: Rect(width: 1300, height: 2, color: "#2A4557")
+                render: Text(text: "AURA ONLY / source code, decision cells, state, UI tree and callbacks. Host runtime is the language implementation.", style: Style { fg: "#7E9CAF", size: 15 })
+                render: Text(text: "Not yet a live capture importer: JSONL and Win32 process sampling are not exposed by a certified Aura API.", style: Style { fg: "#F7BE7B", size: 15 })
+            }
+        }
