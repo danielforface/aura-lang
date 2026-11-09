@@ -1408,3 +1408,128 @@ fn record_constant_i64_min_and_f64_bits_survive_ir_and_native_abi() {
     assert!(err.message.contains("type mismatch"),
         "wrong Record ABI error for forged field: {err}");
 }
+
+// Q03 Native gate: optimizer must not reinterpret 32-bit wrap or erase type errors.
+
+#[test]
+fn u32_wrapping_constant_folding_matches_original_oracle_and_executable_native() {
+    use aura_ir::{
+        optimize_module, BasicBlock, BinOp, BlockId, ExecutionHint, FunctionIR, Inst,
+        ModuleIR, RValue, Terminator, ValueId,
+    };
+    let cases = [
+        ("u32_fold_add", BinOp::Add, u32::MAX as u64, 1u64, 0u64),
+        ("u32_fold_sub", BinOp::Sub, 0, 1, u32::MAX as u64),
+        ("u32_fold_mul", BinOp::Mul, u32::MAX as u64, 2, u32::MAX as u64 - 1),
+        ("u32_fold_div", BinOp::Div, u32::MAX as u64, 2, (u32::MAX / 2) as u64),
+    ];
+    let span: aura_ast::Span = (0, 0).into();
+    let mut original = ModuleIR::new();
+    for (name, op, left, right, expected) in cases {
+        let mk = |id: u32, kind: InstKind| Inst {
+            span, dest: Some(ValueId(id)), kind,
+        };
+        original.functions.insert(name.to_string(), FunctionIR {
+            name: name.to_string(), span, params: vec![], ret: Type::Bool,
+            blocks: vec![BasicBlock {
+                id: BlockId(0), span, hint: ExecutionHint::Sequential,
+                insts: vec![
+                    mk(0, InstKind::BindStrand {
+                        name: "lhs".into(), expr: RValue::ConstU32(left),
+                    }),
+                    mk(1, InstKind::BindStrand {
+                        name: "rhs".into(), expr: RValue::ConstU32(right),
+                    }),
+                    mk(2, InstKind::Binary {
+                        op, left: ValueId(0), right: ValueId(1),
+                    }),
+                    mk(3, InstKind::BindStrand {
+                        name: "expected".into(), expr: RValue::ConstU32(expected),
+                    }),
+                    mk(4, InstKind::Binary {
+                        op: BinOp::Eq, left: ValueId(2), right: ValueId(3),
+                    }),
+                ],
+                term: Terminator::Return(Some(ValueId(4))),
+            }],
+            entry: BlockId(0),
+        });
+    }
+    validate_module(&original).expect("real typed u32 SSA must be valid");
+    let mut optimized = original.clone();
+    optimize_module(&mut optimized);
+    validate_module(&optimized).expect("optimized u32 SSA must stay valid");
+    for (label, ir) in [("original", &original), ("optimized", &optimized)] {
+        for (name, _, _, _, _) in cases {
+            let oracle = run_oracle_entry(ir, name, &[], OracleConfig::default())
+                .expect("original/optimized IR Oracle must execute");
+            assert_eq!(oracle.return_value, Some(OracleValue::Bool(true)),
+                "{label}: {name} must use 32-bit wrap before Eq");
+        }
+        let generated = emit_module(ir, None).expect("qualified u32 arithmetic must emit native");
+        let dir = Scratch::new();
+        fs::write(dir.0.join("aura_runtime.h"), &generated.runtime_h).unwrap();
+        fs::write(dir.0.join("module.c"), &generated.module_c).unwrap();
+        let mut driver = String::from("#include <stdbool.h>\n");
+        for (name, _, _, _, _) in cases {
+            driver.push_str(&format!("bool {name}(void);\n"));
+        }
+        driver.push_str("int main(void) { return (");
+        for (index, (name, _, _, _, _)) in cases.iter().enumerate() {
+            if index > 0 { driver.push_str(" && "); }
+            driver.push_str(&format!("{name}()"));
+        }
+        driver.push_str(") ? 0 : 1; }\n");
+        fs::write(dir.0.join("driver.c"), driver).unwrap();
+        for opt in ["-O0", "-O2"] {
+            let exe = dir.0.join(format!("u32_wrap_{}_{}", label, &opt[1..]));
+            let build = Command::new("clang")
+                .args(["-std=gnu11", "-Wall", "-Werror", "-fsanitize=undefined", opt, "-I"])
+                .arg(&dir.0).arg(dir.0.join("module.c")).arg(dir.0.join("driver.c"))
+                .arg("-o").arg(&exe).output().expect("Clang in Native gate");
+            assert!(build.status.success(), "{label}/{opt}: compiler failed: {}\n{}",
+                String::from_utf8_lossy(&build.stderr), generated.module_c);
+            let run = Command::new(exe).output().expect("run native u32 wrap checks");
+            assert!(run.status.success(), "{label}/{opt}: u32 folding changed semantics: {}",
+                String::from_utf8_lossy(&run.stderr));
+        }
+    }
+}
+
+#[test]
+fn mixed_type_constant_comparisons_do_not_bypass_native_type_guards() {
+    use aura_ir::{
+        BasicBlock, BinOp, BlockId, ExecutionHint, FunctionIR, Inst, ModuleIR,
+        RValue, Terminator, ValueId,
+    };
+    let span: aura_ast::Span = (0, 0).into();
+    for (op, left, right) in [
+        (BinOp::Eq, RValue::ConstU32(1), RValue::ConstBool(true)),
+        (BinOp::Ne, RValue::ConstU32(1), RValue::ConstI64(1)),
+        (BinOp::Eq, RValue::ConstString("one".into()), RValue::ConstBool(true)),
+    ] {
+        let mut ir = ModuleIR::new();
+        let mk = |n: u32, kind: InstKind| Inst {
+            span, dest: Some(ValueId(n)), kind,
+        };
+        ir.functions.insert("reject_mixed".into(), FunctionIR {
+            name: "reject_mixed".into(), span, params: vec![], ret: Type::Bool,
+            blocks: vec![BasicBlock {
+                id: BlockId(0), span, hint: ExecutionHint::Sequential,
+                insts: vec![
+                    mk(0, InstKind::BindStrand { name: "a".into(), expr: left }),
+                    mk(1, InstKind::BindStrand { name: "b".into(), expr: right }),
+                    mk(2, InstKind::Binary {
+                        op, left: ValueId(0), right: ValueId(1),
+                    }),
+                ],
+                term: Terminator::Return(Some(ValueId(2))),
+            }],
+            entry: BlockId(0),
+        });
+        let err = emit_module(&ir, None).err()
+            .expect("mixed-type comparison must not constant-fold past type checking");
+        assert!(err.message.contains("unqualified C"),
+            "unexpected mixed-type diagnostic: {err}");
+    }
+}
