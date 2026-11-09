@@ -155,3 +155,42 @@ fn true_x11_arabic_gsub_ligature_hides_unresolvable_interior_caret(){
    "incomplete shaped stop map disables unsafe visual arrow fallback");
  drop(p);
 }
+
+/// Real GPU UAX9 RTL mouse capture uses the *physical* screen endpoints.
+/// Neither an unqualified logical reversal nor fabricated ligature stops.
+#[test]
+fn true_x11_shaped_rtl_pointer_drag_follows_visual_stops_and_host_rebase(){
+ let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+ let mut t=tree("שלום");
+ t.children[0].set_prop("pointer_selection","true");
+ frames(&p,&t,&mut c,5);
+ assert!(p.diagnostic_resize_window(650,420));frames(&p,&t,&mut c,4);
+ let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+ let win=windows.lines().next().unwrap();
+ xdo(&["windowfocus","--sync",win]);
+ xdo(&["mousemove","--window",win,"34","60"]);frames(&p,&t,&mut c,3);
+ xdo(&["mousedown","1"]);frames(&p,&t,&mut c,4);
+ assert_eq!(visual(&p).caret_grapheme,Some(4),
+     "left screen edge must be logical end of a Hebrew word");
+ xdo(&["mousemove","--window",win,"125","60"]);frames(&p,&t,&mut c,4);
+ xdo(&["mouseup","1"]);frames(&p,&t,&mut c,3);
+ let selected=visual(&p);
+ assert_eq!(selected.logical_selection,Some((0,4)),
+     "real RTL drag spans source text via visual caret stops: {selected:?}");
+ assert_eq!(selected.selection_screens.len(),1);
+ assert!(selected.selection_screens[0].1>selected.selection_screens[0].0+30.0);
+ assert!(selected.caret_visible);
+ xdo(&["mousemove","--window",win,"34","60"]);frames(&p,&t,&mut c,2);
+ xdo(&["mousedown","1"]);frames(&p,&t,&mut c,3);
+ t.children[0].set_prop("value","חדש");
+ t.children[0].set_prop("value_revision","2");
+ frames(&p,&t,&mut c,3);
+ xdo(&["mousemove","--window",win,"125","60"]);frames(&p,&t,&mut c,3);
+ xdo(&["mouseup","1"]);frames(&p,&t,&mut c,2);
+ let rebased=visual(&p);
+ assert_eq!(rebased.logical_selection,None,
+     "old pointer capture cannot mutate new Host-authored selection");
+ assert_eq!(rebased.caret_grapheme,Some(3));
+ drop(p);
+ eprintln!("LUMINA_SHAPED_POINTER_X11 rtl_visual_stops=true whole_graphemes=true no_invented_ligature=true host_rebase_revokes=true");
+}

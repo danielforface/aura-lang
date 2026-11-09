@@ -338,6 +338,8 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    /// Transient pointer capture, tied to one live editor authority epoch.
+    pointer_capture:Option<InputPointerCapture>,
     /// Native Button keyboard focus, exclusive with focused_input.
     focused_button: Option<u64>,
     /// Forms whose last native submit attempt failed. Field errors are
@@ -375,7 +377,14 @@ struct LuminaWindow {
 }
 
 #[cfg(feature = "raylib")]
-#[derive(Clone, Debug)]
+#[derive(Clone,Copy,Debug)]
+struct InputPointerCapture {
+    callback_id:u64,
+    authority_epoch:u64,
+    rebase_generation:u64,
+}
+#[cfg(feature="raylib")]
+#[derive(Clone,Debug)]
 struct FocusedTextInput {
     on_change: u64,
     on_submit: Option<u64>,
@@ -447,6 +456,39 @@ fn read_native_clipboard_text(rl:&RaylibHandle)->Option<String>{
     input_policy::safe_clipboard_text(&value).then_some(value)
 }
 
+/// Real pixel hit test using exactly the same committed text/font as paint.
+/// Never select an IME preedit, placeholder or unresolved shaped ligature.
+#[cfg(feature="raylib")]
+fn input_pointer_hit(
+    rl:&RaylibHandle,
+    fonts:&HashMap<String,LoadedUnicodeFont>,
+    shaped:&HashMap<String,shaped_gpu::PreparedGlyphText>,
+    views:&HashMap<u64,text_viewport::Visual>,
+    node:&UiNode,plan:&layout::LayoutNode,fi:&FocusedTextInput,
+    screen_x:f32
+)->Option<(usize,Option<usize>)>{
+    if fi.session.composing() ||
+        fi.session.buffer.len()>text_input::MAX_PROJECTED_TEXT_BYTES ||
+        !screen_x.is_finite(){return None;}
+    let content=text_viewport::content_bounds(plan.bounds);
+    if content.width<=0.0 || content.intersect(plan.clip).is_empty(){return None;}
+    let scroll=views.get(&fi.on_change).map(|v|v.scroll).unwrap_or(fi.scroll_x);
+    let x=screen_x-content.x+scroll;
+    if !x.is_finite(){return None;}
+    if fi.session.buffer.is_empty(){return Some((0,None));}
+    if shaped_gpu::is_opted(node) {
+        let shape=loaded_shaped_input(node,&fi.session.buffer,shaped)?;
+        return bidi_editor::hit_test(shape,x).map(|stop|
+            (stop.grapheme,Some(stop.run)));
+    }
+    let size=prop_i32(node,"size").unwrap_or(18).max(10);
+    let font=selected_unicode_font(fonts,node,size,&fi.session.buffer);
+    text_viewport::grapheme_at_x(&fi.session.buffer,x,|prefix|{
+        if let Some(font)=font{font.measure_text(prefix,size as f32,0.0).x}
+        else{rl.measure_text(prefix,size).max(0) as f32}
+    }).map(|index|(index,None))
+}
+
 /// Picks from the already-qualified focus order: clipping, visibility,
 /// disabled controls, unique callback identity and value_revision validation
 /// are enforced BEFORE this opt-in focus decision.
@@ -465,6 +507,10 @@ fn initial_autofocus_target(
 
 #[cfg(feature = "raylib")]
 fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
+    if win.pointer_capture.is_some_and(|capture|
+        target.as_ref().is_none_or(|next|next.0!=capture.callback_id)) {
+        win.pointer_capture=None;
+    }
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
         if active.on_change == *new_id {
             // A new intentional click/focus of this editor counts as use.
@@ -1495,6 +1541,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    pointer_capture:None,
                     focused_button: None,
                     attempted_forms: std::collections::HashSet::new(),
                     blur_touched:HashMap::new(),
@@ -1568,6 +1615,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
             let mouse = win.rl.get_mouse_position();
             let clicked = win.rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
+            let mouse_held = win.rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
+            let mouse_released = win.rl.is_mouse_button_released(MouseButton::MOUSE_BUTTON_LEFT);
             let now = win.rl.get_time();
 
             // Keyboard sampling must happen before begin_drawing (borrow rules).
@@ -1707,6 +1756,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let candidate_click_consumed=false;
             let composing_before_pointer=win.focused_input.as_ref()
                 .is_some_and(|fi|fi.session.composing());
+            // A fresh physical press revokes any previous field capture.
+            if clicked {win.pointer_capture=None;}
             let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test_with_blocked(tree, &planned_layout,
                     mouse.x, mouse.y,&cancel_pre.blocked) {
@@ -1724,23 +1775,29 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
                             switch_input(win,Some((on_change,on_submit,value,
                                 revisions.get(&on_change).copied().flatten())));
-                            // Apply cursor placement in shaped, scrolled logical
-                            // coordinates using the previously displayed GPU
-                            // atlas; on missing/incomplete clusters, do not
-                            // manufacture a byte position.
-                            if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
-                                if shaped_gpu::is_opted(n) {
-                                    let hit=win.focused_input.as_ref().and_then(|fi|{
-                                        if fi.session.composing(){return None;}
-                                        let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
-                                        let c=text_viewport::content_bounds(pl.bounds);
-                                        let scroll=win.last_text_views.get(&on_change)
-                                            .map(|v|v.scroll).unwrap_or(0.0);
-                                        bidi_editor::hit_test(shape,mouse.x-c.x+scroll)
-                                    });
-                                    if let (Some(stop),Some(fi))=(hit,win.focused_input.as_mut()) {
-                                        fi.session.set_visual_caret(stop.grapheme,false);
-                                        fi.visual_affinity=Some(stop.run);
+                            // The previous shaped single-click path is
+                            // preserved. Explicit pointer_selection additionally
+                            // enables font-measured unshaped clicks and drag.
+                            if let Some((node,pl))=
+                                find_input_by_callback(tree,&planned_layout,on_change) {
+                                let opted=input_policy::pointer_selection_enabled(node)==Ok(true);
+                                if opted || shaped_gpu::is_opted(node) {
+                                    let hit=win.focused_input.as_ref()
+                                        .filter(|fi|fi.on_change==on_change)
+                                        .and_then(|fi|input_pointer_hit(
+                                            &win.rl,&win.fonts,&win.shaped_textures,
+                                            &win.last_text_views,node,pl,fi,mouse.x));
+                                    if let (Some((index,run)),Some(fi))=
+                                        (hit,win.focused_input.as_mut()) {
+                                        fi.session.set_visual_caret(index,opted && extend_selection);
+                                        fi.visual_affinity=run;
+                                        if opted {
+                                            win.pointer_capture=Some(InputPointerCapture {
+                                                callback_id:fi.on_change,
+                                                authority_epoch:fi.session.authority_epoch(),
+                                                rebase_generation:fi.session.rebase_generation(),
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -1778,6 +1835,39 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         win.focused_button=None;
                         switch_input(win,None);
                     },
+                }
+            }
+            // Pointer capture continues outside widget bounds while held.
+            // Only the same unique, currently eligible field and exact
+            // EditSession authority generation may extend the selection.
+            // No mouse motion creates Undo or an on_change callback.
+            if let Some(mut capture)=win.pointer_capture.take() {
+                if mouse_held || mouse_released {
+                    let hit=win.focused_input.as_ref()
+                        .filter(|fi|fi.on_change==capture.callback_id
+                            && fi.session.authority_epoch()==capture.authority_epoch
+                            && fi.session.rebase_generation()==capture.rebase_generation
+                            && !fi.session.composing())
+                        .and_then(|fi|{
+                            let eligible=focus_order.iter().any(|entry|matches!(
+                                entry,layout::HitTarget::TextInput{on_change,..}
+                                if *on_change==capture.callback_id));
+                            if !eligible{return None;}
+                            let (node,pl)=find_input_by_callback(
+                                tree,&planned_layout,capture.callback_id)?;
+                            if input_policy::pointer_selection_enabled(node)!=Ok(true){return None;}
+                            input_pointer_hit(&win.rl,&win.fonts,&win.shaped_textures,
+                                &win.last_text_views,node,pl,fi,mouse.x)
+                        });
+                    if let (Some((index,run)),Some(fi))=
+                        (hit,win.focused_input.as_mut()) {
+                        fi.session.set_visual_caret(index,true);
+                        fi.visual_affinity=run;
+                        capture.authority_epoch=fi.session.authority_epoch();
+                        if mouse_held && !mouse_released {
+                            win.pointer_capture=Some(capture);
+                        }
+                    }
                 }
             }
             // The existing input/IME Escape branch below remains responsible

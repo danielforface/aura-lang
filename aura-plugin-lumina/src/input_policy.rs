@@ -93,6 +93,31 @@ pub(crate) fn safe_clipboard_text(value:&str)->bool{
             matches!(ch,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
 }
 
+/// A separate explicit pointer-selection grant, not a clipboard grant.
+/// Invalid, duplicated or private text-field properties fail closed.
+pub(crate) fn pointer_selection_enabled(node:&UiNode)->Result<bool,()> {
+    if node.kind!="TextInput"{return Err(());}
+    fn unique<'a>(node:&'a UiNode,key:&str)->Result<Option<&'a str>,()>{
+        let mut props=node.props.iter().filter(|(k,_)|k==key);
+        let result=props.next().map(|(_,v)|v.as_str());
+        if props.next().is_some(){return Err(());}
+        Ok(result)
+    }
+    let enabled=match unique(node,"pointer_selection")?{
+        None|Some("false")=>false,
+        Some("true")=>true,
+        _=>return Err(()),
+    };
+    if !enabled{return Ok(false);}
+    let allowable=|v:Option<&str>|v.is_none_or(|v|
+        matches!(v,"text"|"search"|"email"|"number"|"url"|"tel"));
+    Ok(edit_mode(node)!=EditMode::Invalid && grapheme_limit(node).is_ok()
+        && allowable(unique(node,"type")?)
+        && allowable(unique(node,"input_type")?)
+        && matches!(unique(node,"sensitive")?,None|Some("false")|Some("0"))
+        && matches!(unique(node,"surrounding_text")?,None|Some("full")))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -100,6 +125,29 @@ mod tests{
         let mut n=UiNode::new("TextInput");
         for (k,v) in props {n.set_prop(*k,*v);}
         n
+    }
+    #[test]
+    fn pointer_grant_requires_explicit_safe_unambiguous_field(){
+        assert_eq!(pointer_selection_enabled(&field(&[])),Ok(false));
+        assert_eq!(pointer_selection_enabled(&field(&[("pointer_selection","true")])),Ok(true));
+        assert_eq!(pointer_selection_enabled(&field(&[("pointer_selection","false")])),Ok(false));
+        assert_eq!(pointer_selection_enabled(&field(&[("pointer_selection","true"),
+            ("read_only","true")])),Ok(true));
+        for (key,v) in [("sensitive","true"),("type","password"),
+            ("input_type","otp"),("surrounding_text","none"),
+            ("read_only","invalid"),("max_graphemes","5000")] {
+            assert_eq!(pointer_selection_enabled(&field(&[("pointer_selection","true"),
+                (key,v)])),Ok(false),"unsafe {key}");
+        }
+        for v in ["","TRUE","1","copy"," true","true "]{
+            assert_eq!(pointer_selection_enabled(&field(&[("pointer_selection",v)])),Err(()));
+        }
+        let mut duplicate=field(&[("pointer_selection","true")]);
+        duplicate.props.push(("pointer_selection".into(),"false".into()));
+        assert_eq!(pointer_selection_enabled(&duplicate),Err(()));
+        let mut duplicated_sensitive=field(&[("pointer_selection","true"),("sensitive","false")]);
+        duplicated_sensitive.props.push(("sensitive".into(),"false".into()));
+        assert_eq!(pointer_selection_enabled(&duplicated_sensitive),Err(()));
     }
     #[test]
     fn clipboard_requires_explicit_safe_opt_in_and_keeps_readonly_copy_only(){

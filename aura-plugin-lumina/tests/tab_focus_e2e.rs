@@ -1621,3 +1621,109 @@ fn native_x11_unicode_word_selection_delete_and_host_rebase(){
     drop(plugin);
     eprintln!("LUMINA_WORD_SHORTCUTS_X11 real_ctrl_shift_word_selection=true one_edit_callback=true unicode_word_delete=true undo_redo=true host_revision=true readonly=true unchanged_nexus_schema=true");
 }
+
+
+/// Real X11 left-button pointer selection, scroll-clamp, OS clipboard and
+/// explicit Host authority revocation. Pointer movement itself is view-only.
+#[test]
+fn native_x11_pointer_capture_selects_unicode_and_revokes_stale_host(){
+    let p=AuraLuminaPlugin::new();
+    let mut cx=NexusContext::default();
+    let original="alpha beta 👩‍💻";
+    let mut tree=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","320"),("height","44"),
+            ("value",original),("value_revision","1"),("on_change","cb:921"),
+            ("pointer_selection","true"),("clipboard","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","100"),("width","320"),("height","44"),
+            ("value","Read only"),("value_revision","1"),("on_change","cb:922"),
+            ("pointer_selection","true"),("clipboard","true"),
+            ("read_only","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","180"),("width","320"),("height","44"),
+            ("value","PRIVATE"),("value_revision","1"),("on_change","cb:923"),
+            ("pointer_selection","true"),("clipboard","true"),
+            ("sensitive","true"),("type","password")],vec![]),
+    ]);
+    frames(&p,&tree,&mut cx,4);
+    assert!(p.diagnostic_resize_window(640,380));
+    frames(&p,&tree,&mut cx,4);
+    let wins=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=wins.lines().next().expect("real native X11 window");
+    xdo(&["windowfocus","--sync",win]);
+
+    let vis=|id|p.diagnostic_text_visual(id,32.0,296.0)
+        .expect("actual measured native input");
+    xdo(&["mousemove","--window",win,"35","42"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);assert!(frames(&p,&tree,&mut cx,3).is_empty());
+    assert_eq!(vis(921).caret_grapheme,Some(0),
+        "near-left font-measured click places caret at grapheme zero");
+    xdo(&["mousemove","--window",win,"370","42"]);
+    assert!(frames(&p,&tree,&mut cx,5).is_empty());
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,3);
+    assert_eq!(vis(921).logical_selection,Some((0,12)),
+        "drag past right edge selects entire 12-grapheme Unicode field");
+    assert!(!vis(921).selection_screens.is_empty(),
+        "GPU selection overlay must use actual clipped range");
+    assert!(clipboard_key(&p,&tree,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&tree,&mut cx),original,
+        "external xclip sees exact mouse-selected clusters");
+    let cut=clipboard_key(&p,&tree,&mut cx,"x");
+    assert!(has(&cut,921,""),"real X11 cut must delete selected draft: {cut:?}");
+    assert_eq!(cut.iter().filter(|e|e.callback_id==921&&!e.submitted).count(),1);
+    assert!(has(&clipboard_key(&p,&tree,&mut cx,"z"),921,original),
+        "cut undone exactly once");
+
+    // New Host revision invalidates an in-flight pointer drag, even when
+    // callback identity and focus remain unchanged.
+    xdo(&["mousemove","--window",win,"35","42"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);frames(&p,&tree,&mut cx,3);
+    assert_eq!(vis(921).caret_grapheme,Some(0));
+    tree.children[0].set_prop("value","HOSTED");
+    tree.children[0].set_prop("value_revision","2");
+    frames(&p,&tree,&mut cx,3);
+    xdo(&["mousemove","--window",win,"350","42"]);
+    frames(&p,&tree,&mut cx,4);
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,3);
+    let authoritative=vis(921);
+    assert_eq!(authoritative.logical_selection,None,
+        "stale captured pointer must not select new Host bytes");
+    assert_eq!(authoritative.caret_grapheme,Some(6));
+
+    // Read-only grants mouse selection and opt-in COPY but never Cut/Paste.
+    xdo(&["mousemove","--window",win,"35","120"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);frames(&p,&tree,&mut cx,3);
+    xdo(&["mousemove","--window",win,"370","120"]);frames(&p,&tree,&mut cx,3);
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,2);
+    assert_eq!(vis(922).logical_selection,Some((0,9)));
+    assert!(clipboard_key(&p,&tree,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&tree,&mut cx),"Read only");
+    assert!(clipboard_key(&p,&tree,&mut cx,"x").is_empty());
+    assert!(clipboard_key(&p,&tree,&mut cx,"v").is_empty());
+
+    // Malformed/duplicated permission cannot rearm selection.
+    tree.children[1].set_prop("pointer_selection","invalid");
+    assert!(press(&p,&tree,&mut cx,"Right",false).is_empty());
+    xdo(&["mousemove","--window",win,"35","120"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousemove","--window",win,"370","120"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,2);
+    assert_eq!(vis(922).logical_selection,None);
+    tree.children[1].set_prop("pointer_selection","true");
+    tree.children[1].props.push(("pointer_selection".into(),"true".into()));
+    xdo(&["mousemove","--window",win,"35","120"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousemove","--window",win,"370","120"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,2);
+    assert_eq!(vis(922).logical_selection,None);
+
+    seed_x11_clipboard("guard");
+    xdo(&["mousemove","--window",win,"35","200"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousedown","1"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mousemove","--window",win,"370","200"]);frames(&p,&tree,&mut cx,2);
+    xdo(&["mouseup","1"]);frames(&p,&tree,&mut cx,2);
+    assert_eq!(vis(923).logical_selection,None,
+        "sensitive password must deny pointer selection");
+    assert!(clipboard_key(&p,&tree,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&tree,&mut cx),"guard");
+    drop(p);
+    eprintln!("LUMINA_POINTER_SELECT_X11 caret_click=true whole_cluster_drag=true outside_bounds_capture=true xclip_copy=true cut_once_undo=true host_rebase_revokes=true readonly_copy_only=true malformed_duplicate_blocked=true sensitive_private=true");
+}
