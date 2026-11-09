@@ -1486,9 +1486,16 @@ fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
 
     tree.children[1].set_prop("max_graphemes","1");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    // A dynamically lowered cap must permit a non-growing repair of the
+    // existing over-cap value (3 -> 2 graphemes), not truncate it.
     seed_x11_clipboard("🇮🇱👩‍💻");
+    let reduced=clipboard_key(&plugin,&tree,&mut ctx,"v");
+    assert!(has(&reduced,502,"🇮🇱👩‍💻"),
+        "lowering an already over-cap value must remain editable: {reduced:?}");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    seed_x11_clipboard("🇮🇱👩‍💻🇮🇱👩‍💻");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
-        "over-cap paste must reject entire transaction");
+        "over-cap growth (2 -> 4) must reject the whole paste");
     seed_x11_clipboard("x\u{202e}bad");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
         "Unicode bidi control injection must be denied");
