@@ -26,11 +26,37 @@ jobs:
         run: |
           cargo build -p aura --no-default-features --locked
           if ($LASTEXITCODE -ne 0) { throw 'Cannot build actual Aura' }
-      - name: Check Agent B-compatible minimal Aura syntax
+      - name: Compare real Agent A/B fixtures against XR-09 syntax variants
         run: |
-          & 'target/debug/aura.exe' check 'apps/xray-pure/fixtures/ui_smoke.aura'
-          if ($LASTEXITCODE -ne 0) { throw 'Minimal Lumina syntax regression' }
-          Write-Host 'XR09_MINIMAL_AURA_SYNTAX_PASS'
+          $files = @(
+            'aura/tests/corpus/println_basic.aura',
+            'examples/root-aura/main.aura',
+            'examples/root-aura/shop_list_tool.aura',
+            'apps/xray-pure/fixtures/00_cell_basic.aura',
+            'apps/xray-pure/fixtures/01_cell_yield.aura',
+            'apps/xray-pure/fixtures/02_import.aura',
+            'apps/xray-pure/fixtures/03_layout.aura',
+            'apps/xray-pure/fixtures/04_render.aura',
+            'apps/xray-pure/fixtures/05_style.aura',
+            'apps/xray-pure/fixtures/06_button.aura',
+            'apps/xray-pure/fixtures/07_intercell_ui.aura',
+            'apps/xray-pure/fixtures/08_nested_if.aura',
+            'apps/xray-pure/fixtures/ui_smoke.aura',
+            'apps/xray-pure/main.aura'
+          )
+          $failures = @()
+          foreach($path in $files) {
+            Write-Host "=== AURA CHECK: $path ==="
+            $output=(& 'target/debug/aura.exe' check $path 2>&1 | Out-String)
+            $code=$LASTEXITCODE
+            Write-Host $output
+            if($code -eq 0) { Write-Host "XR09_SYNTAX_PASS $path" }
+            else { Write-Host "XR09_SYNTAX_FAIL code=$code $path"; $failures+= $path }
+          }
+          Write-Host "XR09_SYNTAX_MATRIX failures=$($failures.Count) tested=$($files.Count)"
+          if($failures.Count -gt 0) {
+            throw ("Aura source syntax/check differences: " + ($failures -join ', '))
+          }
       - name: Diagnose full Pure Aura program (source and line)
         run: |
           Write-Host '=== AURA SOURCE WITH LINE NUMBERS ==='

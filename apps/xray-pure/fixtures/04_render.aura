@@ -1,0 +1,9 @@
+import aura::lumina
+
+cell main():
+    render:
+        App(title: "Probe", bg: "#080D16") {
+            VStack(spacing: 12) {
+                render: Text(text: "hello")
+            }
+        }

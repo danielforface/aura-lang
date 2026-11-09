@@ -1,0 +1,3 @@
+cell main():
+    val x: u32 = 5
+    io.println("HELLO")

@@ -1,0 +1,10 @@
+import aura::lumina
+
+cell twice(x: u32):
+    yield x * 2
+
+cell main():
+    layout:
+        VStack(spacing: 12) {
+            render: Text(text: twice(5), style: Style { fg: "#65EAD5", size: 22 })
+        }
