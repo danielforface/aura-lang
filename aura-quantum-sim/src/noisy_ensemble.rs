@@ -24,6 +24,7 @@ pub enum EnsembleError{
     InvalidMeasurements,UnsupportedResetObserved,InvalidBudget,
     BudgetExceeded,WorkLimit,Allocation,Overflow,
     BranchResolution,BranchLimit,ProbabilityMass,InvalidDensity,
+    InvalidCondition,ImpossibleCondition,ConditionProbabilityTooSmall,
     Circuit(NoisyCircuitError),Density(DensityError),
 }
 impl std::fmt::Display for EnsembleError{
@@ -119,15 +120,77 @@ fn apply_action(branch:&mut Branch,action:&NoisyAction)->Result<(),EnsembleError
     }
     Ok(())
 }
-/// Unconditional CPTP+ideal dynamic ensemble after ALL nonzero explicit
-/// final Z instrument outcomes, not RNG shots or unverified hardware.
-/// Unobserved reset stays a *single* CPTP map and never writes a classical bit.
-/// Strong finiteness checks on trace, Hermiticity and logical budget; these do
-/// not certify the finite-precision positive-semidefinite eigenvalues.
-pub fn execute_noisy_ensemble(
-    program:&NoisyCircuit,budget:usize,
-)->Result<NoisyEnsemble,EnsembleError>{
+/// Final register bit condition; never an internal noise Kraus or reset
+/// outcome. The input list MUST have strictly ascending, distinct bit indices.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub struct NoisyCondition{
+    pub bit:usize,
+    pub equals:bool,
+}
+/// Only event-specific statistics are exposed. No other classical histogram,
+/// individual branch probabilities or internal Kraus histories are returned.
+#[derive(Debug,Clone)]
+pub struct NoisyConditionalEnsemble{
+    pub conditions:Vec<NoisyCondition>,
+    pub condition_probability:f64,
+    pub selected_branch_count:usize,
+    pub measurement_count:usize,
+    pub qubits:usize,
+    pub dimension:usize,
+    pub final_density:Vec<Complex>,
+    pub trace:f64,
+    pub purity:f64,
+    pub reserved_peak_logical_bytes:usize,
+    pub charged_work_units:usize,
+}
+/// Independent of minimum PER-INSTRUMENT branch weight.
+pub const MIN_NOISY_CONDITION_PROBABILITY:f64=1e-12;
+fn validate_conditions(program:&NoisyCircuit,conditions:&[NoisyCondition])
+    ->Result<(),EnsembleError>{
+    if conditions.is_empty()||conditions.len()>MAX_ENSEMBLE_CLASSICAL_BITS
+        ||program.classical_bits()>MAX_ENSEMBLE_CLASSICAL_BITS{
+        return Err(EnsembleError::InvalidCondition);
+    }
+    let mut written=[false;MAX_ENSEMBLE_CLASSICAL_BITS];
+    for ins in program.instructions(){
+        if let NoisyInstruction::Measure{into_bit,..}=ins{
+            if *into_bit<MAX_ENSEMBLE_CLASSICAL_BITS{
+                written[*into_bit]=true;
+            }
+        }
+    }
+    let mut last=None;
+    for c in conditions{
+        if c.bit>=program.classical_bits()||!written[c.bit]
+            ||last.is_some_and(|previous|c.bit<=previous){
+            return Err(EnsembleError::InvalidCondition);
+        }
+        last=Some(c.bit);
+    }
+    Ok(())
+}
+fn matches_conditions(b:&Branch,conditions:&[NoisyCondition])->bool{
+    conditions.iter().all(|c|b.bits[c.bit]==Some(c.equals))
+}
+struct Enumerated{
+    branches:Vec<Branch>,
+    measurements:usize,
+    dim:usize,
+    peak:usize,
+    work:usize,
+    mass:f64,
+}
+/// Reuse the one C-owned physical instrument enumerator for both
+/// unconditional and final-classical-register conditioned noisy channels.
+/// Charge conditional-event selection bytes and work BEFORE any allocation.
+fn enumerate(
+    program:&NoisyCircuit,budget:usize,extra_bytes:usize,extra_work:usize,
+)->Result<Enumerated,EnsembleError>{
     let (measurements,dim,peak,work,max_branches)=preflight(program,budget)?;
+    let peak=add(peak,extra_bytes)?;
+    let work=add(work,extra_work)?;
+    if peak>budget{return Err(EnsembleError::BudgetExceeded);}
+    if work>MAX_ENSEMBLE_WORK{return Err(EnsembleError::WorkLimit);}
     let mut branches=vec![Branch{
         density:DensityMatrix::zero(program.qubits(),budget)?,
         bits:vec![None;program.classical_bits()],
@@ -191,21 +254,31 @@ pub fn execute_noisy_ensemble(
     if !mass.is_finite()||(mass-1.0).abs()>NORM_TOLERANCE{
         return Err(EnsembleError::ProbabilityMass);
     }
+    Ok(Enumerated{branches,measurements,dim,peak,work,mass})
+}
+/// Shared matrix assembly/validation for unconditioned and postselected
+/// states. Normalization must be actual selected Born event probability;
+/// no renormalization by counted branches or assumed fair coin.
+fn weighted_density<'a>(
+    dim:usize,branches:impl Iterator<Item=&'a Branch>,normalizer:f64,
+)->Result<(Vec<Complex>,f64,f64),EnsembleError>{
+    if !normalizer.is_finite()||normalizer<=0.0{
+        return Err(EnsembleError::ProbabilityMass);
+    }
     let mut matrix=vec![Complex::ZERO;mul(dim,dim)?];
-    let mut histogram=BTreeMap::new();
-    for b in &branches{
+    for b in branches{
+        let w=b.weight/normalizer;
+        if !w.is_finite()||w<=0.0{
+            return Err(EnsembleError::ProbabilityMass);
+        }
         for row in 0..dim{
             for col in 0..dim{
                 let z=b.density.element(row,col)?;
                 let i=row*dim+col;
-                matrix[i].re+=z.re*b.weight;
-                matrix[i].im+=z.im*b.weight;
+                matrix[i].re+=z.re*w;
+                matrix[i].im+=z.im*w;
             }
         }
-        let key:String=b.bits.iter().rev().map(|bit|match bit{
-            None=>'?',Some(false)=>'0',Some(true)=>'1',
-        }).collect();
-        *histogram.entry(key).or_insert(0.0)+=b.weight;
     }
     let mut trace=0.0;
     let mut purity=0.0;
@@ -233,11 +306,65 @@ pub fn execute_noisy_ensemble(
        purity<1.0/dim as f64-NORM_TOLERANCE{
         return Err(EnsembleError::InvalidDensity);
     }
+    Ok((matrix,trace,purity))
+}
+/// C-023 exact original unconditional public API (unchanged signature and
+/// histogram semantics), now shares the C-024 physical channel internals.
+pub fn execute_noisy_ensemble(
+    program:&NoisyCircuit,budget:usize,
+)->Result<NoisyEnsemble,EnsembleError>{
+    let run=enumerate(program,budget,0,0)?;
+    let (matrix,trace,purity)=weighted_density(
+        run.dim,run.branches.iter(),1.0)?;
+    let mut histogram=BTreeMap::new();
+    for b in &run.branches{
+        let key:String=b.bits.iter().rev().map(|bit|match bit{
+            None=>'?',Some(false)=>'0',Some(true)=>'1',
+        }).collect();
+        *histogram.entry(key).or_insert(0.0)+=b.weight;
+    }
     Ok(NoisyEnsemble{
-        qubits:program.qubits(),dimension:dim,final_density:matrix,
+        qubits:program.qubits(),dimension:run.dim,final_density:matrix,
         trace,purity,classical_probabilities:histogram,
-        final_branch_count:branches.len(),measurement_count:measurements,
-        probability_mass:mass,reserved_peak_logical_bytes:peak,
-        charged_work_units:work,
+        final_branch_count:run.branches.len(),measurement_count:run.measurements,
+        probability_mass:run.mass,reserved_peak_logical_bytes:run.peak,
+        charged_work_units:run.work,
+    })
+}
+/// Postselection on FINAL explicitly written classical bits, including
+/// last-write-wins after repeat measurements. Noise and intermediate
+/// feed-forward are fully applied BEFORE final event selection.
+/// Emits no histogram or unselected instrument traces.
+pub fn execute_noisy_conditioned_ensemble(
+    program:&NoisyCircuit,conditions:&[NoisyCondition],budget:usize,
+)->Result<NoisyConditionalEnsemble,EnsembleError>{
+    validate_conditions(program,conditions)?;
+    let extra_bytes=mul(conditions.len(),size_of::<NoisyCondition>())?;
+    let extra_work=mul(conditions.len(),MAX_ENSEMBLE_BRANCHES)?;
+    let run=enumerate(program,budget,extra_bytes,extra_work)?;
+    let probability:f64=run.branches.iter()
+        .filter(|b|matches_conditions(b,conditions))
+        .map(|b|b.weight).sum();
+    let count=run.branches.iter()
+        .filter(|b|matches_conditions(b,conditions)).count();
+    if count==0||probability==0.0{
+        return Err(EnsembleError::ImpossibleCondition);
+    }
+    if !probability.is_finite()||probability>1.0+NORM_TOLERANCE{
+        return Err(EnsembleError::ProbabilityMass);
+    }
+    if probability<MIN_NOISY_CONDITION_PROBABILITY{
+        return Err(EnsembleError::ConditionProbabilityTooSmall);
+    }
+    let (matrix,trace,purity)=weighted_density(
+        run.dim,run.branches.iter()
+            .filter(|b|matches_conditions(b,conditions)),probability)?;
+    Ok(NoisyConditionalEnsemble{
+        conditions:conditions.to_vec(),
+        condition_probability:probability,
+        selected_branch_count:count,measurement_count:run.measurements,
+        qubits:program.qubits(),dimension:run.dim,final_density:matrix,
+        trace,purity,reserved_peak_logical_bytes:run.peak,
+        charged_work_units:run.work,
     })
 }

@@ -88,7 +88,7 @@ struct Response{
     evidence_class:&'static str,
     qpu_hardware_jobs:u8,
 }
-fn convert(op:&Operation)->NoisyInstruction{
+pub(crate) fn convert(op:&Operation)->NoisyInstruction{
     match op{
         Operation::Gate{gate}=>NoisyInstruction::Gate(gate.clone_gate()),
         Operation::Noise{channel}=>NoisyInstruction::Noise(channel.clone_channel()),
