@@ -88,8 +88,9 @@ jobs:
           Write-Host 'XR09_DIAGNOSTIC_MATRIX_STEP_PASS'
       - name: Compile actual Lumina-powered Aura runtime
         run: |
-          cargo build -p aura --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Lumina-enabled Aura runtime failed Windows build' }
+          cargo build -p aura --features z3 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Z3-enabled Aura + Lumina Windows runtime failed build' }
+          Write-Host 'XR09_Z3_LUMINA_BUILD_PASS genuine Aura solver enabled'
       - name: Run actual Aura policy with full runtime verifier
         run: |
           Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
@@ -103,7 +104,7 @@ jobs:
           Write-Host 'XR09_PURE_AURA_POLICY_NATIVE_AVM_PASS'
       - name: Run actual Aura-Lumina UI with bounded frames and explicit proof status
         run: |
-          $env:AURA_AVM_NO_Z3='1'
+          Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
           $env:AURA_UI_MAX_FRAMES='2'
           $env:AURA_UI_DEBUG='1'
           $output=(& 'target/debug/aura.exe' run 'apps/xray-pure/main.aura' --mode avm 2>&1 | Out-String)
@@ -112,11 +113,8 @@ jobs:
           if(!$output.Contains('XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2')){
             throw 'No real UI model execution evidence from Aura'
           }
-          if($status -ne 0){
-            Write-Host 'XR09_GUI_EXECUTED_BUT_UNVERIFIED source Z3 gate disabled; not a release'
-            throw 'AVM verification/runtime gate still rejects GUI run'
-          }
-          Write-Host 'XR09_PURE_AURA_LUMINA_PASS verified native execution'
+          if($status -ne 0){throw 'Real Aura GUI Z3 gate/runtime rejected source execution'}
+          Write-Host 'XR09_PURE_AURA_LUMINA_PASS source and actual Z3-enabled native runtime'
       - uses: actions/upload-artifact@v4
         with:
           name: xr09-pure-aura-source-and-runtime
