@@ -1,0 +1,54 @@
+name: X008 Verified A+B Entire Cargo Workspace and Real Z3
+on:
+  push:
+    branches: [integration/x008-ab-full-workspace]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: x008-core-workspace
+  cancel-in-progress: true
+jobs:
+  verified-core-full:
+    name: Exact A+B complete Cargo Workspace, original Debug and real Z3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install actual C and Z3 build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev libasound2-dev cmake ninja-build pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Fail closed unless A ancestry and B exact Git trees are preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "7f2c62221310897d90493f34c2a21e4408025c20^{commit}"
+          git merge-base --is-ancestor 7f2c62221310897d90493f34c2a21e4408025c20 HEAD
+          test "$(git rev-parse HEAD:aura-plugin-lumina)" = "9cbebd448f258a5c2f7b489136a22a0d573e4c8a"
+          test "$(git rev-parse HEAD:Cargo.lock)" = "bf778c997ed575e323cde39863ae8c4d3b5c5b30"
+          test "$(git rev-parse HEAD:.github/workflows/lumina-viewport-headless.yml)" = "c971644e1ba42985eb54a4cea6d415999280e23e"
+          test "$(git rev-parse HEAD:Cargo.toml)" = "6e045a697ee1645de5effca18eed76adadb28a67"
+          test "$(git rev-parse HEAD:aura-nexus)" = "6065b2d92a22419b29336d77b61dd83795cf0b81"
+          cargo metadata --locked --no-deps --format-version 1 > /dev/null
+          echo X008_AB_GIT_PROVENANCE_LOCKED_PASS
+      - name: Original previously broken standalone String equality regression compiles and runs
+        run: cargo test --locked -p aura-backend-c --test record_string_eq_native -- --nocapture
+      - name: Actual full unmodified Cargo workspace including ALL integration tests
+        env:
+          AURA_DIFFERENTIAL_REQUIRE_C: "1"
+        run: cargo test --workspace --locked --no-default-features
+      - name: Real Aura Z3 feature on exact combined tree
+        run: cargo check --locked -p aura --no-default-features --features z3
+      - name: Original repaired public Debug protocol contract, both positive and negative tests
+        run: cargo test --locked -p aura --no-default-features --test debug_protocol_smoke -- --nocapture
+      - name: Independent subprocess CLI gate must reject unverified no-Z3 execution
+        run: |
+          cargo build --locked -p aura --no-default-features
+          python3 tools/integration/x006_avm_debug_contract.py --binary target/debug/aura
+      - name: Exact A+B full workspace proof of test conformance, not release approval
+        run: echo X008_AB_FULL_WORKSPACE_Z3_DEBUG_SUCCESS
