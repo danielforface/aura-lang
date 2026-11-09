@@ -54,9 +54,12 @@ def transcript(binary:Path,req:dict)->tuple[bytes,dict]:
         or r["qubits"]!=req["qubits"]
         or r["classical_bits"]!=req["classical_bits"]):
         raise AssertionError("real CLI versioned provenance metadata mismatch")
-    if any(key in r for key in ("seed","trace","results","shots_samples",
-                                "sampled_histogram","hardware_job_id")):
-        raise AssertionError("seed/shot trace leaked into unconditioned ensemble")
+    # Density-matrix TRACE is the mandatory numeric Tr(rho), not a
+    # measurement-event trace. Keep requiring it in verify() below.
+    if any(key in r for key in ("seed","instrument_trace","shot_trace",
+                                "results","shots_samples","sampled_histogram",
+                                "hardware_job_id")):
+        raise AssertionError("seed/shot event trace leaked into unconditioned ensemble")
     return p.stdout,r
 
 
