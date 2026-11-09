@@ -438,17 +438,13 @@ fn sync_native_ibus_context(
     sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
 }
 
-/// Raylib 5.x safe get_clipboard_text wrapper assumes a non-null C pointer;
-/// GLFW returns NULL for an absent/nontext X11 clipboard. Check pointer before
-/// reading and bound untrusted bytes before any owned allocation.
+/// Use the safe Raylib clipboard API; the untrusted OS value is admitted
+/// into the native editor only after strict UTF-8, one-line and byte gates.
+/// Never bypass this crate's forbid(unsafe_code) boundary.
 #[cfg(all(feature="raylib",target_os="linux"))]
-fn read_native_clipboard_text()->Option<String>{
-    let ptr=unsafe{raylib::ffi::GetClipboardText()};
-    if ptr.is_null(){return None;}
-    let bytes=unsafe{std::ffi::CStr::from_ptr(ptr)}.to_bytes();
-    if bytes.len()>input_policy::MAX_NATIVE_CLIPBOARD_BYTES{return None;}
-    let value=std::str::from_utf8(bytes).ok()?;
-    input_policy::safe_clipboard_text(value).then(||value.to_owned())
+fn read_native_clipboard_text(rl:&RaylibHandle)->Option<String>{
+    let value=rl.get_clipboard_text().ok()?;
+    input_policy::safe_clipboard_text(&value).then_some(value)
 }
 
 /// Picks from the already-qualified focus order: clipping, visibility,
@@ -2118,7 +2114,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                         #[cfg(target_os="linux")]
                         if clip_paste && clipboard_access.can_write(){
-                            if let Some(paste)=read_native_clipboard_text(){
+                            if let Some(paste)=read_native_clipboard_text(&win.rl){
                                 // Reject the whole paste if the resulting
                                 // single-line value would exceed the existing
                                 // bounded editor projection profile.
