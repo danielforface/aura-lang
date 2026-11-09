@@ -340,6 +340,15 @@ impl EditSession {
     pub(crate) fn selection(&self) -> Option<(usize,usize)> {
         (self.anchor!=self.caret).then(||(self.anchor.min(self.caret),self.anchor.max(self.caret)))
     }
+    /// Copy exactly whole UAX29 grapheme clusters; no projected IME preedit
+    /// or stale selection is ever exported into the OS clipboard.
+    pub(crate) fn selected_text(&self)->Option<&str>{
+        if self.composing(){return None;}
+        let (start,end)=self.selection()?;
+        let len=grapheme_count(&self.buffer);
+        if end>len{return None;}
+        self.buffer.get(byte_offset(&self.buffer,start)..byte_offset(&self.buffer,end))
+    }
     fn push(undo:&mut Vec<Snapshot>,snapshot:Snapshot) {
         if undo.len()==MAX_HISTORY {undo.remove(0);}
         undo.push(snapshot);
@@ -445,6 +454,39 @@ impl EditSession {
 #[cfg(test)]
 mod tests {
 
+    #[test]
+    fn selected_text_exports_whole_clusters_and_cannot_export_live_preedit(){
+        let mut s=EditSession::new("א👩‍💻🇮🇱e\\u{301}Z".into());
+        assert_eq!(s.selected_text(),None);
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert_eq!(s.selected_text(),Some("א👩‍💻🇮🇱e\\u{301}Z"));
+        let old=s.buffer.clone();
+        assert!(s.apply(SessionAction::Edit(EditCommand::Delete)));
+        assert_eq!(s.buffer,"");
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,old);
+        assert!(s.start_composition(1));
+        assert_eq!(s.selected_text(),None);
+        s.abandon_composition();
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert_eq!(s.selected_text(),Some(old.as_str()));
+    }
+    #[test]
+    fn paste_uses_existing_atomic_undo_grapheme_cap_and_host_rebase(){
+        let mut s=EditSession::new("A".into());
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("👩‍💻🇮🇱".into()))));
+        assert_eq!((s.buffer.as_str(),s.undo_len()),("A",0));
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("👩‍💻🇮🇱".into()))));
+        assert_eq!(s.buffer,"👩‍💻🇮🇱");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"A");
+        s.rebase_authority("HOST".into());
+        assert_eq!(s.undo_len(),0);
+        assert_eq!(s.buffer,"HOST");
+    }
     #[test]fn retained_size_accounts_for_committed_text_and_undo_redo(){
         let mut s=EditSession::new("A".into());
         assert_eq!(s.retained_bytes(),1);

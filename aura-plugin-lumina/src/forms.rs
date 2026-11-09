@@ -392,6 +392,7 @@ fn rule(node:&UiNode,value:&str)->Result<Option<FieldError>,()>{
     // A broken opt-in cannot silently allow the form to proceed.
     blur_binding(node)?;
     enter_submits_form(node)?;
+    crate::input_policy::clipboard_access(node)?;
     let required=match prop(node,"required"){
         None|Some("false")=>false,
         Some("true")=>true,

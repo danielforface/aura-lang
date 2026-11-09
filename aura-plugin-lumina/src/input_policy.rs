@@ -39,6 +39,60 @@ pub(crate) fn grapheme_limit(node:&UiNode)->Result<Option<usize>,()>{
     Ok(Some(value))
 }
 
+/// Native OS clipboard is an explicit, per-field capability, not implied
+/// by selection support. A read-only editor may export a selection but may
+/// never cut/paste. Unknown, duplicated or conflicting Host policy fails closed.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub(crate) enum ClipboardAccess { Disabled, CopyOnly, ReadWrite }
+impl ClipboardAccess {
+    pub(crate) fn can_copy(self)->bool{self!=Self::Disabled}
+    pub(crate) fn can_write(self)->bool{self==Self::ReadWrite}
+}
+pub(crate) fn clipboard_access(node:&UiNode)->Result<ClipboardAccess,()> {
+    if node.kind!="TextInput"{return Err(());}
+    fn unique<'a>(node:&'a UiNode,key:&str)->Result<Option<&'a str>,()>{
+        let mut props=node.props.iter().filter(|(k,_)|k==key);
+        let value=props.next().map(|(_,v)|v.as_str());
+        if props.next().is_some(){return Err(());}
+        Ok(value)
+    }
+    let requested=match unique(node,"clipboard")?{
+        None|Some("false")=>ClipboardAccess::Disabled,
+        Some("true")=>ClipboardAccess::ReadWrite,
+        Some("copy")=>ClipboardAccess::CopyOnly,
+        _=>return Err(()),
+    };
+    if requested==ClipboardAccess::Disabled{return Ok(requested);}
+    let sensitive=unique(node,"sensitive")?;
+    let surrounding=unique(node,"surrounding_text")?;
+    let explicit_type=unique(node,"type")?;
+    let input_type=unique(node,"input_type")?;
+    let edit=edit_mode(node);
+    let valid_type=|v:Option<&str>|v.is_none_or(|v|matches!(
+        v,"text"|"search"|"email"|"number"|"url"|"tel"
+    ));
+    if edit==EditMode::Invalid || grapheme_limit(node).is_err()
+        || !valid_type(explicit_type) || !valid_type(input_type)
+        || !matches!(sensitive,None|Some("false")|Some("0"))
+        || !matches!(surrounding,None|Some("full")) {
+        return Ok(ClipboardAccess::Disabled);
+    }
+    if edit==EditMode::ReadOnly || requested==ClipboardAccess::CopyOnly {
+        Ok(ClipboardAccess::CopyOnly)
+    }else{
+        Ok(ClipboardAccess::ReadWrite)
+    }
+}
+/// Untrusted clipboard bytes must not introduce multi-line text, embedded
+/// controls, nulls or Unicode bidi formatting controls into one-line fields.
+/// Whole-transaction rejection avoids silent truncation and forged display.
+pub(crate) const MAX_NATIVE_CLIPBOARD_BYTES:usize=4096;
+pub(crate) fn safe_clipboard_text(value:&str)->bool{
+    !value.is_empty() && value.len()<=MAX_NATIVE_CLIPBOARD_BYTES
+        && !value.chars().any(|ch|ch.is_control() ||
+            matches!(ch,'\\u{202A}'..='\\u{202E}'|'\\u{2066}'..='\\u{2069}'))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -46,6 +100,44 @@ mod tests{
         let mut n=UiNode::new("TextInput");
         for (k,v) in props {n.set_prop(*k,*v);}
         n
+    }
+    #[test]
+    fn clipboard_requires_explicit_safe_opt_in_and_keeps_readonly_copy_only(){
+        assert_eq!(clipboard_access(&field(&[])),Ok(ClipboardAccess::Disabled));
+        assert_eq!(clipboard_access(&field(&[("clipboard","true")])),
+            Ok(ClipboardAccess::ReadWrite));
+        assert_eq!(clipboard_access(&field(&[("clipboard","copy")])),
+            Ok(ClipboardAccess::CopyOnly));
+        assert_eq!(clipboard_access(&field(&[("clipboard","false")])),
+            Ok(ClipboardAccess::Disabled));
+        assert_eq!(clipboard_access(&field(&[("clipboard","true"),("read_only","true")])),
+            Ok(ClipboardAccess::CopyOnly));
+        for (key,value) in [("sensitive","true"),("type","password"),
+            ("input_type","otp"),("surrounding_text","none"),
+            ("read_only","broken"),("max_graphemes","4097")] {
+            assert_eq!(clipboard_access(&field(&[("clipboard","true"),(key,value)])),
+                Ok(ClipboardAccess::Disabled),"{key} must deny OS clipboard");
+        }
+        for malformed in ["", "TRUE", "1", " true", "paste", "false "]{
+            assert_eq!(clipboard_access(&field(&[("clipboard",malformed)])),Err(()));
+        }
+        let mut duplicate=field(&[("clipboard","true")]);
+        duplicate.props.push(("clipboard".into(),"false".into()));
+        assert_eq!(clipboard_access(&duplicate),Err(()));
+        let mut duplicate_sensitive=field(&[("clipboard","true"),("sensitive","false")]);
+        duplicate_sensitive.props.push(("sensitive".into(),"false".into()));
+        assert_eq!(clipboard_access(&duplicate_sensitive),Err(()));
+    }
+    #[test]
+    fn clipboard_bytes_are_bounded_and_bidi_controls_and_multiline_rejected(){
+        for ok in ["שלום 👩‍💻", "🇮🇱e\\u{301}","0"] {
+            assert!(safe_clipboard_text(ok));
+        }
+        for bad in ["","hello\\nworld","x\\0y","x\\u{202e}","x\\u{2066}"]{
+            assert!(!safe_clipboard_text(bad));
+        }
+        assert!(safe_clipboard_text(&"a".repeat(MAX_NATIVE_CLIPBOARD_BYTES)));
+        assert!(!safe_clipboard_text(&"a".repeat(MAX_NATIVE_CLIPBOARD_BYTES+1)));
     }
     #[test]
     fn absent_and_false_are_editable_and_true_blocks_every_edit_path(){

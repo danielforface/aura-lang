@@ -1,7 +1,8 @@
 #![cfg(feature="lumina-diagnostics")]
 // Real X11/XTest tab traversal. Only logical reading-order focus, NOT
 // accessibility focus order, assistive technologies, IME or BiDi semantics.
-use std::process::Command;
+use std::process::{Command,Stdio};
+use std::io::Write;
 use aura_nexus::{AuraPlugin,NexusContext,UiNode,UiRuntimeFeedback,UiTextInputEvent};
 use aura_plugin_lumina::{AuraLuminaPlugin,CompositionEvent};
 
@@ -1395,4 +1396,140 @@ fn native_x11_enter_from_textinput_validates_form_and_honors_busy(){
         "legacy on_submit preserved: {legacy:?}");
     drop(plugin);
     eprintln!("LUMINA_FORM_ENTER_X11 invalid_rejected=true committed_draft=true valid_single_callback=true busy_blocked=true host_error_retry=true duplicate_rejected=true malformed_rejected=true conflict_rejected=true legacy_preserved=true");
+}
+
+/// Genuine OS clipboard test: xclip is an independent X11 selection client,
+/// while xdotool sends real keyboard shortcuts to the Raylib window.
+fn clipboard_key(plugin:&AuraLuminaPlugin,tree:&UiNode,
+    ctx:&mut NexusContext,key:&str)->Vec<UiTextInputEvent>{
+    xdo(&["keydown","Control_L"]);
+    frames(plugin,tree,ctx,2);
+    let events=press(plugin,tree,ctx,key,false);
+    xdo(&["keyup","Control_L"]);
+    frames(plugin,tree,ctx,2);
+    events
+}
+fn seed_x11_clipboard(text:&str){
+    let mut child=Command::new("xclip")
+        .args(["-selection","clipboard","-i"])
+        .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn().expect("xclip installed");
+    child.stdin.take().unwrap().write_all(text.as_bytes()).expect("xclip stdin");
+    assert!(child.wait().expect("xclip owner launched").success());
+}
+fn read_x11_clipboard_with_pump(plugin:&AuraLuminaPlugin,tree:&UiNode,
+    ctx:&mut NexusContext)->String{
+    let mut child=Command::new("xclip")
+        .args(["-selection","clipboard","-o"])
+        .stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("xclip read");
+    for _ in 0..250 {
+        frames(plugin,tree,ctx,1);
+        if child.try_wait().expect("xclip wait").is_some(){
+            let out=child.wait_with_output().expect("xclip output");
+            assert!(out.status.success(),"xclip failed");
+            return String::from_utf8(out.stdout).expect("unicode OS clipboard");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    }
+    let _=child.kill();
+    panic!("X11 clipboard selection transfer failed while Raylib pumped events");
+}
+#[test]
+fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
+    let plugin=AuraLuminaPlugin::new();
+    let mut ctx=NexusContext::default();
+    let mut tree=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","260"),("height","44"),
+            ("on_change","cb:501"),("value","אב👩‍💻"),
+            ("value_revision","1"),("autofocus","true"),
+            ("clipboard","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","95"),("width","260"),("height","44"),
+            ("on_change","cb:502"),("value","X"),("value_revision","1"),
+            ("max_graphemes","3"),("clipboard","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","170"),("width","260"),("height","44"),
+            ("on_change","cb:503"),("value","SECRET"),("value_revision","1"),
+            ("clipboard","true"),("sensitive","true"),("type","password")],vec![]),
+        node("TextInput",&[("x","20"),("y","245"),("width","260"),("height","44"),
+            ("on_change","cb:504"),("value","Public"),("value_revision","1"),
+            ("clipboard","true"),("read_only","true")],vec![]),
+    ]);
+    frames(&plugin,&tree,&mut ctx,4);
+    assert!(plugin.diagnostic_resize_window(640,400));
+    frames(&plugin,&tree,&mut ctx,3);
+    let wins=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=wins.lines().next().expect("real X11 window");
+    xdo(&["windowfocus","--sync",win]);
+
+    seed_x11_clipboard("initial");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty(),
+        "without selection native copy is a no-op");
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"initial");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"אב👩‍💻");
+
+    let cut=clipboard_key(&plugin,&tree,&mut ctx,"x");
+    assert!(has(&cut,501,""),"cut must publish exactly one empty committed draft: {cut:?}");
+    assert_eq!(cut.iter().filter(|e|e.callback_id==501 && !e.submitted).count(),1);
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"אב👩‍💻");
+    let undone=clipboard_key(&plugin,&tree,&mut ctx,"z");
+    assert!(has(&undone,501,"אב👩‍💻"),"cut Undo must restore clusters: {undone:?}");
+
+    assert!(button_key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    let pasted=clipboard_key(&plugin,&tree,&mut ctx,"v");
+    assert!(has(&pasted,502,"אב👩‍💻"),"real X11 clipboard Unicode paste: {pasted:?}");
+    assert_eq!(pasted.iter().filter(|e|e.callback_id==502 && !e.submitted).count(),1);
+    assert!(has(&clipboard_key(&plugin,&tree,&mut ctx,"z"),502,"X"));
+    assert!(has(&clipboard_key(&plugin,&tree,&mut ctx,"y"),502,"אב👩‍💻"));
+
+    tree.children[1].set_prop("max_graphemes","1");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    seed_x11_clipboard("🇮🇱👩‍💻");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
+        "over-cap paste must reject entire transaction");
+    seed_x11_clipboard("x\\u{202e}bad");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
+        "Unicode bidi control injection must be denied");
+    seed_x11_clipboard("x\\ny");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
+        "multiline clipboard must not enter one-line field");
+    tree.children[1].set_prop("value","Host");
+    tree.children[1].set_prop("value_revision","2");
+    frames(&plugin,&tree,&mut ctx,3);
+    seed_x11_clipboard("q");
+    assert!(has(&clipboard_key(&plugin,&tree,&mut ctx,"v"),502,"q"),
+        "new Host revision and selection replacement must remain authoritative");
+
+    seed_x11_clipboard("sentinel");
+    assert!(button_key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"sentinel",
+        "password/sensitive field must not export its selection");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"x").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty());
+
+    assert!(button_key(&plugin,&tree,&mut ctx,"Tab").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"Public",
+        "read-only value can be explicitly copied");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"x").is_empty(),
+        "read-only copy must never cut");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
+        "read-only copy must never paste");
+
+    tree.children[3].set_prop("clipboard","broken");
+    seed_x11_clipboard("guard");
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"guard");
+    tree.children[3].set_prop("clipboard","true");
+    tree.children[3].props.push(("clipboard".into(),"true".into()));
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&plugin,&tree,&mut ctx),"guard");
+
+    drop(plugin);
+    eprintln!("LUMINA_NATIVE_CLIPBOARD_X11 external_selection=true unicode_copy=true cut_one_event=true undo_restores=true paste_one_event=true redo=true grapheme_cap=true bidi_control_rejected=true multiline_rejected=true host_rebase=true sensitive_private=true readonly_copy_only=true malformed_and_duplicate_fail_closed=true");
 }

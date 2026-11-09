@@ -438,6 +438,19 @@ fn sync_native_ibus_context(
     sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
 }
 
+/// Raylib 5.x safe get_clipboard_text wrapper assumes a non-null C pointer;
+/// GLFW returns NULL for an absent/nontext X11 clipboard. Check pointer before
+/// reading and bound untrusted bytes before any owned allocation.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn read_native_clipboard_text()->Option<String>{
+    let ptr=unsafe{raylib::ffi::GetClipboardText()};
+    if ptr.is_null(){return None;}
+    let bytes=unsafe{std::ffi::CStr::from_ptr(ptr)}.to_bytes();
+    if bytes.len()>input_policy::MAX_NATIVE_CLIPBOARD_BYTES{return None;}
+    let value=std::str::from_utf8(bytes).ok()?;
+    input_policy::safe_clipboard_text(value).then(||value.to_owned())
+}
+
 /// Picks from the already-qualified focus order: clipping, visibility,
 /// disabled controls, unique callback identity and value_revision validation
 /// are enforced BEFORE this opt-in focus decision.
@@ -1578,6 +1591,20 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
             let undo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Z);
             let redo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Y);
+            #[cfg(target_os="linux")]
+            let clipboard_shortcut=ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+            #[cfg(target_os="linux")]
+            let (clip_copy,clip_cut,clip_paste)=(
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_C),
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_X),
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_V),
+            );
             let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
@@ -1780,6 +1807,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     (mode,limit.ok().flatten())
                 })
                 .unwrap_or((input_policy::EditMode::Invalid,None));
+            #[cfg(target_os="linux")]
+            let clipboard_access=win.focused_input.as_ref()
+                .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                .and_then(|(node,_)|input_policy::clipboard_access(node).ok())
+                .unwrap_or(input_policy::ClipboardAccess::Disabled);
             if let Some(fi)=win.focused_input.as_mut(){
                 // Set AFTER host revisions, pointer, Tab and autofocus, but
                 // BEFORE any direct edit, Undo/Redo, IME Commit or native D/C.
@@ -2061,6 +2093,15 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                     }
                     let mut changed=false;
+                    // A clipboard access is possible only on an explicit Host
+                    // opt-in, real focused unique field, and a user Ctrl+C/X/V.
+                    // Never send private/unknown-type text to the OS clipboard.
+                    #[cfg(target_os="linux")]
+                    let copied=if (clip_copy || clip_cut) && clipboard_access.can_copy(){
+                        fi.session.selected_text()
+                            .filter(|value|input_policy::safe_clipboard_text(value))
+                            .is_some_and(|value|win.rl.set_clipboard_text(value).is_ok())
+                    }else{false};
                     if focused_edit_mode.editable(){
                         if undo {changed|=fi.session.apply(SessionAction::Undo);}
                         if redo {changed|=fi.session.apply(SessionAction::Redo);}
@@ -2068,6 +2109,28 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
                         if !ctrl && !typed.is_empty() {
                             changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                        }
+                        #[cfg(target_os="linux")]
+                        if clip_cut && copied && clipboard_access.can_write(){
+                            // One committed selection deletion, one Undo,
+                            // one on_change, only after OS copy succeeded.
+                            changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));
+                        }
+                        #[cfg(target_os="linux")]
+                        if clip_paste && clipboard_access.can_write(){
+                            if let Some(paste)=read_native_clipboard_text(){
+                                // Reject the whole paste if the resulting
+                                // single-line value would exceed the existing
+                                // bounded editor projection profile.
+                                let selected_bytes=fi.session.selected_text()
+                                    .map_or(0,str::len);
+                                let result_bytes=fi.session.buffer.len()
+                                    .saturating_sub(selected_bytes).saturating_add(paste.len());
+                                if result_bytes<=text_input::MAX_PROJECTED_TEXT_BYTES{
+                                    changed|=fi.session.apply(SessionAction::Edit(
+                                        EditCommand::Insert(paste)));
+                                }
+                            }
                         }
                     }
                     if changed {
