@@ -131,6 +131,29 @@ fn constant_branch_folding_reconciles_edges_even_when_all_blocks_remain_reachabl
 }
 
 #[test]
+fn emitter_rejects_forged_phi_before_optimizer_can_erase_its_extra_edge() {
+    // A constant true branch permits valid edge pruning. An unrelated,
+    // invented incoming predecessor has never been a CFG edge and must not
+    // be transformed into an apparently valid module during optimization.
+    let mut forged = real_source();
+    let f = forged.functions.get_mut("const_record_fallthrough").unwrap();
+    let phi = f.blocks.iter_mut().flat_map(|bb| &mut bb.insts)
+        .find(|i| matches!(&i.kind, InstKind::Phi { incomings } if incomings.len() >= 2))
+        .expect("real source has a two-predecessor join");
+    let InstKind::Phi { incomings } = &mut phi.kind else { unreachable!() };
+    let source_value = incomings[0].1;
+    incomings.push((aura_ir::BlockId(0xffff_ffff), source_value));
+    expect_refusal(&forged, "predecessor", "forged Phi edge must fail independent SSA validation");
+
+    let err = emit_module(&forged, None).err()
+        .expect("optimizer must not launder a forged predecessor before C emission");
+    assert!(err.message.contains("IR validation failed before C optimization"),
+        "unexpected backend trust boundary diagnostic: {err}");
+    assert!(err.message.contains("predecessor"),
+        "backend must preserve precise forged-Phi diagnosis: {err}");
+}
+
+#[test]
 fn malformed_phi_after_non_phi_must_fail_closed() {
     let mut ir=real_source();
     let f=ir.functions.get_mut("join").unwrap();

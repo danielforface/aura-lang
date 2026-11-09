@@ -82,6 +82,13 @@ pub fn emit_module_with_source_contract(
 /// source anchor and CANNOT authenticate jointly rewritten refinement metadata
 /// plus guards. Public C/WASM builds use emit_module_with_source_contract.
 pub fn emit_module(module: &ModuleIR, debug: Option<&DebugSource>) -> Result<CArtifacts, CBackendError> {
+    // Reject malformed SSA *before* optimization. A CFG simplifier may remove
+    // stale Phi inputs as an optimization of a VALID graph; it must never
+    // launder a forged incoming predecessor in an already-invalid module.
+    aura_ir::validate_module(module).map_err(|e| CBackendError {
+        message: format!("IR validation failed before C optimization: {e}"),
+    })?;
+
     let mut module = module.clone();
 
     // The current IR keeps string interpolation as a ConstString template, so
