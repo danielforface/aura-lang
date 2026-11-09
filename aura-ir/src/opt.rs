@@ -426,33 +426,60 @@ fn remove_unreachable_blocks(f: &mut FunctionIR) -> bool {
         }
     }
 
-    let before = f.blocks.len();
-    if reachable.len() == before {
-        return false;
-    }
-
-    let dead: BTreeSet<BlockId> = f.blocks.iter().map(|b| b.id).filter(|id| !reachable.contains(id)).collect();
-
-    // Drop dead blocks.
+    // Deleting an unreachable block is only one way to remove a CFG edge.
+    // Folding a constant CondBr/Switch can also remove *one successor edge*
+    // while keeping both the predecessor and destination blocks reachable.
+    // Phi incoming edges must match the actual post-fold CFG, not merely
+    // the set of blocks still present. Otherwise a valid source-level
+    // "if true: value = ..." can become invalid SSA after optimization.
+    let mut changed = reachable.len() != f.blocks.len();
     f.blocks.retain(|b| reachable.contains(&b.id));
 
-    // Clean up phi incomings from dead predecessors; if it collapses, leave it to DCE.
-    for b in &mut f.blocks {
-        for inst in &mut b.insts {
-            if let InstKind::Phi { incomings } = &mut inst.kind {
-                incomings.retain(|(pred, _)| !dead.contains(pred));
-                if incomings.len() == 1 {
-                    let v = incomings[0].1;
-                    inst.kind = InstKind::BindStrand {
-                        name: "$phi".to_string(),
-                        expr: RValue::Local(v),
-                    };
+    let mut predecessors: BTreeMap<BlockId, BTreeSet<BlockId>> = BTreeMap::new();
+    for bb in &f.blocks {
+        let mut add = |target: BlockId| {
+            predecessors.entry(target).or_default().insert(bb.id);
+        };
+        match &bb.term {
+            Terminator::Return(_) => {}
+            Terminator::Br(target) => add(*target),
+            Terminator::CondBr { then_bb, else_bb, .. } => {
+                add(*then_bb);
+                add(*else_bb);
+            }
+            Terminator::Switch {
+                default_bb, cases, ..
+            } => {
+                add(*default_bb);
+                for (_, target) in cases {
+                    add(*target);
                 }
             }
         }
     }
 
-    true
+    for bb in &mut f.blocks {
+        let live = predecessors.get(&bb.id);
+        for inst in &mut bb.insts {
+            if let InstKind::Phi { incomings } = &mut inst.kind {
+                let before = incomings.len();
+                incomings.retain(|(pred, _)| live.is_some_and(|ids| ids.contains(pred)));
+                changed |= incomings.len() != before;
+                if incomings.len() == 1 {
+                    let value = incomings[0].1;
+                    inst.kind = InstKind::BindStrand {
+                        name: "$phi".to_string(),
+                        expr: RValue::Local(value),
+                    };
+                    changed = true;
+                }
+                // Never invent a missing predecessor/value for malformed IR.
+                // The validator must still reject a zero-incoming Phi.
+            }
+        }
+    }
+
+    changed
 }
 
 #[cfg(test)]

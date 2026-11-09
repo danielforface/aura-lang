@@ -40,6 +40,21 @@ cell const_join(a: u32, b: u32) ->:
     else:
         chosen = b + 1
     yield chosen
+
+# Q03-005 regression: the entry block remains reachable after constant
+# branch folding, but its old fallthrough edge into the Phi join disappears.
+cell const_fallthrough(a: u32) ->:
+    val mut chosen: u32 = a
+    if true:
+        chosen = a + 3
+    yield chosen
+
+type Counter = record { count: u32, tag: u32 }
+cell const_record_fallthrough(a: u32) ->:
+    val mut counter: Counter = Counter { count: a, tag: 7 }
+    if true:
+        counter.count = 19
+    yield counter.count
 "#;
 
 fn real_source() -> aura_ir::ModuleIR {
@@ -71,6 +86,12 @@ fn source_positive_optimizer_preserves_ssa_and_oracle_outcomes() {
             (vec![OracleValue::Bool(false),OracleValue::U32(4),OracleValue::U32(7)],OracleValue::U32(7))]),
         ("const_join",vec![
             (vec![OracleValue::U32(7),OracleValue::U32(13)],OracleValue::U32(8))]),
+        ("const_fallthrough",vec![
+            (vec![OracleValue::U32(7)],OracleValue::U32(10)),
+            (vec![OracleValue::U32(u32::MAX as u64)],OracleValue::U32(2))]),
+        ("const_record_fallthrough",vec![
+            (vec![OracleValue::U32(7)],OracleValue::U32(19)),
+            (vec![OracleValue::U32(u32::MAX as u64)],OracleValue::U32(19))]),
     ]);
     let mut optimized = original.clone();
     optimize_module(&mut optimized);
@@ -84,6 +105,28 @@ fn source_positive_optimizer_preserves_ssa_and_oracle_outcomes() {
                 assert_eq!(got.return_value,Some(expect.clone()),"{name} {label}: {args:?}");
             }
         }
+    }
+}
+
+#[test]
+fn constant_branch_folding_reconciles_edges_even_when_all_blocks_remain_reachable() {
+    let mut module = real_source();
+    for name in ["const_fallthrough", "const_record_fallthrough"] {
+        let function = module.functions.get(name).expect("source cell exists");
+        let phi_count = function.blocks.iter().flat_map(|b| &b.insts)
+            .filter(|i| matches!(&i.kind, InstKind::Phi { incomings } if incomings.len() >= 2))
+            .count();
+        assert!(phi_count > 0, "{name}: real source must lower a fallthrough Phi");
+    }
+    optimize_module(&mut module);
+    validate_module(&module)
+        .expect("optimized source must not retain Phi incoming for a folded-away CFG edge");
+    for name in ["const_fallthrough", "const_record_fallthrough"] {
+        let optimized = module.functions.get(name).unwrap();
+        assert!(optimized.blocks.iter().flat_map(|bb| &bb.insts)
+            .all(|inst| !matches!(&inst.kind, InstKind::Phi { incomings }
+                if incomings.len() == 1)),
+            "{name}: single predecessor Phi must be reduced to its live value");
     }
 }
 
@@ -174,11 +217,17 @@ fn optimized_real_source_compiles_and_runs_strict_native_clang_o0_o2() {
         "uint32_t loop_sum(uint32_t,uint32_t);\n",
         "uint32_t dense(bool,uint32_t,uint32_t);\n",
         "uint32_t const_join(uint32_t,uint32_t);\n",
+        "uint32_t const_fallthrough(uint32_t);\n",
+        "uint32_t const_record_fallthrough(uint32_t);\n",
         "int main(void){return (",
         "join(true,7,13)==8 && join(false,7,13)==15",
         " && loop_sum(0,4)==4 && loop_sum(4,4)==4",
         " && dense(true,0,7)==8 && dense(false,4,7)==7",
-        " && const_join(7,13)==8)?0:1;}\n"
+        " && const_join(7,13)==8",
+        " && const_fallthrough(7)==10",
+        " && const_fallthrough(4294967295u)==2",
+        " && const_record_fallthrough(7)==19",
+        " && const_record_fallthrough(4294967295u)==19)?0:1;}\n"
     )).unwrap();
     for opt in ["-O0","-O2"] {
         let exe=root.join(format!("ev194_{}", &opt[1..]));
