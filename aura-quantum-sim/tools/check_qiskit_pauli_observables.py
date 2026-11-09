@@ -278,3 +278,15 @@ if __name__=="__main__":
         noisy_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c022-noisy-cptp-kraus-qiskit.json"),
     )
+    # C-023: full noisy ensemble scientific acceptance for real release binary
+    # with physically independent Qiskit Kraus + explicit Z instruments.
+    from check_qiskit_noisy_ensemble import main as noisy_ensemble_oracle
+    noisy_ensemble_binary=crate / "target/release/aura-quantum-noisy-ensemble-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-noisy-ensemble-run",
+    ],check=True,timeout=180)
+    noisy_ensemble_oracle(
+        noisy_ensemble_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c023-noisy-ensemble-qiskit.json"),
+    )
