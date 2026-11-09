@@ -36,6 +36,11 @@ jobs:
         run: |
           cargo build -p aura --no-default-features --locked
           if($LASTEXITCODE -ne 0){throw "AURA Core AVM build failure"}
+      - name: Validate Aura AST with line-anchored diagnostics
+        run: |
+          & "target/debug/aura.exe" check "apps/xray-pure/main.aura"
+          if($LASTEXITCODE -ne 0){ throw "Pure Aura source failed parser/type preflight" }
+          Write-Host "XR09_AURA_SOURCE_CHECK_PASS"
       - name: Run pure Aura source with real nested user-cell calls, no UI dependency
         run: |
           $env:AURA_AVM_NO_Z3='1'
