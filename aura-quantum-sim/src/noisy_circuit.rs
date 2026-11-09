@@ -199,7 +199,7 @@ impl NoisyCircuit {
     /// unreachable classical branches. Cap logical live density matrix +
     /// complete batch classical trace output, using checked integer math.
     /// Caller-owned instruction bytes and process RSS are not included.
-    fn preflight(
+    pub(crate) fn preflight(
         &self, shots: usize, max_bytes: usize,
     ) -> Result<usize, NoisyCircuitError> {
         if shots == 0 { return Err(NoisyCircuitError::ZeroShots); }

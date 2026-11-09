@@ -26,6 +26,8 @@ pub mod channel_moments_json;
 pub mod channel_tomography;
 pub mod channel_tomography_json;
 pub mod conditioned_tomography_json;
+pub mod noisy_ensemble;
+pub mod noisy_ensemble_json;
 
 use std::mem::size_of;
 

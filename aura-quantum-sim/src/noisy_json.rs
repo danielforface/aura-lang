@@ -77,7 +77,7 @@ struct Request {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-enum Operation {
+pub(crate) enum Operation {
     Gate { gate: GateSpec },
     Noise { channel: ChannelSpec },
     Measure { qubit: usize, into_bit: usize },
@@ -88,14 +88,14 @@ enum Operation {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Conditioned {
+pub(crate) enum Conditioned {
     Gate { gate: GateSpec },
     Noise { channel: ChannelSpec },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum GateSpec {
+pub(crate) enum GateSpec {
     H { target: usize },
     X { target: usize },
     Y { target: usize },
@@ -109,7 +109,7 @@ enum GateSpec {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ChannelSpec {
+pub(crate) enum ChannelSpec {
     PhaseFlip { qubit: usize, probability: f64 },
     AmplitudeDamping { qubit: usize, gamma: f64 },
     PhaseDamping { qubit: usize, gamma: f64 },
@@ -355,7 +355,7 @@ pub fn execute_noisy_json_bytes(raw: &[u8]) -> Result<String, NoisyProtocolError
 // Avoid exposing potentially unstable parser internals as Rust public API.
 // The request schema is explicitly experimental and distinct from v1.
 impl GateSpec {
-    fn clone_gate(&self) -> Gate {
+    pub(crate) fn clone_gate(&self) -> Gate {
         match self {
             Self::H{target} => Gate::H(*target),
             Self::X{target} => Gate::X(*target),
@@ -372,7 +372,7 @@ impl GateSpec {
     }
 }
 impl ChannelSpec {
-    fn clone_channel(&self) -> NoiseChannel {
+    pub(crate) fn clone_channel(&self) -> NoiseChannel {
         match self {
             Self::PhaseFlip{qubit,probability} => NoiseChannel::PhaseFlip {
                 qubit:*qubit,probability:*probability,
