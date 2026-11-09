@@ -1,0 +1,17 @@
+import aura::lumina
+
+cell xr09_double(value: u32):
+    yield value * 2
+
+cell main():
+    val score: u32 = xr09_double(3)
+    io.println("XR09_B_LUMINA_SYNTAX_SMOKE")
+    layout:
+        VStack(padding: 18, spacing: 12) {
+            render: Text(text: "Aura Lumina", style: Style { fg: "#E6EDF3", size: 26 })
+            render: Text(text: "Pure Aura", style: Style { fg: "#65EAD5", size: 18 })
+            render: Button(label: "PASS", style: Style { bg: "#238636", fg: "#E6EDF3", radius: 12, width: 160, height: 40 }) {
+                on_click: ~> { ui.set_text(key: "status", value: "clicked") }
+            }
+            render: Text(text: ui.get_text(key: "status"), style: Style { fg: "#65EAD5", size: 16 })
+        }
