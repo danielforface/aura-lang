@@ -42,7 +42,7 @@ fn real_cli_conditional_noisy_feedback_reset_joint_event(){
         .as_array().unwrap().len(),16);
     assert!((v["condition_probability"].as_f64().unwrap()-0.25).abs()<1e-9);
     assert!((v["trace"].as_f64().unwrap()-1.0).abs()<1e-9);
-    assert!((v["purity"].as_f64().unwrap()-0.5).abs()<0.5);
+    assert!((v["purity"].as_f64().unwrap()-0.5).abs()<1e-9);
     expect_no_other_histories(&v);
 }
 #[test]

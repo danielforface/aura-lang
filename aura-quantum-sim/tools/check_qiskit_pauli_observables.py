@@ -290,3 +290,15 @@ if __name__=="__main__":
         noisy_ensemble_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c023-noisy-ensemble-qiskit.json"),
     )
+    # C-024 real final-register selected noisy density: independent Qiskit
+    # Kraus instrument and multi-bit postselection (no shots, no QPU).
+    from check_qiskit_noisy_conditioned import main as conditioned_noisy_oracle
+    noisy_conditioned_binary=crate / "target/release/aura-quantum-noisy-conditioned-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-noisy-conditioned-run",
+    ],check=True,timeout=180)
+    conditioned_noisy_oracle(
+        noisy_conditioned_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c024-noisy-conditioned-qiskit.json"),
+    )
