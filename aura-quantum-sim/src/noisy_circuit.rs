@@ -182,14 +182,9 @@ impl NoisyCircuit {
     }
 
     fn check_noise(&self, channel: &NoiseChannel) -> Result<(), NoisyCircuitError> {
-        let (qubit, p) = match channel {
-            NoiseChannel::PhaseFlip { qubit, probability } => (*qubit, *probability),
-            NoiseChannel::AmplitudeDamping { qubit, gamma } => (*qubit, *gamma),
-        };
-        self.check_qubit(qubit)?;
-        if !p.is_finite() || !(0.0..=1.0).contains(&p) {
-            return Err(DensityError::InvalidProbability.into());
-        }
+        // The exact same CPTP parameter contract is applied before any shot
+        // and on direct DensityMatrix operation, including untaken If actions.
+        channel.validated_qubit(self.qubits)?;
         Ok(())
     }
 

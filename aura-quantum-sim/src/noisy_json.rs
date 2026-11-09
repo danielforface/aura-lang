@@ -112,6 +112,9 @@ enum GateSpec {
 enum ChannelSpec {
     PhaseFlip { qubit: usize, probability: f64 },
     AmplitudeDamping { qubit: usize, gamma: f64 },
+    PhaseDamping { qubit: usize, gamma: f64 },
+    Depolarizing { qubit: usize, probability: f64 },
+    PauliMixture { qubit: usize, p_x: f64, p_y: f64, p_z: f64 },
 }
 
 #[derive(Debug, Serialize)]
@@ -376,6 +379,14 @@ impl ChannelSpec {
             },
             Self::AmplitudeDamping{qubit,gamma} =>
                 NoiseChannel::AmplitudeDamping{qubit:*qubit,gamma:*gamma},
+            Self::PhaseDamping{qubit,gamma} =>
+                NoiseChannel::PhaseDamping{qubit:*qubit,gamma:*gamma},
+            Self::Depolarizing{qubit,probability} =>
+                NoiseChannel::Depolarizing{qubit:*qubit,probability:*probability},
+            Self::PauliMixture{qubit,p_x,p_y,p_z} =>
+                NoiseChannel::PauliMixture{
+                    qubit:*qubit,p_x:*p_x,p_y:*p_y,p_z:*p_z,
+                },
         }
     }
 }

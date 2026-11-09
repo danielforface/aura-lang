@@ -48,13 +48,46 @@ impl From<SimError> for DensityError {
 /// calibration. Both maps use the Kraus convention E(rho)=sum K rho K^dagger.
 ///
 /// PhaseFlip(p) = (1-p) rho + p Z rho Z.
-/// AmplitudeDamping(gamma) uses
-/// K0 = |0><0| + sqrt(1-gamma)|1><1|,
-/// K1 = sqrt(gamma)|0><1|.
+/// AmplitudeDamping(gamma) uses K0=|0><0|+sqrt(1-gamma)|1><1|,
+/// K1=sqrt(gamma)|0><1|.
+/// PhaseDamping(gamma) keeps populations and scales coherence by sqrt(1-gamma)
+/// with Kraus K0=diag(1,sqrt(1-gamma)), K1=sqrt(gamma)|1><1|.
+/// Depolarizing(p) uses probability p of ANY nonidentity Pauli error:
+/// (1-p)rho+p/3(XrhoX+YrhoY+ZrhoZ). p=.75 is fully mixed on one wire.
+/// PauliMixture provides individually weighted X/Y/Z, with I=1-(px+py+pz).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NoiseChannel {
     PhaseFlip { qubit: usize, probability: f64 },
     AmplitudeDamping { qubit: usize, gamma: f64 },
+    PhaseDamping { qubit: usize, gamma: f64 },
+    Depolarizing { qubit: usize, probability: f64 },
+    PauliMixture { qubit: usize, p_x: f64, p_y: f64, p_z: f64 },
+}
+impl NoiseChannel {
+    /// One C-owned validation authority for both preflight and execution.
+    /// All supported maps are CPTP for these exact-arithmetic parameter bounds.
+    pub(crate) fn validated_qubit(self, qubits: usize) -> Result<usize, DensityError> {
+        let (wire, values): (usize, &[f64]) = match &self {
+            Self::PhaseFlip { qubit, probability }
+            | Self::Depolarizing { qubit, probability } => (*qubit, std::slice::from_ref(probability)),
+            Self::AmplitudeDamping { qubit, gamma }
+            | Self::PhaseDamping { qubit, gamma } => (*qubit, std::slice::from_ref(gamma)),
+            Self::PauliMixture { qubit, p_x, p_y, p_z } => {
+                if !p_x.is_finite() || !p_y.is_finite() || !p_z.is_finite()
+                    || *p_x < 0.0 || *p_y < 0.0 || *p_z < 0.0
+                    || *p_x > 1.0 || *p_y > 1.0 || *p_z > 1.0
+                    || *p_x + *p_y + *p_z > 1.0 {
+                    return Err(DensityError::InvalidProbability);
+                }
+                (*qubit, &[])
+            }
+        };
+        if wire >= qubits { return Err(DensityError::InvalidQubit{index:wire,qubits}); }
+        if values.iter().any(|p|!p.is_finite() || !(0.0..=1.0).contains(p)){
+            return Err(DensityError::InvalidProbability);
+        }
+        Ok(wire)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -437,16 +470,10 @@ impl DensityMatrix {
     /// validation happens before mutation; invalid requests are fail-closed.
     pub fn apply_noise(&mut self, channel: NoiseChannel) -> Result<(), DensityError> {
         self.validate()?;
-        let (qubit, strength) = match channel {
-            NoiseChannel::PhaseFlip { qubit, probability } => (qubit, probability),
-            NoiseChannel::AmplitudeDamping { qubit, gamma } => (qubit, gamma),
-        };
-        let mask = self.mask(qubit)?;
-        if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
-            return Err(DensityError::InvalidProbability);
-        }
+        let wire=channel.validated_qubit(self.qubits)?;
+        let mask = self.mask(wire)?;
         match channel {
-            NoiseChannel::PhaseFlip { .. } => {
+            NoiseChannel::PhaseFlip { probability: strength, .. } => {
                 // Kraus {sqrt(1-p)I, sqrt(p)Z}. Opposite target-bit
                 // coherences acquire factor (1-2p); diagonals are unchanged.
                 let multiplier = 1.0 - 2.0 * strength;
@@ -459,7 +486,7 @@ impl DensityMatrix {
                     }
                 }
             }
-            NoiseChannel::AmplitudeDamping { .. } => {
+            NoiseChannel::AmplitudeDamping { gamma: strength, .. } => {
                 // Kraus:
                 // K0=diag(1,sqrt(1-gamma)); K1=sqrt(gamma)|0><1|.
                 // Four entries in each (environment_row,environment_col)
@@ -488,6 +515,61 @@ impl DensityMatrix {
                         self.elements[i01] = scale(b, coherence);
                         self.elements[i10] = scale(c, coherence);
                         self.elements[i11] = scale(d, retention);
+                    }
+                }
+            }
+            NoiseChannel::PhaseDamping { gamma, .. } => {
+                // Kraus K0=diag(1,sqrt(1-gamma)); K1=sqrt(gamma)|1><1|.
+                // Unlike PhaseFlip, gamma=1 dephases and gamma=0 is identity.
+                let factor=(1.0-gamma).sqrt();
+                for row in 0..self.dimension {
+                    for col in 0..self.dimension {
+                        if (row&mask!=0)!=(col&mask!=0) {
+                            let i=row*self.dimension+col;
+                            self.elements[i]=scale(self.elements[i],factor);
+                        }
+                    }
+                }
+            }
+            NoiseChannel::Depolarizing{probability,..}
+            | NoiseChannel::PauliMixture{p_x:probability,..} => {
+                let (px,py,pz)=match channel{
+                    NoiseChannel::Depolarizing{probability:p,..}=>{
+                        let fraction=p/3.0;
+                        if p>0.0&&fraction==0.0 {
+                            return Err(DensityError::InvalidProbability);
+                        }
+                        (fraction,fraction,fraction)
+                    }
+                    NoiseChannel::PauliMixture{p_x,p_y,p_z,..}=>(p_x,p_y,p_z),
+                    _=>unreachable!("Pauli channel variant"),
+                };
+                let identity=1.0-(px+py+pz);
+                // Block-wise exact Kraus sum: I,X,Y,Z conjugation.
+                // Y flips each target bit and reverses sign of offdiagonals.
+                // In-place 4-component blocks preserve all other-wire coherence.
+                let same=identity+pz;
+                let opposite=identity-pz;
+                let swapped_diagonal=px+py;
+                let swapped_coherence=px-py;
+                for r0 in 0..self.dimension {
+                    if r0&mask!=0{continue;}
+                    let r1=r0|mask;
+                    for c0 in 0..self.dimension {
+                        if c0&mask!=0{continue;}
+                        let c1=c0|mask;
+                        let i00=r0*self.dimension+c0;
+                        let i01=r0*self.dimension+c1;
+                        let i10=r1*self.dimension+c0;
+                        let i11=r1*self.dimension+c1;
+                        let a=self.elements[i00];
+                        let b=self.elements[i01];
+                        let c=self.elements[i10];
+                        let d=self.elements[i11];
+                        self.elements[i00]=scale(a,same)+scale(d,swapped_diagonal);
+                        self.elements[i11]=scale(d,same)+scale(a,swapped_diagonal);
+                        self.elements[i01]=scale(b,opposite)+scale(c,swapped_coherence);
+                        self.elements[i10]=scale(c,opposite)+scale(b,swapped_coherence);
                     }
                 }
             }
