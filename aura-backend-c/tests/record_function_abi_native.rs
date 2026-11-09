@@ -10,6 +10,11 @@ mod checked_i64_record_division;
 #[path = "record_u64_division_native.rs"]
 mod checked_u64_record_division;
 
+// Downstream XR-06 Windows originally emitted undeclared nested Phi variables.
+// Certify the actual six-cell Aura source on Q03's required Native gate.
+#[path = "record_xray06_temporal_nested_phi_native.rs"]
+mod xr06_nested_mutable_phi;
+
 // Required Q03 Native gate: loop-carried scalar/Record Phi copies are atomic.
 #[path = "record_phi_parallel_copy_native.rs"]
 mod checked_parallel_phi_edges;
