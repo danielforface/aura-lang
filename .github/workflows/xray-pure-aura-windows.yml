@@ -34,7 +34,8 @@ jobs:
             'apps/xray-pure/fixtures/01_cell_yield.aura',
             'apps/xray-pure/fixtures/08_nested_if.aura',
             'apps/xray-pure/policy.aura',
-            'apps/xray-pure/fixtures/09_declared_ui.aura'
+            'apps/xray-pure/fixtures/09_declared_ui.aura',
+            'apps/xray-pure/main.aura'
           )
           $uiSyntax=@(
             'apps/xray-pure/fixtures/03_layout_native.aura',
@@ -42,8 +43,7 @@ jobs:
             'apps/xray-pure/fixtures/05_style_native.aura',
             'apps/xray-pure/fixtures/06_button_native.aura',
             'apps/xray-pure/fixtures/07_intercell_ui_native.aura',
-            'apps/xray-pure/fixtures/ui_smoke.aura',
-            'apps/xray-pure/main.aura'
+            'apps/xray-pure/fixtures/ui_smoke.aura'
           )
           $legacySdk=@(
             'apps/xray-pure/fixtures/02_import.aura',
@@ -81,16 +81,26 @@ jobs:
           }
           if($bad.Count){throw ("Aura parser/model regressions: "+($bad -join ', '))}
           Write-Host 'XR09_AURA_PARSER_BOUNDARY_PASS source Aura model and widget AST checked'
-      - name: Run pure Aura policy code with real verifier
-        run: |
-          Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
-          & 'target/debug/aura.exe' run 'apps/xray-pure/policy.aura' --mode avm
-          if($LASTEXITCODE -ne 0){ throw 'Full Aura policy code rejected by verifier or AVM' }
-          Write-Host 'XR09_PURE_AURA_POLICY_NATIVE_AVM_PASS'
+          # GitHub PowerShell propagates LASTEXITCODE from the final intentionally
+          # rejected SDK import; reset with a real proven parser+sema pass.
+          & 'target/debug/aura.exe' check 'apps/xray-pure/policy.aura'
+          if($LASTEXITCODE -ne 0){throw "Policy check unexpectedly regressed"}
+          Write-Host 'XR09_DIAGNOSTIC_MATRIX_STEP_PASS'
       - name: Compile actual Lumina-powered Aura runtime
         run: |
           cargo build -p aura --locked
           if ($LASTEXITCODE -ne 0) { throw 'Lumina-enabled Aura runtime failed Windows build' }
+      - name: Run actual Aura policy with full runtime verifier
+        run: |
+          Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
+          $output=(& 'target/debug/aura.exe' run 'apps/xray-pure/policy.aura' --mode avm 2>&1 | Out-String)
+          $code=$LASTEXITCODE
+          Write-Host $output
+          if(!$output.Contains('XR09_PURE_AURA_POLICY_PASS sensitive=3 standard=3 strict=2')){
+            throw 'Policy mathematical oracle did not actually execute in Aura'
+          }
+          if($code -ne 0){throw 'Aura proof gate or runtime rejected completed mathematical oracle'}
+          Write-Host 'XR09_PURE_AURA_POLICY_NATIVE_AVM_PASS'
       - name: Run actual Aura-Lumina UI with bounded frames and explicit proof status
         run: |
           $env:AURA_AVM_NO_Z3='1'
