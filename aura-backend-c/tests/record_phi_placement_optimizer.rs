@@ -88,10 +88,10 @@ fn source_positive_optimizer_preserves_ssa_and_oracle_outcomes() {
             (vec![OracleValue::U32(7),OracleValue::U32(13)],OracleValue::U32(8))]),
         ("const_fallthrough",vec![
             (vec![OracleValue::U32(7)],OracleValue::U32(10)),
-            (vec![OracleValue::U32(u32::MAX as u64)],OracleValue::U32(2))]),
+            (vec![OracleValue::U32(u32::MAX)],OracleValue::U32(2))]),
         ("const_record_fallthrough",vec![
             (vec![OracleValue::U32(7)],OracleValue::U32(19)),
-            (vec![OracleValue::U32(u32::MAX as u64)],OracleValue::U32(19))]),
+            (vec![OracleValue::U32(u32::MAX)],OracleValue::U32(19))]),
     ]);
     let mut optimized = original.clone();
     optimize_module(&mut optimized);
