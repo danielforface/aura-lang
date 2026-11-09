@@ -531,8 +531,8 @@ impl DensityMatrix {
                     }
                 }
             }
-            NoiseChannel::Depolarizing{probability,..}
-            | NoiseChannel::PauliMixture{p_x:probability,..} => {
+            NoiseChannel::Depolarizing{..}
+            | NoiseChannel::PauliMixture{..} => {
                 let (px,py,pz)=match channel{
                     NoiseChannel::Depolarizing{probability:p,..}=>{
                         let fraction=p/3.0;
