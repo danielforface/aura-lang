@@ -133,7 +133,7 @@ mod tests{
         for ok in ["שלום 👩‍💻", "🇮🇱e\u{301}","0"] {
             assert!(safe_clipboard_text(ok));
         }
-        for bad in ["","hello\\nworld","x\\0y","x\u{202e}","x\u{2066}"]{
+        for bad in ["","hello\nworld","x\0y","x\u{202e}","x\u{2066}"]{
             assert!(!safe_clipboard_text(bad));
         }
         assert!(safe_clipboard_text(&"a".repeat(MAX_NATIVE_CLIPBOARD_BYTES)));

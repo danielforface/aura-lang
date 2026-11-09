@@ -1492,7 +1492,7 @@ fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
     seed_x11_clipboard("x\u{202e}bad");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
         "Unicode bidi control injection must be denied");
-    seed_x11_clipboard("x\\ny");
+    seed_x11_clipboard("x\ny");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
         "multiline clipboard must not enter one-line field");
     tree.children[1].set_prop("value","Host");
