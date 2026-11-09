@@ -1498,6 +1498,9 @@ fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
     tree.children[1].set_prop("value","Host");
     tree.children[1].set_prop("value_revision","2");
     frames(&plugin,&tree,&mut ctx,3);
+    // A higher authoritative Host revision intentionally resets the old
+    // selection. Select the new Host value before asserting replacement.
+    assert!(clipboard_key(&plugin,&tree,&mut ctx,"a").is_empty());
     seed_x11_clipboard("q");
     assert!(has(&clipboard_key(&plugin,&tree,&mut ctx,"v"),502,"q"),
         "new Host revision and selection replacement must remain authoritative");
