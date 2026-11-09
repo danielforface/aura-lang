@@ -90,7 +90,7 @@ pub(crate) const MAX_NATIVE_CLIPBOARD_BYTES:usize=4096;
 pub(crate) fn safe_clipboard_text(value:&str)->bool{
     !value.is_empty() && value.len()<=MAX_NATIVE_CLIPBOARD_BYTES
         && !value.chars().any(|ch|ch.is_control() ||
-            matches!(ch,'\\u{202A}'..='\\u{202E}'|'\\u{2066}'..='\\u{2069}'))
+            matches!(ch,'\u{202A}'..='\u{202E}'|'\u{2066}'..='\u{2069}'))
 }
 
 #[cfg(test)]
@@ -130,10 +130,10 @@ mod tests{
     }
     #[test]
     fn clipboard_bytes_are_bounded_and_bidi_controls_and_multiline_rejected(){
-        for ok in ["שלום 👩‍💻", "🇮🇱e\\u{301}","0"] {
+        for ok in ["שלום 👩‍💻", "🇮🇱e\u{301}","0"] {
             assert!(safe_clipboard_text(ok));
         }
-        for bad in ["","hello\\nworld","x\\0y","x\\u{202e}","x\\u{2066}"]{
+        for bad in ["","hello\\nworld","x\\0y","x\u{202e}","x\u{2066}"]{
             assert!(!safe_clipboard_text(bad));
         }
         assert!(safe_clipboard_text(&"a".repeat(MAX_NATIVE_CLIPBOARD_BYTES)));

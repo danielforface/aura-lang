@@ -1489,7 +1489,7 @@ fn native_x11_explicit_clipboard_copy_cut_paste_unicode_security_and_undo(){
     seed_x11_clipboard("🇮🇱👩‍💻");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
         "over-cap paste must reject entire transaction");
-    seed_x11_clipboard("x\\u{202e}bad");
+    seed_x11_clipboard("x\u{202e}bad");
     assert!(clipboard_key(&plugin,&tree,&mut ctx,"v").is_empty(),
         "Unicode bidi control injection must be denied");
     seed_x11_clipboard("x\\ny");

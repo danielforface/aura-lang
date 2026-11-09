@@ -456,10 +456,10 @@ mod tests {
 
     #[test]
     fn selected_text_exports_whole_clusters_and_cannot_export_live_preedit(){
-        let mut s=EditSession::new("א👩‍💻🇮🇱e\\u{301}Z".into());
+        let mut s=EditSession::new("א👩‍💻🇮🇱e\u{301}Z".into());
         assert_eq!(s.selected_text(),None);
         assert!(!s.apply(SessionAction::SelectAll));
-        assert_eq!(s.selected_text(),Some("א👩‍💻🇮🇱e\\u{301}Z"));
+        assert_eq!(s.selected_text(),Some("א👩‍💻🇮🇱e\u{301}Z"));
         let old=s.buffer.clone();
         assert!(s.apply(SessionAction::Edit(EditCommand::Delete)));
         assert_eq!(s.buffer,"");
