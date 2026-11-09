@@ -1,0 +1,9 @@
+# Built-in UI; avoid invalid legacy SDK shim import
+
+cell main():
+    layout:
+        VStack(spacing: 12) {
+            render: Button(label: "PASS", style: Style { bg: "#238636", fg: "#E6EDF3", radius: 12, width: 160, height: 40 }) {
+                on_click: ~> { ui.set_text(key: "status", value: "clicked") }
+            }
+        }

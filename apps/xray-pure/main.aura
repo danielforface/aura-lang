@@ -3,7 +3,7 @@
 # This is an intentionally SYNTHETIC capture fixture, not private user data.
 # Runtime limitation: no qualified JSONL streaming/indexing or OS process sampler
 # is exposed to application Aura code yet. Do NOT call it full XR-08 parity.
-import aura::lumina
+# UI AST is built-in to the AVM; importing aura::lumina injects an incompatible sdk/std/lumina.aura shim
 
 cell xr09_cpu_threshold(policy: u32):
     yield 500 + 200 * policy + 50 * (policy / 2)
@@ -21,7 +21,7 @@ cell xr09_io_min(policy: u32):
     yield 1 + (policy / 2)
 
 cell xr09_cpu_sample(sample: u32):
-    val value: u32 = 0
+    val mut value: u32 = 0
     if sample == 5:
         value = 1030
     if sample == 6:
@@ -37,13 +37,13 @@ cell xr09_cpu_sample(sample: u32):
     yield value
 
 cell xr09_io_sample(sample: u32):
-    val value: u32 = 0
+    val mut value: u32 = 0
     if sample == 7:
         value = 17243
     yield value
 
 cell xr09_memory_sample(sample: u32):
-    val value: u32 = 0
+    val mut value: u32 = 0
     if sample == 2:
         value = 91932
     yield value
@@ -53,7 +53,7 @@ cell xr09_memory_retracted():
 
 cell xr09_cpu_streak(policy: u32):
     val threshold: u32 = xr09_cpu_threshold(policy)
-    val streak: u32 = 0
+    val mut streak: u32 = 0
     if xr09_cpu_sample(5) >= threshold:
         streak = streak + 1
     if xr09_cpu_sample(6) >= threshold:
@@ -69,20 +69,20 @@ cell xr09_cpu_streak(policy: u32):
     yield streak
 
 cell xr09_memory_case(policy: u32):
-    val decision: u32 = 0
+    val mut decision: u32 = 0
     if xr09_memory_sample(2) >= xr09_memory_threshold(policy):
         if xr09_memory_retracted() >= xr09_memory_sample(2) / 2:
             decision = 1
     yield decision
 
 cell xr09_cpu_case(policy: u32):
-    val decision: u32 = 0
+    val mut decision: u32 = 0
     if xr09_cpu_streak(policy) >= xr09_cpu_min(policy):
         decision = 1
     yield decision
 
 cell xr09_io_case(policy: u32):
-    val decision: u32 = 0
+    val mut decision: u32 = 0
     if xr09_io_sample(7) >= xr09_io_threshold(policy):
         if xr09_io_min(policy) == 1:
             decision = 1
@@ -92,7 +92,7 @@ cell xr09_case_count(policy: u32):
     yield xr09_memory_case(policy) + xr09_cpu_case(policy) + xr09_io_case(policy)
 
 cell xr09_policy_code(value: String):
-    val code: u32 = 1
+    val mut code: u32 = 1
     if value == "sensitive":
         code = 0
     if value == "strict":
@@ -100,7 +100,7 @@ cell xr09_policy_code(value: String):
     yield code
 
 cell xr09_case_code(value: String):
-    val code: u32 = 1
+    val mut code: u32 = 1
     if value == "cpu":
         code = 2
     if value == "io":
@@ -108,7 +108,7 @@ cell xr09_case_code(value: String):
     yield code
 
 cell xr09_case_peak(which: u32):
-    val result: u32 = 91932
+    val mut result: u32 = 91932
     if which == 2:
         result = 1190
     if which == 3:
@@ -116,7 +116,7 @@ cell xr09_case_peak(which: u32):
     yield result
 
 cell xr09_case_title(which: u32):
-    val result: String = "MEMORY PULSE / OBSERVED RETRACTION"
+    val mut result: String = "MEMORY PULSE / OBSERVED RETRACTION"
     if which == 2:
         result = "CPU STREAK / 6 CONTIGUOUS SAMPLES"
     if which == 3:
@@ -124,7 +124,7 @@ cell xr09_case_title(which: u32):
     yield result
 
 cell xr09_case_source(which: u32):
-    val result: String = "S2: +91932 KiB | S3: -106348 KiB"
+    val mut result: String = "S2: +91932 KiB | S3: -106348 KiB"
     if which == 2:
         result = "S5..S10: 1030 1062 1078 1078 1190 984 millicores"
     if which == 3:
@@ -138,13 +138,13 @@ cell xr09_bar_height(sample: u32):
     yield 5 + xr09_sample_score(sample) * 2
 
 cell xr09_support(which: u32):
-    val result: u32 = 3
+    val mut result: u32 = 3
     if which == 3:
         result = 2
     yield result
 
 cell xr09_proof():
-    val result: u32 = 0
+    val mut result: u32 = 0
     if xr09_case_count(0) == 3:
         if xr09_case_count(1) == 3:
             if xr09_case_count(2) == 2:

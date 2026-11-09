@@ -1,4 +1,4 @@
-import aura::lumina
+# Built-in UI; avoid invalid legacy SDK shim import
 
 cell xr09_double(value: u32):
     yield value * 2
