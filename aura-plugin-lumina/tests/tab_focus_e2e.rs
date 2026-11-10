@@ -1727,3 +1727,95 @@ fn native_x11_pointer_capture_selects_unicode_and_revokes_stale_host(){
     drop(p);
     eprintln!("LUMINA_POINTER_SELECT_X11 caret_click=true whole_cluster_drag=true outside_bounds_capture=true xclip_copy=true cut_once_undo=true host_rebase_revokes=true readonly_copy_only=true malformed_duplicate_blocked=true sensitive_private=true");
 }
+
+#[test]
+fn native_x11_password_and_sensitive_fields_hide_glyphs_atlas_and_shaped_cache(){
+    const FONT:&str="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    assert!(std::path::Path::new(FONT).is_file());
+    let p=AuraLuminaPlugin::new();
+    let mut cx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","300"),("height","44"),
+            ("radius","0"),("size","18"),("font_path",FONT),
+            ("bg","#0D1117"),("fg","#E6EDF3"),
+            ("shaping","opentype"),("direction","auto"),
+            ("type","password"),("value","סודי👩‍💻"),
+            ("value_revision","1"),("on_change","cb:931"),
+            ("clipboard","true"),("pointer_selection","true")],vec![]),
+        node("TextInput",&[("x","20"),("y","100"),("width","300"),("height","44"),
+            ("radius","0"),("size","18"),("font_path",FONT),
+            ("bg","#0D1117"),("fg","#E6EDF3"),
+            ("value","*****"),("value_revision","1"),("on_change","cb:932")],vec![]),
+        node("TextInput",&[("x","20"),("y","180"),("width","300"),("height","44"),
+            ("radius","0"),("size","18"),("font_path",FONT),
+            ("bg","#0D1117"),("fg","#E6EDF3"),
+            ("sensitive","true"),("value","界שלום"),
+            ("value_revision","1"),("on_change","cb:933")],vec![]),
+    ]);
+    frames(&p,&root,&mut cx,4);
+    assert!(p.diagnostic_resize_window(640,380));
+    frames(&p,&root,&mut cx,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=windows.lines().next().expect("real Raylib window");
+    xdo(&["windowfocus","--sync",win]);
+    // The shaped password must never send its raw Hebrew/emoji text to the
+    // glyph-ID GPU cache. The Unicode font atlas may contain ONLY masked '*'.
+    assert!(p.diagnostic_shaped_gpu(FONT,18,"auto","סודי👩‍💻").is_none(),
+        "password text must not be prepared in the shaped GPU cache");
+    assert!(p.diagnostic_font_coverage(FONT,18,"*****").is_some());
+    assert!(p.diagnostic_font_coverage(FONT,18,"界").is_none(),
+        "sensitive CJK grapheme must not be requested into the glyph atlas");
+    assert!(p.diagnostic_font_coverage(FONT,18,"ס").is_none(),
+        "password Hebrew glyph must not be added to atlas");
+
+    // Actual framebuffer comparison of 5-star password versus a public
+    // 5-star reference with identical geometry/font/colors.
+    for x in [35.0,42.0,49.0,57.0,65.0,74.0] {
+        for y in [39.0,43.0] {
+            let hidden=p.diagnostic_capture_pixel(x,y).expect("private pixel");
+            let public=p.diagnostic_capture_pixel(x,y+80.0).expect("masked reference");
+            assert_eq!(hidden,public,
+                "native GPU must display only redaction glyphs at ({x},{y})");
+        }
+    }
+    // A same-grapheme-count Host authority update cannot expose new glyphs.
+    root.children[0].set_prop("value","חדשש👩‍💻");
+    root.children[0].set_prop("value_revision","2");
+    frames(&p,&root,&mut cx,3);
+    assert!(p.diagnostic_font_coverage(FONT,18,"ח").is_none());
+    for x in [35.0,49.0,65.0] {
+        let hidden=p.diagnostic_capture_pixel(x,43.0).unwrap();
+        let public=p.diagnostic_capture_pixel(x,123.0).unwrap();
+        assert_eq!(hidden,public,"Host rebase must still mask password");
+    }
+    // The UI is visually masked but the trusted Host still receives exact
+    // text edits. Avoid test helpers that log private callback payloads.
+    assert!(press(&p,&root,&mut cx,"Tab",false).is_empty());
+    let expected=p.diagnostic_font_coverage(FONT,18,"*****")
+        .expect("loaded mask font width");
+    let position=p.diagnostic_text_visual(931,32.0,276.0)
+        .expect("measured password caret");
+    assert_eq!(position.caret_grapheme,Some(5));
+    assert!((position.measured_caret-expected).abs()<1.0,
+        "caret must measure masked stars, not secret letters");
+    xdo(&["keydown","x"]);
+    let edits=frames(&p,&root,&mut cx,5);
+    xdo(&["keyup","x"]);frames(&p,&root,&mut cx,2);
+    assert!(has(&edits,931,"חדשש👩‍💻x"),
+        "trusted Host must receive committed password input");
+    assert_eq!(edits.iter().filter(|e|e.callback_id==931&&!e.submitted).count(),1);
+    let edited_visual=p.diagnostic_text_visual(931,32.0,276.0).unwrap();
+    let expected_six=p.diagnostic_font_coverage(FONT,18,"******").unwrap();
+    assert!((edited_visual.measured_caret-expected_six).abs()<1.0,
+        "new character adds one redacted glyph, not a plaintext glyph");
+
+    seed_x11_clipboard("guard");
+    assert!(clipboard_key(&p,&root,&mut cx,"a").is_empty());
+    assert!(clipboard_key(&p,&root,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&root,&mut cx),"guard");
+    assert!(clipboard_key(&p,&root,&mut cx,"x").is_empty());
+    assert!(clipboard_key(&p,&root,&mut cx,"v").is_empty());
+    assert!(p.diagnostic_font_coverage(FONT,18,"ח").is_none());
+    drop(p);
+    eprintln!("LUMINA_PASSWORD_MASK_X11 shaped_gpu_no_private=true atlas_no_private=true pixel_matches_stars=true host_rebase_mask=true caret_mask_metrics=true private_host_callback=true clipboard_denied=true");
+}

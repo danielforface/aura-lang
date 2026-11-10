@@ -39,6 +39,41 @@ pub(crate) fn grapheme_limit(node:&UiNode)->Result<Option<usize>,()>{
     Ok(Some(value))
 }
 
+/// Native TextInput paint privacy boundary. Any explicit sensitive flag,
+/// unknown input type, unsupported surrounding-text policy or *ambiguous*
+/// duplicate declaration must never be rendered as clear text. This is a
+/// display-only decision: the Host's value/event contract stays unchanged.
+pub(crate) fn private_display(node:&UiNode)->bool {
+    if node.kind!="TextInput"{return false;}
+    for name in ["sensitive","type","input_type","surrounding_text"] {
+        let mut props=node.props.iter().filter(|(key,_)|key==name);
+        let value=props.next().map(|(_,v)|v.as_str());
+        if props.next().is_some(){return true;}
+        match name {
+            "sensitive" if !matches!(value,None|Some("false")|Some("0"))=>
+                return true,
+            "type"|"input_type" if value.is_some_and(|kind|
+                !matches!(kind,"text"|"search"|"email"|"number"|"url"|"tel"))=>
+                return true,
+            "surrounding_text" if !matches!(value,None|Some("full"))=>
+                return true,
+            _=>{},
+        }
+    }
+    false
+}
+
+/// Use one plain ASCII asterisk per UAX29 extended grapheme, never per byte,
+/// scalar or UTF-16 code unit. This string alone is allowed to enter glyph
+/// caches, text shaping, font measurements and native drawing for private
+/// fields. Oversized Host values remain secret; display length is capped.
+/// This is visual redaction, NOT encrypted storage or a secure input buffer.
+pub(crate) const MAX_MASK_GLYPHS:usize=8192;
+pub(crate) fn masked_display(value:&str)->String {
+    use unicode_segmentation::UnicodeSegmentation;
+    value.graphemes(true).take(MAX_MASK_GLYPHS).map(|_|'*').collect()
+}
+
 /// Native OS clipboard is an explicit, per-field capability, not implied
 /// by selection support. A read-only editor may export a selection but may
 /// never cut/paste. Unknown, duplicated or conflicting Host policy fails closed.
@@ -125,6 +160,40 @@ mod tests{
         let mut n=UiNode::new("TextInput");
         for (k,v) in props {n.set_prop(*k,*v);}
         n
+    }
+    #[test]
+    fn native_private_display_masks_password_otp_sensitive_and_uncertain_policy(){
+        for (key,value) in [
+            ("type","password"),("input_type","password"),
+            ("type","otp"),("input_type","otp"),("sensitive","true"),
+            ("sensitive","1"),("sensitive","broken"),
+            ("type","PASSWORD"),("input_type","mystery"),
+            ("surrounding_text","none"),("surrounding_text","untrusted"),
+        ] {
+            assert!(private_display(&field(&[(key,value)])),
+                "{key}={value} cannot render raw input");
+        }
+        for props in [
+            vec![],vec![("type","text")],vec![("input_type","email")],
+            vec![("sensitive","false")],vec![("sensitive","0")],
+            vec![("surrounding_text","full")],
+        ] {
+            assert!(!private_display(&field(&props)), "ordinary field remains visible");
+        }
+        for key in ["type","input_type","sensitive","surrounding_text"] {
+            let mut duplicate=field(&[(key,"text")]);
+            duplicate.props.push((key.into(),"text".into()));
+            assert!(private_display(&duplicate),"duplicate {key} must never show raw");
+        }
+    }
+    #[test]
+    fn mask_is_bounded_by_graphemes_not_utf8_or_scalar_count(){
+        assert_eq!(masked_display(""),"");
+        assert_eq!(masked_display("שלום"),"****");
+        assert_eq!(masked_display("🇮🇱é👩‍💻"),"***");
+        assert_eq!(masked_display("visible private"),"*".repeat(15));
+        assert_eq!(masked_display(&"x".repeat(MAX_MASK_GLYPHS+100)).len(),MAX_MASK_GLYPHS);
+        assert!(!masked_display("סודי👩‍💻").contains('ס'));
     }
     #[test]
     fn pointer_grant_requires_explicit_safe_unambiguous_field(){

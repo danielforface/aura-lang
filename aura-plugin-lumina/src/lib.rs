@@ -12,7 +12,7 @@ mod forms;
 #[cfg(any(feature = "raylib", test))]
 mod draft_retention;
 
-#[cfg(any(feature = "raylib", test))]
+// Privacy classification is shared by native paint and headless diagnostics.
 mod input_policy;
 
 #[cfg(any(feature = "raylib", test))]
@@ -56,6 +56,47 @@ use aura_nexus::UiTextInputEvent;
 
 #[cfg(not(feature = "raylib"))]
 use aura_nexus::format_ui_tree;
+
+/// Headless diagnostic output must not bypass native sensitive-field
+/// privacy. The diagnostic clone carries NO user-authored prop values from a
+/// private TextInput, even via unexpected custom prop keys or duplicates.
+/// Actual Host UiNode and feedback remain untouched.
+#[cfg(not(feature="raylib"))]
+fn redacted_headless_ui_tree(root:&UiNode)->String {
+    fn strip(node:&mut UiNode) {
+        if input_policy::private_display(node) {
+            for (_,value) in &mut node.props {
+                *value="[redacted]".to_owned();
+            }
+        }
+        for child in &mut node.children{strip(child);}
+    }
+    let mut safe=root.clone();
+    strip(&mut safe);
+    format_ui_tree(&safe)
+}
+
+#[cfg(all(test,not(feature="raylib")))]
+#[test]
+fn headless_diagnostics_never_print_private_payload_or_custom_props(){
+    let mut root=UiNode::new("App");
+    let mut private=UiNode::new("TextInput");
+    private.set_prop("type","password");
+    private.set_prop("value","לא-לחשוף-SECRET");
+    private.set_prop("placeholder","private hint");
+    private.set_prop("other_sensitive_metadata","another-secret");
+    root.children.push(private);
+    let mut public=UiNode::new("TextInput");
+    public.set_prop("value","public-visible");
+    root.children.push(public);
+    let output=redacted_headless_ui_tree(&root);
+    assert!(!output.contains("לא-לחשוף-SECRET"));
+    assert!(!output.contains("private hint"));
+    assert!(!output.contains("another-secret"));
+    assert!(output.contains("[redacted]"));
+    assert!(output.contains("public-visible"));
+}
+
 
 #[cfg(feature = "raylib")]
 use std::cell::RefCell;
@@ -770,7 +811,9 @@ fn ensure_fonts_loaded(
         focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
         result:&mut HashMap<String,(String,i32,Vec<String>)>) {
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
-        if (node.kind=="Text" || node.kind=="TextInput") && !shaped_gpu::is_opted(node) {
+        if (node.kind=="Text" || node.kind=="TextInput")
+            && (!shaped_gpu::is_opted(node) ||
+                (node.kind=="TextInput" && input_policy::private_display(node))) {
             if let Some(path)=prop_string(node,"font_path") {
                 let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text" {20}else{18}).max(10);
                 if let Some(key)=font_atlas::font_key(path,size) {
@@ -788,7 +831,12 @@ fn ensure_fonts_loaded(
                         // Fail closed on cache capacity instead of unbounded GPU atlases.
                     } else {
                         let req=result.entry(key).or_insert_with(||(path.to_owned(),size,Vec::new()));
-                        req.2.push(value.to_owned());
+                        // The font atlas must see ONLY the mask, never the
+                        // underlying password/OTP/sensitive glyphs.
+                        req.2.push(if node.kind=="TextInput"
+                            && input_policy::private_display(node){
+                                input_policy::masked_display(value)
+                            }else{value.to_owned()});
                         if node.kind=="TextInput" {
                             req.2.push(prop_string(node,"placeholder").unwrap_or("").to_owned());
                         }
@@ -842,7 +890,8 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
         sessions:&HashMap<u64,FocusedTextInput>,
         out:&mut Vec<(String,String,Option<String>,i32,String,String)>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
-        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
+        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput")
+            && !(node.kind=="TextInput" && input_policy::private_display(node)){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
             let display:String=if node.kind=="Text"{
                 prop_string(node,"text").or_else(||prop_string(node,"content"))
@@ -933,16 +982,23 @@ fn measure_input_visuals(
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
-                let opt=shaped_gpu::is_opted(node);
-                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
-                let prepared=shaped_gpu::entry_key(node,display,size).and_then(|k|shaped.get(&k));
-                let font=if opt{None}else{selected_unicode_font(fonts,node,size,value)};
+                let privacy=input_policy::private_display(node);
+                let masked=privacy.then(||input_policy::masked_display(value));
+                let visual_value=masked.as_deref().unwrap_or(value);
+                // The private field has NO shaped-GPU request/cache. Its
+                // visual metrics must use the exact same masked glyphs as paint.
+                let opt=shaped_gpu::is_opted(node)&&!privacy;
+                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}
+                    else{visual_value};
+                let prepared=if opt{shaped_gpu::entry_key(node,display,size)
+                    .and_then(|k|shaped.get(&k))}else{None};
+                let font=if opt{None}else{selected_unicode_font(fonts,node,size,display)};
                 let measure=|text:&str|->f32 {
                     if let Some(font)=font{font.measure_text(text,size as f32,0.0).x.max(0.0)}
                     else {rl.measure_text(text,size).max(0) as f32}
                 };
                 let width=prepared.map(|r|r.shaped.width)
-                    .unwrap_or(if opt {0.0}else{measure(value)});
+                    .unwrap_or(if opt {0.0}else{measure(visual_value)});
                 let caret_index=projection.as_ref().map(|p|p.caret)
                     .or_else(||entry.as_ref().map(|fi|fi.session.caret)).unwrap_or(0);
                 let caret_stop=if active&&opt {
@@ -953,7 +1009,7 @@ fn measure_input_visuals(
                 }else{None};
                 let caret=if active {
                     if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
-                    else{measure(text_viewport::grapheme_prefix(value,caret_index))}
+                    else{measure(text_viewport::grapheme_prefix(visual_value,caret_index))}
                 }else{0.0};
                 let segments=if active&&opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
@@ -964,8 +1020,8 @@ fn measure_input_visuals(
                 let selection=if active&&!opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .map(|(a,b)|{
-                            let x=measure(text_viewport::grapheme_prefix(value,a));
-                            let y=measure(text_viewport::grapheme_prefix(value,b));
+                            let x=measure(text_viewport::grapheme_prefix(visual_value,a));
+                            let y=measure(text_viewport::grapheme_prefix(visual_value,b));
                             (x.min(y),x.max(y))
                         })
                 }else{None};
@@ -977,8 +1033,8 @@ fn measure_input_visuals(
                         prepared.and_then(|shape|bidi_editor::selection_fragments(
                             &shape.shaped,a,b))
                     }else {
-                        let x=measure(text_viewport::grapheme_prefix(value,a));
-                        let y=measure(text_viewport::grapheme_prefix(value,b));
+                        let x=measure(text_viewport::grapheme_prefix(visual_value,a));
+                        let y=measure(text_viewport::grapheme_prefix(visual_value,b));
                         Some(vec![(x.min(y),x.max(y))])
                     }
                 }).unwrap_or_default();
@@ -1493,7 +1549,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             }
 
             // Fallback: print once (no interactive loop).
-            print!("{}", format_ui_tree(tree));
+            print!("{}", redacted_headless_ui_tree(tree));
 
             if nexus.get::<UiRuntimeFeedback>().is_none() {
                 nexus.insert(UiRuntimeFeedback::default());
@@ -2983,7 +3039,13 @@ fn paint_node<D: RaylibDraw>(
             };
 
             let placeholder = prop_string(node, "placeholder").unwrap_or("");
-            let display = if value.is_empty() { placeholder } else { value };
+            // Compute display-only masking from the same Host policy used by
+            // glyph atlas and viewport geometry. Keep the committed value
+            // untouched for the existing trusted Host edit event contract.
+            let privacy=input_policy::private_display(node);
+            let masked=privacy.then(||input_policy::masked_display(value));
+            let display = if value.is_empty() { placeholder }
+                else { masked.as_deref().unwrap_or(value) };
             let display_color = if value.is_empty() { placeholder_c } else { fg };
 
             let ts = prop_i32(node, "size").unwrap_or(18).max(10);
@@ -3001,8 +3063,11 @@ fn paint_node<D: RaylibDraw>(
                     }
                 }
             }
-            let shaped_present=shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k));
-            if shaped_gpu::is_opted(node) {
+            let shaped_allowed=shaped_gpu::is_opted(node)&&!privacy;
+            let shaped_present=if shaped_allowed {
+                shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k))
+            }else{None};
+            if shaped_allowed {
                 if let Some(r)=shaped_present{
                     shaped_gpu::paint(d,r,text_x,rect.y+pad_y,display_color);
                 }
@@ -3026,7 +3091,7 @@ fn paint_node<D: RaylibDraw>(
 
             // Exact default-font pixel measurements, not an average cell;
             // OS-native XIM/preedit delivery remains unqualified.
-            if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
+            if is_focused && (!shaped_allowed || shaped_present.is_some()) {
                 if let Some(v)=visual.filter(|v|v.caret_valid) {
                     let cx=v.caret_screen(content);
                     let cy0=rect.y+10.0;
