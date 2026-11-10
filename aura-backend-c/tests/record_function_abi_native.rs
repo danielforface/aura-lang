@@ -19,6 +19,10 @@ mod xr06_nested_mutable_phi;
 #[path = "record_phi_parallel_copy_native.rs"]
 mod checked_parallel_phi_edges;
 
+// Q03-007: source-valid AVM-only calls must not falsely produce native C.
+#[path = "record_unregistered_builtin_native.rs"]
+mod checked_native_callee_trust;
+
 #[path = "record_string_eq_native.rs"]
 mod source_string_record_equality;
 

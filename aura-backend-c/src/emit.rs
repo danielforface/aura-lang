@@ -2173,10 +2173,31 @@ fn emit_function(
                                 callee, inst.dest, ret
                             ) });
                         }
-                    } else if args.iter().any(|arg| records.contains_key(arg)) {
-                        return Err(CBackendError { message: format!(
-                            "unqualified C Record argument in external/builtin call '{}'", callee
-                        ) });
+                    } else {
+                        if args.iter().any(|arg| records.contains_key(arg)) {
+                            return Err(CBackendError { message: format!(
+                                "unqualified C Record argument in external/builtin call '{}'", callee
+                            ) });
+                        }
+                        // The Checker also registers AVM-only standard functions
+                        // (e.g. io.read_text/io.read_line). Those have NO
+                        // native C implementation. Previously the generic
+                        // callee mapper emitted io_read_text(...) and guessed a
+                        // Tensor result, producing a successful Aura artifact
+                        // that failed only when compiled by Clang. Require an
+                        // exact source-name match against the builtins that
+                        // this emitted C runtime actually implements.
+                        // Never trust a dotted->underscore collision or a
+                        // forged IR Call as proof that a runtime symbol exists.
+                        if !matches!(callee.as_str(),
+                            "io.println" | "io.load_tensor" |
+                            "io.display" | "compute_gradient"
+                        ) {
+                            return Err(CBackendError { message: format!(
+                                "unqualified native C Call '{}': no declared Aura Cell, trusted extern or implemented native builtin",
+                                callee
+                            ) });
+                        }
                     }
                     // A raw const char* is not the evaluated AVM String.
                     // Other Cells and foreign calls require an owned String
