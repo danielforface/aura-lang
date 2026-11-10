@@ -7,7 +7,6 @@ use crate::noisy_ensemble::{
 };
 use crate::noisy_circuit::NoisyCircuit;
 use crate::{Complex,NORM_TOLERANCE};
-use std::mem::size_of;
 pub const ENTANGLEMENT_PROFILE:&str="noisy-two-qubit-ppt-density-f64/1";
 pub const ENTANGLEMENT_EXTRA_BYTES:usize=4096;
 pub const ENTANGLEMENT_EXTRA_WORK:usize=4096;
@@ -95,15 +94,14 @@ pub fn reduced_pair(
 fn purity<const N:usize>(rho:&[[Complex;N];N])->Result<f64,EntanglementError>{
     let mut trace=0.0;
     let mut p=0.0;
-    for i in 0..N{
-        let d=rho[i][i];
+    for (i,row) in rho.iter().enumerate(){
+        let d=row[i];
         if !closed_finite(d)||d.im.abs()>NORM_TOLERANCE
             ||d.re< -NORM_TOLERANCE{
             return Err(EntanglementError::InvalidDensity);
         }
         trace+=d.re;
-        for j in 0..N{
-            let z=rho[i][j];
+        for (j,&z) in row.iter().enumerate(){
             let other=rho[j][i];
             if !closed_finite(z)||
                 (z.re-other.re).abs()>NORM_TOLERANCE||
@@ -122,13 +120,13 @@ fn purity<const N:usize>(rho:&[[Complex;N];N])->Result<f64,EntanglementError>{
 }
 fn reduced_single(pair:&[[Complex;4];4],wire:usize)->[[Complex;2];2]{
     let mut out=[[Complex::ZERO;2];2];
-    for r in 0..4{
-        for c in 0..4{
+    for (r,row) in pair.iter().enumerate(){
+        for (c,&z) in row.iter().enumerate(){
             let ra=(r>>wire)&1;
             let ca=(c>>wire)&1;
             let other=1-wire;
             if ((r>>other)&1)==((c>>other)&1){
-                out[ra][ca]=add(out[ra][ca],pair[r][c]);
+                out[ra][ca]=add(out[ra][ca],z);
             }
         }
     }
@@ -176,14 +174,14 @@ pub fn hermitian_eigenvalues_4(
     input:[[Complex;4];4],
 )->Result<[f64;4],EntanglementError>{
     let mut a=input;
-    for i in 0..4{
-        if !closed_finite(a[i][i])||a[i][i].im.abs()>NORM_TOLERANCE{
+    for (i,row) in a.iter().enumerate(){
+        if !closed_finite(row[i])||row[i].im.abs()>NORM_TOLERANCE{
             return Err(EntanglementError::InvalidDensity);
         }
-        for j in (i+1)..4{
-            if !closed_finite(a[i][j])||!closed_finite(a[j][i])||
-                (a[i][j].re-a[j][i].re).abs()>NORM_TOLERANCE||
-                (a[i][j].im+a[j][i].im).abs()>NORM_TOLERANCE{
+        for (j,&z) in row.iter().enumerate().skip(i+1){
+            if !closed_finite(z)||!closed_finite(a[j][i])||
+                (z.re-a[j][i].re).abs()>NORM_TOLERANCE||
+                (z.im+a[j][i].im).abs()>NORM_TOLERANCE{
                 return Err(EntanglementError::InvalidDensity);
             }
         }
@@ -201,10 +199,16 @@ pub fn hermitian_eigenvalues_4(
                 if magnitude<=4e-16{continue;}
                 // D† A D; D_qq=conj(A_pq)/|A_pq| ensures A_pq real+.
                 let phase=scale(conj(b),1.0/magnitude);
-                for k in 0..4{
+                // Apply phase to column q, then restore Hermitian row q
+                // in a separate pass to avoid aliasing mutable matrix rows.
+                let mut conjugate_column=[Complex::ZERO;4];
+                for (k,row) in a.iter_mut().enumerate(){
                     if k==q{continue;}
-                    a[k][q]=a[k][q]*phase;
-                    a[q][k]=conj(a[k][q]);
+                    row[q]=row[q]*phase;
+                    conjugate_column[k]=conj(row[q]);
+                }
+                for (k,value) in a[q].iter_mut().enumerate(){
+                    if k!=q{*value=conjugate_column[k];}
                 }
                 let app=a[p][p].re;
                 let aqq=a[q][q].re;
@@ -216,14 +220,24 @@ pub fn hermitian_eigenvalues_4(
                 };
                 let c=1.0/(1.0+t*t).sqrt();
                 let s=t*c;
-                for k in 0..4{
+                // Two-phase column/row update is the exact same
+                // unitary real Jacobi rotation without simultaneous
+                // mutable borrowing of rows p and q.
+                let mut new_p=[Complex::ZERO;4];
+                let mut new_q=[Complex::ZERO;4];
+                for (k,row) in a.iter_mut().enumerate(){
                     if k==p||k==q{continue;}
-                    let x=a[k][p];
-                    let y=a[k][q];
-                    a[k][p]=add(scale(x,c),neg(scale(y,s)));
-                    a[p][k]=conj(a[k][p]);
-                    a[k][q]=add(scale(x,s),scale(y,c));
-                    a[q][k]=conj(a[k][q]);
+                    let x=row[p];
+                    let y=row[q];
+                    new_p[k]=add(scale(x,c),neg(scale(y,s)));
+                    new_q[k]=add(scale(x,s),scale(y,c));
+                    row[p]=new_p[k];
+                    row[q]=new_q[k];
+                }
+                for (k,&value) in new_p.iter().enumerate(){
+                    if k==p||k==q{continue;}
+                    a[p][k]=conj(value);
+                    a[q][k]=conj(new_q[k]);
                 }
                 a[p][p]=Complex::new(app-t*magnitude,0.0);
                 a[q][q]=Complex::new(aqq+t*magnitude,0.0);
@@ -232,8 +246,7 @@ pub fn hermitian_eigenvalues_4(
             }
         }
         if maximum<=EIGEN_ABS_TOLERANCE{
-            let mut eig=a.map(|row|row[0].re); // overwritten below
-            for i in 0..4{eig[i]=a[i][i].re;}
+            let mut eig=std::array::from_fn(|i|a[i][i].re);
             eig.sort_by(|x,y|x.total_cmp(y));
             if eig.iter().any(|x|!x.is_finite()){
                 return Err(EntanglementError::InvalidDensity);
