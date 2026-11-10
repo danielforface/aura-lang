@@ -302,3 +302,15 @@ if __name__=="__main__":
         noisy_conditioned_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c024-noisy-conditioned-qiskit.json"),
     )
+    # C-025: independent entanglement science for REAL release CLI,
+    # Qiskit reduced density/partial trace + NumPy PT eigen/spectrum.
+    from check_qiskit_noisy_entanglement import main as pair_npt_oracle
+    entanglement_binary=crate / "target/release/aura-quantum-noisy-pair-entanglement-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-noisy-pair-entanglement-run",
+    ],check=True,timeout=180)
+    pair_npt_oracle(
+        entanglement_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c025-noisy-pair-npt-qiskit.json"),
+    )
