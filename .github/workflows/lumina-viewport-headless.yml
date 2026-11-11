@@ -1,0 +1,349 @@
+name: Lumina headless viewport and layout regressions
+
+on:
+  push:
+    branches:
+      - 'qual/ui-*'
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+      - 'docs/qualification/**'
+  pull_request:
+    paths:
+      - 'aura-plugin-lumina/**'
+      - '.github/workflows/lumina-viewport-headless.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  viewport-headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust test (no GUI, no Z3, no persistent cache)
+        run: cargo test --locked -p aura-plugin-lumina --no-default-features
+
+  raylib-feature-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install raylib native Linux compile prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+      - name: Compile Raylib feature (compile-only; no GUI claims)
+        run: cargo check --locked -p aura-plugin-lumina --features raylib
+
+  raylib-xvfb-window-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install software-display and native Raylib prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool xclip cmake pkg-config libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core fonts-linuxlibertine libibus-1.0-dev ibus ibus-hangul fonts-nanum fonts-wqy-microhei ibus-libpinyin dbus-x11
+      - name: Raylib-enabled library unit tests including typed IBus keysym and protocol bounds
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --lib
+
+      - name: Actual live IBus Hangul preedit/commit and typed XTest press/release/Shift
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-helper"
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
+            gsettings set org.freedesktop.ibus.engine.hangul switch-keys "Hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            sleep 1
+            echo "LUMINA_IBUS_REGISTERED_ENGINES:"
+            ibus list-engine | head -65
+            echo "LUMINA_IBUS_REQUEST_ENGINE:"
+            ibus engine hangul
+            ibus engine
+            sleep 1
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_TEST_HANGUL_SWITCH="1"
+            # Existing native preedit regression first. Each subsequent
+            # live Hangul mode test needs a FRESH daemon/input-mode generation:
+            # Hangul switch state remains global and persists across tests.
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e real_ibus_hangul_engine_x11_preedit_and_commit_without_injection -- --exact --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P29_FRESH_HARD_CRASH_PREEDIT_ENGINE"
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P29_HARD_CRASH_ENGINE_NOT_ACTIVE"; exit 29; }
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzzz_live_sigkill_daemon_during_active_preedit -- --exact --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P26_FRESH_PREEDIT_ENGINE"
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "latin"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P26_ENGINE_NOT_ACTIVE"; exit 26; }
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzz_live_policy_change_during_active_ibus_preedit_abandons_it -- --exact --nocapture --test-threads=1
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_native_e2e zzz_live_helper_rejects_unpermitted_surrounding_frame -- --exact --nocapture --test-threads=1
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_input_semantics_e2e -- --nocapture --test-threads=1
+            echo "LUMINA_IBUS_SELECT_CANDIDATE_ENGINE"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            echo "LUMINA_IBUS_COMPONENT_DETAILS:"
+            test -f /usr/share/ibus/component/libpinyin.xml
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            echo "LUMINA_IBUS_PINYIN_REGISTERED:"
+            ibus list-engine | grep -i -A 3 -B 1 pinyin || true
+            ibus engine libpinyin || true
+            echo "LUMINA_IBUS_ACTIVE_CANDIDATE_ENGINE=$(ibus engine)"
+            test "$(ibus engine)" = "libpinyin" || { echo "LUMINA_PINYIN_ENGINE_NOT_ACTIVE"; exit 19; }
+            export LUMINA_IBUS_CANDIDATE_FONT_PATH="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
+            export LUMINA_IBUS_ENGINE="libpinyin"
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_candidate_e2e -- --nocapture --test-threads=1
+            echo "LUMINA_IBUS_P24_UPSTREAM_REGISTERED_HANGUL_NONE_MODE"
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings get org.freedesktop.ibus.engine.hangul preedit-mode | grep -qx ".*none.*"
+            ibus-daemon --replace --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul || true
+            echo "LUMINA_IBUS_P24_ACTUAL_ENGINE=$(ibus engine)"
+            test "$(ibus engine)" = "hangul" || { echo "LUMINA_IBUS_P24_HANGUL_NOT_ACTIVE"; exit 23; }
+            export LUMINA_IBUS_ENGINE="hangul"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e -- --nocapture --test-threads=1
+          '
+
+      - name: Actual mid-key upstream D then daemon SIGKILL (separate diagnostic helper only)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_STOP_AFTER_DELETE -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-inflight" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 31
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-inflight"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P31_DIAGNOSTIC_INFLIGHT="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_hangul_delete_e2e zzzzzzz_real_ibus_inflight_delete_daemon_sigkill_aborts_key_atomicity -- --ignored --exact --nocapture --test-threads=1
+          '
+
+      - name: Actual upstream Hangul D/C phase observations (isolated diagnostic-only helper)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-phase" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 34
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-phase"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P34_DIAGNOSTIC_PHASE="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_callback_phase_e2e real_registered_hangul_callbacks_have_measured_local_dispatch_phase -- --exact --nocapture --test-threads=1
+          '
+
+      - name: Genuine registered Hangul post-R idle observations (0/25/200ms, diagnostic only)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-idle" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 35
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-idle"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P35_IDLE_DIAGNOSTIC="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_callback_phase_e2e p35_ -- --nocapture --test-threads=1
+          '
+
+      - name: Real upstream Hangul D/C after R via test-only deferred GLib dispatch
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -DLUMINA_IBUS_TEST_DEFER_POST_KEY_PUMP -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-deferred" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 36
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-deferred"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P36_DEFER_POST_KEY_PUMP="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test ibus_callback_phase_e2e p36_genuine_registered_hangul_post_r_callbacks_under_deferred_test_pump -- --exact --nocapture --test-threads=1
+          '
+
+      - name: Real delayed Hangul D/C through Rust NativeIbus ACK and EditSession (diagnostic only)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          cc -D_GNU_SOURCE -DLUMINA_IBUS_TEST_CALLBACK_PHASE -DLUMINA_IBUS_TEST_DEFER_POST_KEY_PUMP -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "$RUNNER_TEMP/lumina-ibus-helper-rust-late" \
+            aura-plugin-lumina/native/ibus_input_helper.c \
+            $(pkg-config --cflags --libs ibus-1.0)
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul" || exit 37
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-helper-rust-late"
+            export LUMINA_IBUS_ENGINE="hangul"
+            export LUMINA_IBUS_P37_RUST_ACK_FENCE="1"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --lib ibus_native::tests::p37_real_post_r_ibus_ack_fence_keeps_editsession_and_undo_authoritative -- --exact --nocapture --test-threads=1
+          '
+
+      - name: Real X11 TextInput autofocus and host revision (production fallback)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          env -u LUMINA_IBUS_HELPER_BIN -u LUMINA_IBUS_ENGINE \
+            xvfb-run -a -s "-screen 0 1280x960x24" \
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics \
+              --test lumina_autofocus_e2e autofocus_direct_real_x11_first_valid_target_and_no_refocus \
+              -- --exact --nocapture --test-threads=1
+
+      - name: Real registered Hangul autofocus with normal production helper
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          IBUS_USE_PORTAL: "0"
+        run: |
+          bash aura-plugin-lumina/scripts/build-ibus-helper.sh "$RUNNER_TEMP/lumina-ibus-autofocus-normal"
+          xvfb-run -a -s "-screen 0 1280x960x24" dbus-run-session -- bash -ec '
+            gsettings set org.freedesktop.ibus.engine.hangul preedit-mode "none"
+            gsettings set org.freedesktop.ibus.engine.hangul disable-latin-mode true
+            gsettings set org.freedesktop.ibus.engine.hangul initial-input-mode "hangul"
+            gsettings set org.freedesktop.ibus.general use-global-engine true
+            ibus-daemon --daemonize --xim --panel disable --cache=refresh
+            sleep 2
+            ibus engine hangul
+            test "$(ibus engine)" = "hangul"
+            export LUMINA_IBUS_HELPER_BIN="$RUNNER_TEMP/lumina-ibus-autofocus-normal"
+            export LUMINA_IBUS_ENGINE="hangul"
+            unset LUMINA_IBUS_TEST_HANGUL_SWITCH
+            cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics \
+              --test lumina_autofocus_e2e autofocus_live_normal_ibus_hangul_and_native_undo \
+              -- --exact --nocapture --test-threads=1
+          '
+
+      - name: Render a real native window under Xvfb (no interactive/UI qualification claims)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib --test window_smoke -- --nocapture --test-threads=1
+      - name: Native resized framebuffer pixel sampling (three sizes, clip + shader)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test pixel_resize_e2e -- --nocapture --test-threads=1
+      - name: Real XTest pointer event dispatch and overflow clipping under Xvfb
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test mouse_e2e -- --nocapture --test-threads=1
+      - name: Real XTest TextInput keyboard, focus, edit and submit event contract
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test keyboard_e2e -- --nocapture --test-threads=1
+      - name: Real X11 Tab and Shift-Tab traversal skips clipped and disabled controls
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test tab_focus_e2e -- --nocapture --test-threads=1
+      - name: Real X11 persisted drafts and Ctrl+A/Z/Y selection undo/rebase
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test edit_session_e2e -- --nocapture --test-threads=1
+      - name: Native X11 delayed controlled prop echo and versioned authority contract
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test text_revision_e2e -- --nocapture --test-threads=1
+      - name: Native measured-font caret, horizontal scroll and actual GPU clipped text
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test text_viewport_e2e -- --nocapture --test-threads=1
+      - name: Actual external TTF Unicode Hebrew glyph atlas and real GPU framebuffer XTest
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test unicode_font_e2e -- --nocapture --test-threads=1
+
+
+      - name: Real native UAX9 visual-run order and OpenType Arabic GSUB glyph-ID diagnostic
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test bidi_shaping_e2e -- --nocapture --test-threads=1
+
+      - name: Real indexed glyph-ID GPU pixel silhouette and shaped TextInput XTest
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test shaped_gpu_e2e -- --nocapture --test-threads=1
+
+      - name: Native BiDi editor physical arrows and disjoint selection pixel proof
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test bidi_visual_editor_e2e -- --nocapture --test-threads=1
+
+      - name: Real explicit secondary font atlas GPU and X11 keyboard proof
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test font_fallback_e2e -- --nocapture --test-threads=1
+
+      - name: Actual OpenType GDEF ligature ffi internal caret XTest and framebuffer
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test gdef_ligature_e2e -- --nocapture --test-threads=1
+
+      - name: Explicit adapter composition preview GPU and native XTest commit/undo proof (NOT OS XIM)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x960x24" cargo test --locked -p aura-plugin-lumina --features raylib,lumina-diagnostics --test composition_bridge_e2e -- --nocapture --test-threads=1
+
