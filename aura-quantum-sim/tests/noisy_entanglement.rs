@@ -50,7 +50,7 @@ fn full_depolarization_breaks_entanglement_and_all_correlations(){
     near(x.reduced_purity,0.25);
     near(x.negativity,0.0);
     near(x.mutual_information_bits,0.0);
-    for i in 0..4{near(x.reduced_density[i][i].re,0.25);}
+    for (i,row) in x.reduced_density.iter().enumerate(){near(row[i].re,0.25);}
 }
 #[test]
 fn amplitude_damping_half_has_quarter_negativity_not_purity_proxy(){
