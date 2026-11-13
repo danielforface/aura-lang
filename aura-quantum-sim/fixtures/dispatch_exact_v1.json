@@ -1,0 +1,45 @@
+{
+  "schema": "aura.quantum.dispatch-request/1",
+  "mode": "exact_branch",
+  "qubits": 1,
+  "classical_bits": 1,
+  "max_memory_bytes": 16777216,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 0,
+      "into_bit": 0,
+      "outcome": true
+    },
+    {
+      "op": "if",
+      "bit": 0,
+      "equals": true,
+      "gate": {
+        "kind": "x",
+        "target": 0
+      }
+    }
+  ]
+}

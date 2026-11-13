@@ -5,6 +5,35 @@
 //! Matrix operations act on one pure state and have no classical control/IR ABI.
 #![forbid(unsafe_code)]
 
+pub mod circuit;
+pub mod json_protocol;
+pub mod density;
+pub mod noisy_circuit;
+pub mod noisy_json;
+pub mod stabilizer;
+pub mod stabilizer_json;
+pub mod symbolic;
+pub mod symbolic_json;
+pub mod dispatch_json;
+pub mod factorized;
+pub mod factorized_json;
+pub mod factorized_counts_json;
+pub mod observable_json;
+pub mod moments;
+pub mod moments_json;
+pub mod channel_moments;
+pub mod channel_moments_json;
+pub mod channel_tomography;
+pub mod channel_tomography_json;
+pub mod conditioned_tomography_json;
+pub mod noisy_ensemble;
+pub mod noisy_ensemble_json;
+pub mod noisy_conditioned_json;
+pub mod noisy_entanglement;
+pub mod noisy_entanglement_json;
+pub mod noisy_hamiltonian;
+pub mod noisy_hamiltonian_json;
+
 use std::mem::size_of;
 
 pub const ENGINE_VERSION: &str = "aura-quantum-sim/0.1.0";

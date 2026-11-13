@@ -1,0 +1,85 @@
+{
+  "schema": "aura.quantum.noisy-conditioned-request/1",
+  "qubits": 2,
+  "classical_bits": 2,
+  "max_memory_bytes": 16777216,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "phase_damping",
+        "qubit": 1,
+        "gamma": 0.36
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 0,
+      "into_bit": 0
+    },
+    {
+      "op": "if",
+      "bit": 0,
+      "equals": true,
+      "action": {
+        "kind": "noise",
+        "channel": {
+          "kind": "amplitude_damping",
+          "qubit": 1,
+          "gamma": 0.5
+        }
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "pauli_mixture",
+        "qubit": 1,
+        "p_x": 0.15,
+        "p_y": 0.1,
+        "p_z": 0.05
+      }
+    },
+    {
+      "op": "reset",
+      "qubit": 0
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 0,
+      "into_bit": 1
+    }
+  ],
+  "conditions": [
+    {
+      "bit": 0,
+      "equals": true
+    },
+    {
+      "bit": 1,
+      "equals": false
+    }
+  ]
+}

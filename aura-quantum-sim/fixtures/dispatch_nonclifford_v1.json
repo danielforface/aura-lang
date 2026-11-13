@@ -1,0 +1,37 @@
+{
+  "schema": "aura.quantum.dispatch-request/1",
+  "mode": "auto",
+  "qubits": 1,
+  "classical_bits": 1,
+  "seed": 20261107,
+  "shots": 256,
+  "max_memory_bytes": 16777216,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "t",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 0,
+      "into_bit": 0
+    }
+  ]
+}

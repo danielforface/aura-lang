@@ -1,0 +1,22 @@
+{
+  "schema": "aura.quantum.factorized-counts-request/1",
+  "qubits": 1,
+  "classical_bits": 1,
+  "seed": 20261108,
+  "shots": 65536,
+  "max_memory_bytes": 16777216,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 0,
+      "into_bit": 0
+    }
+  ]
+}

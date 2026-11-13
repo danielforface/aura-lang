@@ -1,0 +1,58 @@
+{
+  "schema": "aura.quantum.noisy-pair-entanglement-request/1",
+  "qubits": 3,
+  "classical_bits": 1,
+  "max_memory_bytes": 16777216,
+  "selected_pair": [
+    0,
+    1
+  ],
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 2
+      }
+    },
+    {
+      "op": "measure",
+      "qubit": 2,
+      "into_bit": 0
+    },
+    {
+      "op": "if",
+      "bit": 0,
+      "equals": true,
+      "action": {
+        "kind": "noise",
+        "channel": {
+          "kind": "phase_damping",
+          "qubit": 0,
+          "gamma": 1
+        }
+      }
+    }
+  ],
+  "conditions": [
+    {
+      "bit": 0,
+      "equals": false
+    }
+  ]
+}

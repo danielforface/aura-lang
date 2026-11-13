@@ -1,0 +1,52 @@
+{
+  "schema": "aura.quantum.noisy-request/1",
+  "qubits": 2,
+  "classical_bits": 0,
+  "seed": 5,
+  "shots": 1,
+  "max_memory_bytes": 16777216,
+  "inspect_final_density": true,
+  "instructions": [
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "h",
+        "target": 0
+      }
+    },
+    {
+      "op": "gate",
+      "gate": {
+        "kind": "cx",
+        "control": 0,
+        "target": 1
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "depolarizing",
+        "qubit": 1,
+        "probability": 0.36
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "phase_damping",
+        "qubit": 0,
+        "gamma": 0.64
+      }
+    },
+    {
+      "op": "noise",
+      "channel": {
+        "kind": "pauli_mixture",
+        "qubit": 1,
+        "p_x": 0.2,
+        "p_y": 0.1,
+        "p_z": 0.1
+      }
+    }
+  ]
+}
