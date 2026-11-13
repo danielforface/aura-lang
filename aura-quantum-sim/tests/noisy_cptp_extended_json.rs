@@ -10,8 +10,17 @@ fn run(doc:&Value,args:&[&str])->Output{
     let mut child=Command::new(env!("CARGO_BIN_EXE_aura-quantum-noisy-run"))
         .args(args).stdin(Stdio::piped()).stdout(Stdio::piped())
         .stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(
-        &serde_json::to_vec(doc).unwrap()).unwrap();
+    // A CLI rejecting an illegal command-line flag before reading stdin
+    // may close the pipe immediately; BrokenPipe is a legal OS-level
+    // consequence, not protocol success. Still require exit=2 and the
+    // exact typed fail-closed error in the caller's assertions.
+    let write=child.stdin.take().unwrap().write_all(
+        &serde_json::to_vec(doc).unwrap());
+    match write{
+        Ok(())=>{},
+        Err(e) if !args.is_empty() && e.kind()==std::io::ErrorKind::BrokenPipe=>{},
+        Err(e)=>panic!("unexpected subprocess stdin write failure: {e}"),
+    }
     child.wait_with_output().unwrap()
 }
 #[test]
