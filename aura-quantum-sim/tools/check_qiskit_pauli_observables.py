@@ -314,3 +314,15 @@ if __name__=="__main__":
         entanglement_binary,crate / "fixtures",
         Path(sys.argv[3]).with_name("c025-noisy-pair-npt-qiskit.json"),
     )
+    # C-026: full REAL noisy mixed-state Pauli Hamiltonian H, H² and variance;
+    # independent Qiskit DensityMatrix/Kraus/SparsePauliOp scientific gate.
+    from check_qiskit_noisy_hamiltonian import main as noisy_hamiltonian_oracle
+    hamiltonian_binary=crate / "target/release/aura-quantum-noisy-hamiltonian-run"
+    subprocess.run([
+        "cargo","build","--release","--manifest-path",str(crate / "Cargo.toml"),
+        "--bin","aura-quantum-noisy-hamiltonian-run",
+    ],check=True,timeout=180)
+    noisy_hamiltonian_oracle(
+        hamiltonian_binary,crate / "fixtures",
+        Path(sys.argv[3]).with_name("c026-noisy-hamiltonian-qiskit.json"),
+    )
