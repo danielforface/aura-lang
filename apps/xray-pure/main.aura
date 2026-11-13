@@ -15,6 +15,7 @@ trusted extern cell Box(bg: String, padding: u32, radius: u32, width: u32, heigh
 trusted extern cell Text(text: String, style: Style) -> Unit
 trusted extern cell Rect(width: u32, height: u32, color: String) -> Unit
 trusted extern cell Button(label: String, style: Style) -> Unit
+trusted extern cell TextInput(width: u32, height: u32, radius: u32, bg: String, border: String, fg: String, placeholder: String, value: String) -> Unit
 
 cell xr09_cpu_threshold(policy: u32):
     yield 500 + 200 * policy + 50 * (policy / 2)
@@ -212,6 +213,7 @@ cell main():
         io.println("XR09_PURE_AURA_MODEL_FAIL")
     ui.set_text(key: "policy", value: "standard")
     ui.set_text(key: "selection", value: "memory")
+    ui.set_text(key: "analyst_note", value: "")
     render:
         App(title: "AURA X-RAY / PURE AURA LAB", bg: "#080D16") {
             VStack(spacing: 16) {
@@ -221,13 +223,19 @@ cell main():
                 render: Rect(width: 1300, height: 2, color: "#2A4557")
                 render: HStack(spacing: 14) {
                     render: Button(label: "SENSITIVE", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
-                        on_click: ~> { ui.set_text(key: "policy", value: "sensitive") }
+                        on_click: ~> {
+                            ui.set_text(key: "policy", value: "sensitive")
+                            io.println("XR09_NATIVE_SENSITIVE_CLICK_PASS")
+                        }
                     }
                     render: Button(label: "STANDARD", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
                         on_click: ~> { ui.set_text(key: "policy", value: "standard") }
                     }
                     render: Button(label: "STRICT", style: Style { bg: "#194C50", fg: "#E6F2F7", radius: 13, width: 210, height: 55 }) {
-                        on_click: ~> { ui.set_text(key: "policy", value: "strict") }
+                        on_click: ~> {
+                            ui.set_text(key: "policy", value: "strict")
+                            io.println("XR09_NATIVE_STRICT_CLICK_PASS")
+                        }
                     }
                     render: Text(text: ui.get_text(key: "policy"), style: Style { fg: "#65EAD5", size: 24 })
                 }
@@ -294,6 +302,15 @@ cell main():
                     }
                 }
                 render: Rect(width: 1300, height: 2, color: "#2A4557")
+                render: HStack(spacing: 16) {
+                    render: Text(text: "LOCAL ANALYST NOTE", style: Style { fg: "#65EAD5", size: 15 })
+                    render: TextInput(width: 660, height: 44, radius: 10, bg: "#10202E", border: "#2A4557", fg: "#E6F2F7", placeholder: "Write an observation in Aura Lumina", value: ui.get_text(key: "analyst_note")) {
+                        on_change: ~> {
+                            ui.set_text(key: "analyst_note", value: ui.event_text())
+                        }
+                    }
+                    render: Text(text: ui.get_text(key: "analyst_note"), style: Style { fg: "#A4BECF", size: 14 })
+                }
                 render: Text(text: "AURA ONLY / source code, decision cells, state, UI tree and callbacks. Host runtime is the language implementation.", style: Style { fg: "#7E9CAF", size: 15 })
                 render: Text(text: "Not yet a live capture importer: JSONL and Win32 process sampling are not exposed by a certified Aura API.", style: Style { fg: "#F7BE7B", size: 15 })
             }

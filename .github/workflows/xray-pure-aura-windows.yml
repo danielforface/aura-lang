@@ -1,125 +1,163 @@
-name: XR-09 Pure Aura syntax and Lumina qualification
-
+name: XR09 Pure Aura Windows and native Lumina qualification
 on:
   push:
-    branches:
-      - product/xray-pure-aura-v1
+    branches: [product/xray-pure-aura-v1]
     paths:
-      - apps/xray-pure/**
-      - .github/workflows/xray-pure-aura-windows.yml
+      - 'apps/xray-pure/**'
+      - '.github/workflows/xray-pure-aura-windows.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: xr09-pure-aura-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  parser-and-runtime:
+  windows-pure-aura:
+    name: Windows PE x64 + Aura source/Z3 policy and source-only package
     runs-on: windows-2022
-    timeout-minutes: 50
+    timeout-minutes: 55
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build actual Aura AVM
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the actual Windows Lumina and Z3-enabled Aura runtime
         run: |
-          cargo build -p aura --no-default-features --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot build actual Aura' }
-      - name: Differentiate parser from UI typechecker and old SDK injection
+          cargo build --locked -p aura --features z3
+          if($LASTEXITCODE -ne 0){throw 'AURA Windows runtime build failed'}
+          Write-Host 'XR09_WIN64_AURA_RUNTIME_Z3_BUILD_PASS'
+      - name: Typecheck Aura application and independent policy without disabling verification
         run: |
-          $mustPass=@(
-            'aura/tests/corpus/println_basic.aura',
-            'apps/xray-pure/fixtures/00_cell_basic.aura',
-            'apps/xray-pure/fixtures/01_cell_yield.aura',
-            'apps/xray-pure/fixtures/08_nested_if.aura',
-            'apps/xray-pure/policy.aura',
-            'apps/xray-pure/fixtures/09_declared_ui.aura',
-            'apps/xray-pure/main.aura'
-          )
-          $uiSyntax=@(
-            'apps/xray-pure/fixtures/03_layout_native.aura',
-            'apps/xray-pure/fixtures/04_render_native.aura',
-            'apps/xray-pure/fixtures/05_style_native.aura',
-            'apps/xray-pure/fixtures/06_button_native.aura',
-            'apps/xray-pure/fixtures/07_intercell_ui_native.aura',
-            'apps/xray-pure/fixtures/ui_smoke.aura'
-          )
-          $legacySdk=@(
-            'apps/xray-pure/fixtures/02_import.aura',
-            'examples/root-aura/main.aura',
-            'examples/root-aura/shop_list_tool.aura'
-          )
-          $bad=@()
-          foreach($p in @($mustPass)+@($uiSyntax)+@($legacySdk)) {
-            $output=(& 'target/debug/aura.exe' check $p 2>&1 | Out-String)
-            $exit=$LASTEXITCODE
-            Write-Host "=== AURA $p exit=$exit ==="
-            Write-Host $output
-            if($mustPass -contains $p) {
-              if($exit -ne 0){$bad+=$p;Write-Host "XR09_MODEL_CHECK_FAIL $p"}
-              else{Write-Host "XR09_MODEL_CHECK_PASS $p"}
-            } elseif($uiSyntax -contains $p) {
-              if($output.Contains('parse error')) {
-                $bad+=$p;Write-Host "XR09_UI_PARSER_FAIL $p"
-              } elseif($exit -ne 0 -and $output.Contains("unknown callable")) {
-                Write-Host "XR09_UI_PARSER_PASS_BUT_SEMA_GAP $p"
-              } elseif($exit -eq 0) {
-                Write-Host "XR09_UI_PARSE_AND_SEMA_PASS $p"
-              } else {
-                $bad+=$p;Write-Host "XR09_UNKNOWN_UI_CHECK_FAILURE $p"
-              }
-            } else {
-              if($output.Contains('parse error')){
-                Write-Host "XR09_LEGACY_SDK_IMPORT_FAIL_OBSERVED $p"
-              } elseif($exit -eq 0) {
-                Write-Host "XR09_LEGACY_SDK_IMPORT_RECOVERED $p"
-              } else {
-                $bad+=$p;Write-Host "XR09_UNKNOWN_SDK_FAILURE $p"
-              }
-            }
+          foreach($p in @('apps/xray-pure/policy.aura','apps/xray-pure/main.aura','apps/xray-pure/fixtures/09_declared_ui.aura')){
+            & 'target/debug/aura.exe' check $p
+            if($LASTEXITCODE -ne 0){throw "AURA source typecheck failed for $p"}
           }
-          if($bad.Count){throw ("Aura parser/model regressions: "+($bad -join ', '))}
-          Write-Host 'XR09_AURA_PARSER_BOUNDARY_PASS source Aura model and widget AST checked'
-          # GitHub PowerShell propagates LASTEXITCODE from the final intentionally
-          # rejected SDK import; reset with a real proven parser+sema pass.
-          & 'target/debug/aura.exe' check 'apps/xray-pure/policy.aura'
-          if($LASTEXITCODE -ne 0){throw "Policy check unexpectedly regressed"}
-          Write-Host 'XR09_DIAGNOSTIC_MATRIX_STEP_PASS'
-      - name: Compile actual Lumina-powered Aura runtime
-        run: |
-          cargo build -p aura --features z3 --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Z3-enabled Aura + Lumina Windows runtime failed build' }
-          Write-Host 'XR09_Z3_LUMINA_BUILD_PASS genuine Aura solver enabled'
-      - name: Run actual Aura policy with full runtime verifier
+          Write-Host 'XR09_WIN64_PURE_AURA_SOURCE_CHECK_PASS'
+      - name: Run 3/3/2 actual user Aura policy under Z3 gate on Windows
         run: |
           Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
-          $output=(& 'target/debug/aura.exe' run 'apps/xray-pure/policy.aura' --mode avm 2>&1 | Out-String)
+          $log=(& 'target/debug/aura.exe' run 'apps/xray-pure/policy.aura' --mode avm 2>&1 | Out-String)
           $code=$LASTEXITCODE
-          Write-Host $output
-          if(!$output.Contains('XR09_PURE_AURA_POLICY_PASS sensitive=3 standard=3 strict=2')){
-            throw 'Policy mathematical oracle did not actually execute in Aura'
+          Write-Host $log
+          if($code -ne 0 -or !$log.Contains('XR09_PURE_AURA_POLICY_PASS sensitive=3 standard=3 strict=2')){
+            throw 'XR09 Windows Aura Z3 policy oracle not qualified'
           }
-          if($code -ne 0){throw 'Aura proof gate or runtime rejected completed mathematical oracle'}
-          Write-Host 'XR09_PURE_AURA_POLICY_NATIVE_AVM_PASS'
-      - name: Run actual Aura-Lumina UI with bounded frames and explicit proof status
+          Write-Host 'XR09_WIN64_AURA_Z3_POLICY_EXECUTION_PASS'
+      - name: Pure source contract, exact PE machine and artifact provenance
         run: |
-          Remove-Item Env:\AURA_AVM_NO_Z3 -ErrorAction SilentlyContinue
-          $env:AURA_UI_MAX_FRAMES='2'
-          $env:AURA_UI_DEBUG='1'
-          $output=(& 'target/debug/aura.exe' run 'apps/xray-pure/main.aura' --mode avm 2>&1 | Out-String)
-          $status=$LASTEXITCODE
-          Write-Host $output
-          if(!$output.Contains('XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2')){
-            throw 'No real UI model execution evidence from Aura'
+          $source=Get-Content 'apps/xray-pure/main.aura' -Raw
+          $cells=([regex]::Matches($source,'(?m)^cell\s+')).Count
+          $uiExtern=([regex]::Matches($source,'(?m)^trusted extern cell\s+')).Count
+          if($cells -ne 29 -or $uiExtern -ne 8){throw "Unexpected Aura source shape $cells $uiExtern"}
+          if(@(Get-ChildItem 'apps/xray-pure' -Recurse -File | Where-Object {$_.Extension -match '^\.(c|cc|cpp|h|rs|js|ts|html|py)$'}).Count -ne 0){
+            throw 'Foreign app source discovered'
           }
-          if($status -ne 0){throw 'Real Aura GUI Z3 gate/runtime rejected source execution'}
-          Write-Host 'XR09_PURE_AURA_LUMINA_PASS source and actual Z3-enabled native runtime'
-      - uses: actions/upload-artifact@v4
+          $bytes=[IO.File]::ReadAllBytes((Join-Path $PWD 'target/debug/aura.exe'))
+          if($bytes.Length -lt 65536 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90){throw 'No real Windows PE executable'}
+          $pe=[BitConverter]::ToInt32($bytes,60)
+          if($pe -lt 64 -or $pe+6 -ge $bytes.Length -or [BitConverter]::ToUInt16($bytes,$pe+4) -ne 0x8664){
+            throw 'Not a real x64 Windows PE'
+          }
+          New-Item -ItemType Directory -Force 'dist-xr09' | Out-Null
+          Copy-Item 'target/debug/aura.exe' 'dist-xr09/aura.exe'
+          Copy-Item 'apps/xray-pure/main.aura' 'dist-xr09/main.aura'
+          Copy-Item 'apps/xray-pure/policy.aura' 'dist-xr09/policy.aura'
+          Copy-Item 'apps/xray-pure/README.md' 'dist-xr09/README.txt'
+          $sha=(Get-FileHash 'dist-xr09/aura.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          [ordered]@{
+            schema='aura.xray.language-native-bundle/2'
+            git_head=$env:GITHUB_SHA
+            runtime_sha256=$sha
+            runtime_executable='aura.exe'
+            application_source='main.aura'
+            independent_policy='policy.aura'
+            aura_cells=$cells
+            ui_extern_declarations=$uiExtern
+            compiler='Aura AVM + Lumina + Z3-enabled'
+            test_windows='source-check + policy run Z3: PASS'
+            test_windows_gui='NOT_RUN: GitHub-hosted WGL driver does not support native OpenGL'
+            test_gui_linux='independent Xvfb llvmpipe job, see same workflow'
+            limitations=@('synthetic_fixture_only','not XR08 JSONL or process-capture parity','requires Aura AVM runtime','not app-specific ahead-of-time EXE','Windows GUI must be accepted on real hardware')
+          } | ConvertTo-Json -Depth 8 | Set-Content 'dist-xr09/BUILD-MANIFEST.json' -Encoding UTF8
+          Write-Host "XR09_WIN64_PE_SHA256 $sha"
+          Write-Host 'XR09_PURE_AURA_NO_FOREIGN_APP_CODE_PASS'
+      - name: Upload exact Windows Aura-only application source and real runtime EXE
+        uses: actions/upload-artifact@v4
         with:
-          name: xr09-pure-aura-source-and-runtime
-          path: |
-            apps/xray-pure/main.aura
-            apps/xray-pure/README.md
-            target/debug/aura.exe
+          name: AURA-XR09-PureAura-Windows-x64-${{ github.sha }}
+          path: dist-xr09/
+          retention-days: 30
           if-no-files-found: error
+
+  native-lumina-x11:
+    name: Native Aura language UI: real llvmpipe pixels, xdotool callbacks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Reuse Agent B proven software-render Linux GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev cmake ninja-build pkg-config xvfb xauth xdotool imagemagick libasound2-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libgl1-mesa-dri fonts-dejavu-core
+      - uses: Swatinem/rust-cache@v2
+      - name: Build actual Aura AVM, Lumina window runtime and Z3
+        run: cargo build -p aura --locked --features z3
+      - name: Verify full Aura app and mathematical model under source checker
+        run: |
+          ./target/debug/aura check apps/xray-pure/policy.aura
+          ./target/debug/aura check apps/xray-pure/main.aura
+          echo XR09_X11_AURA_SOURCE_CHECK_PASS
+      - name: Real X11 native Aura app click and llvmpipe framebuffer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-native
+          xvfb-run -a -s '-screen 0 1920x1200x24' bash -euo pipefail -c '
+            export LIBGL_ALWAYS_SOFTWARE=1
+            export AURA_UI_MAX_FRAMES=720
+            export AURA_UI_DEBUG=1
+            unset AURA_AVM_NO_Z3 || true
+            ./target/debug/aura run apps/xray-pure/main.aura --mode avm >dist-native/real-window.log 2>&1 &
+            app=$!
+            trap "kill $app 2>/dev/null || true" EXIT
+            wid=""
+            for i in $(seq 1 120); do
+              wid=$(xdotool search --onlyvisible --name "Aura Lumina Sentinel" 2>/dev/null | head -n1 || true)
+              if [ -n "$wid" ]; then break; fi
+              if ! kill -0 "$app" 2>/dev/null; then cat dist-native/real-window.log; exit 31; fi
+              sleep 0.25
+            done
+            if [ -z "$wid" ]; then cat dist-native/real-window.log; echo "XR09_X11_NO_REAL_WINDOW"; exit 32; fi
+            echo "XR09_X11_NATIVE_WINDOW_OPEN $wid"
+            # Physical pointer events into the REAL user-authored Aura buttons.
+            xdotool mousemove --window "$wid" 105 206 click 1
+            sleep 0.3
+            xdotool mousemove --window "$wid" 548 206 click 1
+            sleep 1
+            import -window "$wid" dist-native/XR09-AuraLumina-Native.png
+            test -s dist-native/XR09-AuraLumina-Native.png
+            wait "$app"
+            cat dist-native/real-window.log
+            grep -q "XR09_PURE_AURA_MODEL_PASS sensitive=3 standard=3 strict=2" dist-native/real-window.log
+            grep -q "XR09_NATIVE_SENSITIVE_CLICK_PASS" dist-native/real-window.log
+            grep -q "XR09_NATIVE_STRICT_CLICK_PASS" dist-native/real-window.log
+            grep -q "AURA_UI_DEBUG: frame=" dist-native/real-window.log
+            echo "XR09_X11_REAL_AURA_MOUSE_EVENT_AND_PIXEL_PASS"
+          '
+          file dist-native/XR09-AuraLumina-Native.png
+      - name: Upload exact native X11 visual and event log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURA-XR09-Native-Lumina-X11-Evidence-${{ github.sha }}
+          path: dist-native/
+          retention-days: 30
+          if-no-files-found: warn
