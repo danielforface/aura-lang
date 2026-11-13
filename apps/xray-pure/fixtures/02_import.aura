@@ -1,0 +1,4 @@
+import aura::lumina
+
+cell main():
+    io.println("HELLO")

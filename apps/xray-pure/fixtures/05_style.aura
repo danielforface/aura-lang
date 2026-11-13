@@ -1,0 +1,7 @@
+import aura::lumina
+
+cell main():
+    layout:
+        VStack(spacing: 12) {
+            render: Text(text: "hello", style: Style { fg: "#E6EDF3", size: 18 })
+        }

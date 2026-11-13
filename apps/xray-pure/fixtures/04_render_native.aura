@@ -1,0 +1,9 @@
+# Built-in UI; avoid invalid legacy SDK shim import
+
+cell main():
+    render:
+        App(title: "Probe", bg: "#080D16") {
+            VStack(spacing: 12) {
+                render: Text(text: "hello")
+            }
+        }

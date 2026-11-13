@@ -1,0 +1,165 @@
+# AURA X-RAY / PURE AURA LAB — NO PRODUCT C/RUST/JS/HTML.
+# Executable Aura source for the qualified A+Lumina combined runtime.
+# This is an intentionally SYNTHETIC capture fixture, not private user data.
+# Runtime limitation: no qualified JSONL streaming/indexing or OS process sampler
+# is exposed to application Aura code yet. Do NOT call it full XR-08 parity.
+# UI AST is built-in to the AVM; importing aura::lumina injects an incompatible sdk/std/lumina.aura shim
+
+cell xr09_cpu_threshold(policy: u32):
+    yield 500 + 200 * policy + 50 * (policy / 2)
+
+cell xr09_io_threshold(policy: u32):
+    yield 8192 * (1 + policy + (policy / 2))
+
+cell xr09_memory_threshold(policy: u32):
+    yield 16384 * (1 + policy + (policy / 2))
+
+cell xr09_cpu_min(policy: u32):
+    yield 2 + policy
+
+cell xr09_io_min(policy: u32):
+    yield 1 + (policy / 2)
+
+cell xr09_cpu_sample(sample: u32):
+    val mut value: u32 = 0
+    if sample == 5:
+        value = 1030
+    if sample == 6:
+        value = 1062
+    if sample == 7:
+        value = 1078
+    if sample == 8:
+        value = 1078
+    if sample == 9:
+        value = 1190
+    if sample == 10:
+        value = 984
+    yield value
+
+cell xr09_io_sample(sample: u32):
+    val mut value: u32 = 0
+    if sample == 7:
+        value = 17243
+    yield value
+
+cell xr09_memory_sample(sample: u32):
+    val mut value: u32 = 0
+    if sample == 2:
+        value = 91932
+    yield value
+
+cell xr09_memory_retracted():
+    yield 106348
+
+cell xr09_cpu_streak(policy: u32):
+    val threshold: u32 = xr09_cpu_threshold(policy)
+    val mut streak: u32 = 0
+    if xr09_cpu_sample(5) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(6) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(7) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(8) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(9) >= threshold:
+        streak = streak + 1
+    if xr09_cpu_sample(10) >= threshold:
+        streak = streak + 1
+    yield streak
+
+cell xr09_memory_case(policy: u32):
+    val mut decision: u32 = 0
+    if xr09_memory_sample(2) >= xr09_memory_threshold(policy):
+        if xr09_memory_retracted() >= xr09_memory_sample(2) / 2:
+            decision = 1
+    yield decision
+
+cell xr09_cpu_case(policy: u32):
+    val mut decision: u32 = 0
+    if xr09_cpu_streak(policy) >= xr09_cpu_min(policy):
+        decision = 1
+    yield decision
+
+cell xr09_io_case(policy: u32):
+    val mut decision: u32 = 0
+    if xr09_io_sample(7) >= xr09_io_threshold(policy):
+        if xr09_io_min(policy) == 1:
+            decision = 1
+    yield decision
+
+cell xr09_case_count(policy: u32):
+    yield xr09_memory_case(policy) + xr09_cpu_case(policy) + xr09_io_case(policy)
+
+cell xr09_policy_code(value: String):
+    val mut code: u32 = 1
+    if value == "sensitive":
+        code = 0
+    if value == "strict":
+        code = 2
+    yield code
+
+cell xr09_case_code(value: String):
+    val mut code: u32 = 1
+    if value == "cpu":
+        code = 2
+    if value == "io":
+        code = 3
+    yield code
+
+cell xr09_case_peak(which: u32):
+    val mut result: u32 = 91932
+    if which == 2:
+        result = 1190
+    if which == 3:
+        result = 17243
+    yield result
+
+cell xr09_case_title(which: u32):
+    val mut result: String = "MEMORY PULSE / OBSERVED RETRACTION"
+    if which == 2:
+        result = "CPU STREAK / 6 CONTIGUOUS SAMPLES"
+    if which == 3:
+        result = "I/O TRANSFER / SINGLE OBSERVED SPIKE"
+    yield result
+
+cell xr09_case_source(which: u32):
+    val mut result: String = "S2: +91932 KiB | S3: -106348 KiB"
+    if which == 2:
+        result = "S5..S10: 1030 1062 1078 1078 1190 984 millicores"
+    if which == 3:
+        result = "S7: write transfer 17243 KiB/s | strict=no case"
+    yield result
+
+cell xr09_sample_score(sample: u32):
+    yield xr09_cpu_sample(sample) / 100 + xr09_io_sample(sample) / 2048 + xr09_memory_sample(sample) / 1024 * 2
+
+cell xr09_bar_height(sample: u32):
+    yield 5 + xr09_sample_score(sample) * 2
+
+cell xr09_support(which: u32):
+    val mut result: u32 = 3
+    if which == 3:
+        result = 2
+    yield result
+
+cell xr09_proof():
+    val mut result: u32 = 0
+    if xr09_case_count(0) == 3:
+        if xr09_case_count(1) == 3:
+            if xr09_case_count(2) == 2:
+                if xr09_cpu_streak(2) == 6:
+                    if xr09_memory_case(2) == 1:
+                        if xr09_io_case(2) == 0:
+                            if xr09_case_peak(1) == 91932:
+                                if xr09_sample_score(2) == 178:
+                                    result = 1
+    yield result
+
+cell main():
+    val proof: u32 = xr09_proof()
+    if proof == 1:
+        io.println("XR09_PURE_AURA_POLICY_PASS sensitive=3 standard=3 strict=2")
+    else:
+        io.println("XR09_PURE_AURA_POLICY_FAIL")
+    yield proof

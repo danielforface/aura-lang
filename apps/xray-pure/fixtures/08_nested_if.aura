@@ -1,0 +1,9 @@
+cell check(x: u32):
+    val mut value: u32 = 0
+    if x > 5:
+        if x < 20:
+            value = 1
+    yield value
+
+cell main():
+    io.println("TEST")
