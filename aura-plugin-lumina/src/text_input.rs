@@ -33,6 +33,32 @@ fn grapheme_index_at_or_after_byte(text: &str, byte: usize) -> usize {
     grapheme_count(text)
 }
 
+/// A native double-click chooses the UAX29 word at the pixel hit caret.
+/// Word spans are mapped to the smallest *whole extended grapheme* range:
+/// a word boundary is never allowed to split emoji ZWJ, flags, or accents.
+/// Non-word emoji/punctuation selects one complete adjacent grapheme.
+fn clicked_word_span(text:&str,at:usize)->Option<(usize,usize)>{
+    if text.is_empty()||text.len()>MAX_PROJECTED_TEXT_BYTES{return None;}
+    let boundaries:Vec<usize>=text.grapheme_indices(true)
+        .map(|(byte,_)|byte).chain(std::iter::once(text.len())).collect();
+    let count=boundaries.len().saturating_sub(1);
+    let at=at.min(count);
+    let byte=boundaries[at];
+    let spans:Vec<(usize,usize)>=text.unicode_word_indices()
+        .map(|(start,word)|(start,start+word.len())).collect();
+    let chosen=spans.iter().copied()
+        .find(|(start,end)|*start<=byte && byte<*end)
+        .or_else(||spans.iter().copied().find(|(_,end)|*end==byte));
+    if let Some((start,end))=chosen{
+        // Floor start / ceil end in extended-grapheme coordinates.
+        let a=boundaries.partition_point(|b|*b<=start).saturating_sub(1);
+        let b=boundaries.partition_point(|b|*b<end);
+        return (a<b&&b<=count).then_some((a,b));
+    }
+    if count==0{None}else if at<count{Some((at,at+1))}
+    else{Some((at-1,at))}
+}
+
 /// Logical Ctrl+word movement uses Unicode UAX #29 word segmentation but
 /// returns only UAX #29 *grapheme* indices. Never split combining sequences,
 /// regional-indicator flags or emoji ZWJ clusters even when the segmenter
@@ -201,6 +227,18 @@ impl EditSession {
     }
     pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
     pub(crate) fn rebase_generation(&self)->u64{self.rebase_generation}
+    /// Double-click selection is a navigation-only action: one authority
+    /// epoch transition, zero Undo entries, zero Host change callbacks.
+    /// This cannot read projected IME text or select beyond bounded buffer.
+    pub(crate) fn select_word_at(&mut self,grapheme:usize)->bool{
+        if self.composing(){return false;}
+        let Some((a,b))=clicked_word_span(&self.buffer,grapheme)else{return false;};
+        let old=(self.anchor,self.caret);
+        self.anchor=a;self.caret=b;
+        if old!=(a,b){self.advance_authority_epoch();}
+        old!=(a,b)
+    }
+
     /// Shaped/BiDi GPU hit-testing must pass through this method rather
     /// than assigning caret/anchor directly, so stale IME deletion tokens
     /// are invalidated even if the user navigates away and back.
@@ -506,6 +544,51 @@ impl EditSession {
 #[cfg(test)]
 mod tests {
 
+    #[test]
+    fn double_click_selects_unicode_words_without_splitting_graphemes(){
+        assert_eq!(clicked_word_span("alpha beta",2),Some((0,5)));
+        assert_eq!(clicked_word_span("alpha beta",8),Some((6,10)));
+        assert_eq!(clicked_word_span("שלום עולם",2),Some((0,4)));
+        assert_eq!(clicked_word_span("שלום עולם",7),Some((5,9)));
+        let emoji="🇮🇱👩‍💻";
+        assert_eq!(clicked_word_span(emoji,0),Some((0,1)));
+        assert_eq!(clicked_word_span(emoji,1),Some((1,2)));
+        assert_eq!(clicked_word_span("e\u{301}cole",2),Some((0,5)));
+        assert_eq!(clicked_word_span("",0),None);
+        assert_eq!(clicked_word_span(&"x".repeat(MAX_PROJECTED_TEXT_BYTES+1),3),None);
+    }
+    #[test]
+    fn native_word_selection_is_navigation_only_and_atomic_on_next_edit(){
+        let mut s=EditSession::new("אבג beta 👩‍💻".into());
+        assert!(s.select_word_at(5));
+        assert_eq!(s.selection(),Some((4,8)));
+        assert_eq!(s.selected_text(),Some("beta"));
+        assert_eq!(s.undo_len(),0);
+        assert!(!s.select_word_at(5));
+        assert_eq!(s.undo_len(),0);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("Z".into()))));
+        assert_eq!(s.buffer,"אבג Z 👩‍💻");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"אבג beta 👩‍💻");
+        let previous=s.authority_epoch();
+        s.rebase_authority("Host new".into());
+        assert!(s.authority_epoch()>previous);
+        assert!(s.select_word_at(2));
+        assert_eq!(s.selected_text(),Some("Host"));
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]
+    fn live_composition_refuses_double_click_selection_without_preedit_export(){
+        let mut s=EditSession::new("alpha beta".into());
+        assert!(s.start_composition(1));
+        assert!(!s.select_word_at(7));
+        assert_eq!(s.selection(),None);
+        assert_eq!(s.undo_len(),0);
+        s.abandon_composition();
+        assert!(s.select_word_at(7));
+        assert_eq!(s.selected_text(),Some("beta"));
+    }
     #[test]
     fn uax29_word_shortcuts_keep_emoji_and_hebrew_graphemes_whole(){
         let sample="אבג 👩‍💻 עולם";

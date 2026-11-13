@@ -1819,3 +1819,71 @@ fn native_x11_password_and_sensitive_fields_hide_glyphs_atlas_and_shaped_cache()
     drop(p);
     eprintln!("LUMINA_PASSWORD_MASK_X11 shaped_gpu_no_private=true atlas_no_private=true pixel_matches_stars=true host_rebase_mask=true caret_mask_metrics=true private_host_callback=true clipboard_denied=true");
 }
+
+
+#[test]
+fn native_x11_unicode_double_click_word_triple_click_all_and_host_authority(){
+    const FONT:&str="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    let p=AuraLuminaPlugin::new();let mut cx=NexusContext::default();
+    let mut root=node("App",&[("bg","#121212")],vec![
+        node("TextInput",&[("x","20"),("y","20"),("width","350"),("height","44"),
+            ("radius","0"),("size","18"),("font_path",FONT),
+            ("value","alpha beta world"),("value_revision","1"),
+            ("on_change","cb:961"),("pointer_selection","true"),
+            ("clipboard","true")],vec![]),
+    ]);
+    frames(&p,&root,&mut cx,4);
+    assert!(p.diagnostic_resize_window(640,300));frames(&p,&root,&mut cx,3);
+    let wins=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=wins.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",win]);
+    let prefix=p.diagnostic_font_coverage(FONT,18,"alpha ").unwrap();
+    let target=32.0+prefix+
+        0.5*p.diagnostic_font_coverage(FONT,18,"beta").unwrap();
+    let x=(target.round() as i32).to_string();
+    let click=|p:&AuraLuminaPlugin,root:&UiNode,cx:&mut NexusContext|{
+        xdo(&["mousemove","--window",win,&x,"42"]);
+        frames(p,root,cx,2);
+        xdo(&["mousedown","1"]);
+        assert!(frames(p,root,cx,2).is_empty());
+        xdo(&["mouseup","1"]);
+        assert!(frames(p,root,cx,2).is_empty());
+    };
+    click(&p,&root,&mut cx);
+    assert_eq!(p.diagnostic_text_visual(961,32.0,326.0).unwrap().logical_selection,None);
+    click(&p,&root,&mut cx);
+    let doubled=p.diagnostic_text_visual(961,32.0,326.0).unwrap();
+    assert_eq!(doubled.logical_selection,Some((6,10)),
+        "two real physical X11 clicks must select the Unicode word: {doubled:?}");
+    click(&p,&root,&mut cx);
+    assert_eq!(p.diagnostic_text_visual(961,32.0,326.0).unwrap().logical_selection,
+        Some((0,16)),"third click must select the entire field");
+    assert!(clipboard_key(&p,&root,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&root,&mut cx),"alpha beta world");
+
+    // After a release timeout, a fresh pair selects only the middle word.
+    std::thread::sleep(std::time::Duration::from_millis(510));
+    click(&p,&root,&mut cx);
+    click(&p,&root,&mut cx);
+    assert_eq!(p.diagnostic_text_visual(961,32.0,326.0).unwrap().logical_selection,
+        Some((6,10)));
+    assert!(clipboard_key(&p,&root,&mut cx,"c").is_empty());
+    assert_eq!(read_x11_clipboard_with_pump(&p,&root,&mut cx),"beta");
+    // Selection creates no Host callback or Undo. The next edit uses the
+    // existing atomic replacement, then Undo restores the full original.
+    let changed=press(&p,&root,&mut cx,"q",false);
+    assert!(has(&changed,961,"alpha q world"));
+    assert_eq!(changed.iter().filter(|e|e.callback_id==961&&!e.submitted).count(),1);
+    assert!(has(&clipboard_key(&p,&root,&mut cx,"z"),961,"alpha beta world"));
+
+    // New controlled Host revision while a click is held revokes the cadence.
+    click(&p,&root,&mut cx);
+    root.children[0].set_prop("value","HOSTED");
+    root.children[0].set_prop("value_revision","2");
+    frames(&p,&root,&mut cx,3);
+    click(&p,&root,&mut cx);
+    assert_eq!(p.diagnostic_text_visual(961,32.0,326.0).unwrap().logical_selection,
+        None,"stale multi-click must not select a newer Host generation");
+    drop(p);
+    eprintln!("LUMINA_MULTICLICK_X11 word_double=true triple_select_all=true xclip_word_and_all=true atomic_edit_undo=true host_rebase_revokes=true pixel_hit_true=true");
+}

@@ -194,3 +194,29 @@ fn true_x11_shaped_rtl_pointer_drag_follows_visual_stops_and_host_rebase(){
  drop(p);
  eprintln!("LUMINA_SHAPED_POINTER_X11 rtl_visual_stops=true whole_graphemes=true no_invented_ligature=true host_rebase_revokes=true");
 }
+
+#[test]
+fn true_x11_shaped_hebrew_double_click_selects_visual_word_without_edit(){
+    let p=AuraLuminaPlugin::new();let mut c=NexusContext::default();
+    let mut t=tree("שלום");
+    t.children[0].set_prop("pointer_selection","true");
+    frames(&p,&t,&mut c,5);
+    assert!(p.diagnostic_resize_window(650,420));frames(&p,&t,&mut c,4);
+    let windows=xdo(&["search","--name","Aura Lumina Sentinel"]);
+    let win=windows.lines().next().unwrap();
+    xdo(&["windowfocus","--sync",win]);
+    click(&p,&t,&mut c,win,65);
+    assert_eq!(visual(&p).logical_selection,None);
+    click(&p,&t,&mut c,win,65);
+    let selected=visual(&p);
+    assert_eq!(selected.logical_selection,Some((0,4)),
+        "actual Hebrew visual pixel hit must select source logical word: {selected:?}");
+    assert_eq!(selected.selection_screens.len(),1);
+    assert!(selected.selection_screens[0].1>selected.selection_screens[0].0);
+    assert!(selected.caret_visible);
+    click(&p,&t,&mut c,win,65);
+    assert_eq!(visual(&p).logical_selection,Some((0,4)),
+        "triple click must select the entire source text");
+    drop(p);
+    eprintln!("LUMINA_SHAPED_MULTICLICK_X11 real_hebrew_word=true uax9_pixel_stops=true whole_grapheme_selection=true triple_all=true no_host_edit=true");
+}

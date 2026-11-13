@@ -17,6 +17,8 @@ mod input_policy;
 
 #[cfg(any(feature = "raylib", test))]
 mod text_input;
+#[cfg(any(feature = "raylib", test))]
+mod pointer_click;
 
 #[cfg(any(feature = "raylib", test))]
 mod text_revision;
@@ -381,6 +383,8 @@ struct LuminaWindow {
     focused_input: Option<FocusedTextInput>,
     /// Transient pointer capture, tied to one live editor authority epoch.
     pointer_capture:Option<InputPointerCapture>,
+    /// Press/release click cadence only: metadata, no text retention.
+    click_sequence:Option<pointer_click::ClickSequence>,
     /// Native Button keyboard focus, exclusive with focused_input.
     focused_button: Option<u64>,
     /// Forms whose last native submit attempt failed. Field errors are
@@ -1598,6 +1602,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     click_anim: None,
                     focused_input: None,
                     pointer_capture:None,
+                    click_sequence:None,
                     focused_button: None,
                     attempted_forms: std::collections::HashSet::new(),
                     blur_touched:HashMap::new(),
@@ -1769,6 +1774,21 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let keyboard_order=layout::keyboard_focus_order_with_blocked(
                 tree,&planned_layout,&focus_order,&cancel_pre.blocked);
             reconcile_input_sessions(win,&focus_order,&revisions);
+            // A re-render/Host update may revoke the capability without a
+            // new physical click; stale click cadence must not survive it.
+            if win.click_sequence.is_some_and(|gesture|{
+                win.focused_input.as_ref().is_none_or(|fi|
+                    fi.on_change!=gesture.callback_id ||
+                    fi.session.authority_epoch()!=gesture.epoch ||
+                    fi.session.rebase_generation()!=gesture.generation ||
+                    fi.session.composing()) ||
+                !focus_order.iter().any(|target|matches!(target,
+                    layout::HitTarget::TextInput{on_change,..}
+                    if *on_change==gesture.callback_id)) ||
+                find_input_by_callback(tree,&planned_layout,gesture.callback_id)
+                    .is_none_or(|(node,_)|
+                        input_policy::pointer_selection_enabled(node)!=Ok(true))
+            }) {win.click_sequence=None;}
             // Capture AFTER Host tree reconciliation, before native user
             // pointer/Tab/Escape. No touched errors on unmount/rebase alone.
             let focus_before_user_action=win.focused_input.as_ref()
@@ -1812,8 +1832,13 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let candidate_click_consumed=false;
             let composing_before_pointer=win.focused_input.as_ref()
                 .is_some_and(|fi|fi.session.composing());
-            // A fresh physical press revokes any previous field capture.
-            if clicked {win.pointer_capture=None;}
+            // A fresh physical press revokes any earlier drag. Remember a
+            // *completed* nearby click only while its editor generation and
+            // physical pointer position remain authoritative.
+            let preceding_click=if clicked{
+                win.pointer_capture=None;
+                win.click_sequence.take()
+            }else{None};
             let click_cb = if clicked && !candidate_click_consumed {
                 match layout::hit_test_with_blocked(tree, &planned_layout,
                     mouse.x, mouse.y,&cancel_pre.blocked) {
@@ -1845,14 +1870,42 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                                             &win.last_text_views,node,pl,fi,mouse.x));
                                     if let (Some((index,run)),Some(fi))=
                                         (hit,win.focused_input.as_mut()) {
-                                        fi.session.set_visual_caret(index,opted && extend_selection);
-                                        fi.visual_affinity=run;
                                         if opted {
-                                            win.pointer_capture=Some(InputPointerCapture {
-                                                callback_id:fi.on_change,
-                                                authority_epoch:fi.session.authority_epoch(),
-                                                rebase_generation:fi.session.rebase_generation(),
-                                            });
+                                            let gesture=if !extend_selection{
+                                                pointer_click::ClickSequence::begin(
+                                                    preceding_click,fi.on_change,
+                                                    fi.session.authority_epoch(),
+                                                    fi.session.rebase_generation(),
+                                                    mouse.x,mouse.y,now)
+                                            }else{None};
+                                            let clicks=gesture.map(|g|g.clicks).unwrap_or(1);
+                                            fi.session.set_visual_caret(index,extend_selection);
+                                            match clicks {
+                                                2=>{fi.session.select_word_at(index);},
+                                                3=>{fi.session.apply(
+                                                    text_input::SessionAction::SelectAll);},
+                                                _=>{},
+                                            }
+                                            fi.visual_affinity=run;
+                                            // Multi-click word/select-all must
+                                            // not be collapsed by next held frame.
+                                            if clicks==1 {
+                                                win.pointer_capture=Some(InputPointerCapture {
+                                                    callback_id:fi.on_change,
+                                                    authority_epoch:fi.session.authority_epoch(),
+                                                    rebase_generation:fi.session.rebase_generation(),
+                                                });
+                                            }
+                                            if let Some(mut g)=gesture {
+                                                g.epoch=fi.session.authority_epoch();
+                                                g.generation=fi.session.rebase_generation();
+                                                win.click_sequence=Some(g);
+                                            }
+                                        }else{
+                                            // Original non-opted shaped-GPU
+                                            // single click retains its behavior.
+                                            fi.session.set_visual_caret(index,false);
+                                            fi.visual_affinity=run;
                                         }
                                     }
                                 }
@@ -1893,6 +1946,9 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     },
                 }
             }
+            // Keyboard focus traversal always ends a mouse multi-click
+            // sequence, even if it returns to the same callback quickly.
+            if tab || escape {win.click_sequence=None;}
             // Pointer capture continues outside widget bounds while held.
             // Only the same unique, currently eligible field and exact
             // EditSession authority generation may extend the selection.
@@ -1925,6 +1981,14 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                     }
                 }
+            }
+            // Physical movement beyond six pixels breaks the multi-click
+            // cadence, but preserves the existing single-press drag capture.
+            if let Some(sequence)=win.click_sequence.as_mut(){
+                if mouse_held||mouse_released {
+                    sequence.observe_motion(mouse.x,mouse.y);
+                }
+                if mouse_released {sequence.release(now);}
             }
             // The existing input/IME Escape branch below remains responsible
             // for canceling preedit or blurring TextInput.
