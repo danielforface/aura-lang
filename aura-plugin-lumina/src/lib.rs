@@ -7,7 +7,18 @@ mod viewport;
 mod layout;
 
 #[cfg(any(feature = "raylib", test))]
+mod forms;
+
+#[cfg(any(feature = "raylib", test))]
+mod draft_retention;
+
+// Privacy classification is shared by native paint and headless diagnostics.
+mod input_policy;
+
+#[cfg(any(feature = "raylib", test))]
 mod text_input;
+#[cfg(any(feature = "raylib", test))]
+mod pointer_click;
 
 #[cfg(any(feature = "raylib", test))]
 mod text_revision;
@@ -47,6 +58,47 @@ use aura_nexus::UiTextInputEvent;
 
 #[cfg(not(feature = "raylib"))]
 use aura_nexus::format_ui_tree;
+
+/// Headless diagnostic output must not bypass native sensitive-field
+/// privacy. The diagnostic clone carries NO user-authored prop values from a
+/// private TextInput, even via unexpected custom prop keys or duplicates.
+/// Actual Host UiNode and feedback remain untouched.
+#[cfg(not(feature="raylib"))]
+fn redacted_headless_ui_tree(root:&UiNode)->String {
+    fn strip(node:&mut UiNode) {
+        if input_policy::private_display(node) {
+            for (_,value) in &mut node.props {
+                *value="[redacted]".to_owned();
+            }
+        }
+        for child in &mut node.children{strip(child);}
+    }
+    let mut safe=root.clone();
+    strip(&mut safe);
+    format_ui_tree(&safe)
+}
+
+#[cfg(all(test,not(feature="raylib")))]
+#[test]
+fn headless_diagnostics_never_print_private_payload_or_custom_props(){
+    let mut root=UiNode::new("App");
+    let mut private=UiNode::new("TextInput");
+    private.set_prop("type","password");
+    private.set_prop("value","לא-לחשוף-SECRET");
+    private.set_prop("placeholder","private hint");
+    private.set_prop("other_sensitive_metadata","another-secret");
+    root.children.push(private);
+    let mut public=UiNode::new("TextInput");
+    public.set_prop("value","public-visible");
+    root.children.push(public);
+    let output=redacted_headless_ui_tree(&root);
+    assert!(!output.contains("לא-לחשוף-SECRET"));
+    assert!(!output.contains("private hint"));
+    assert!(!output.contains("another-secret"));
+    assert!(output.contains("[redacted]"));
+    assert!(output.contains("public-visible"));
+}
+
 
 #[cfg(feature = "raylib")]
 use std::cell::RefCell;
@@ -329,7 +381,37 @@ struct LuminaWindow {
     sdf: RoundedRectShader,
 
     focused_input: Option<FocusedTextInput>,
+    /// Transient pointer capture, tied to one live editor authority epoch.
+    pointer_capture:Option<InputPointerCapture>,
+    /// Press/release click cadence only: metadata, no text retention.
+    click_sequence:Option<pointer_click::ClickSequence>,
+    /// Native Button keyboard focus, exclusive with focused_input.
+    focused_button: Option<u64>,
+    /// Forms whose last native submit attempt failed. Field errors are
+    /// always recomputed against current authoritative EditSession drafts.
+    attempted_forms: std::collections::HashSet<String>,
+    /// Version-bound, metadata-only early validation after genuine user blur.
+    /// Discarded on unmount, identity change and new Host authority.
+    blur_touched:HashMap<u64,forms::BlurBinding>,
+    /// Monotonic host request generations for which the native user already
+    /// emitted a cancellation request. Bounded, never cleared by a re-render.
+    cancelled_requests: HashMap<String,u64>,
+    /// First eligible, explicitly opted TextInput can get initial focus only
+    /// once per window; later user blur/Tab/click must never be overridden.
+    autofocus_decided: bool,
     input_sessions: HashMap<u64, FocusedTextInput>,
+    /// Opt-in, non-sensitive identities last present in the visible UI.
+    retention_active:HashMap<u64,draft_retention::Identity>,
+    /// No focus/IME ownership survives removal. The stored committed
+    /// EditSession + bounded Undo may be rebound only to the same callback,
+    /// logical key/form and nondecreasing host value_revision.
+    retained_drafts:HashMap<u64,RetainedDraft>,
+    /// Metadata-only, eight-entry maximum. A capacity loss must not be
+    /// silently mistaken for a restored route draft when the field returns.
+    retention_misses:HashMap<u64,draft_retention::LostDraft>,
+    /// Incremented on native TextInput focus; used only for
+    /// deterministic bounded draft admission, never as Host text authority.
+    retention_focus_seq:u64,
     last_text_views: HashMap<u64,text_viewport::Visual>,
     click_anim: Option<(u64, f64)>,
     just_opened: bool,
@@ -340,7 +422,14 @@ struct LuminaWindow {
 }
 
 #[cfg(feature = "raylib")]
-#[derive(Clone, Debug)]
+#[derive(Clone,Copy,Debug)]
+struct InputPointerCapture {
+    callback_id:u64,
+    authority_epoch:u64,
+    rebase_generation:u64,
+}
+#[cfg(feature="raylib")]
+#[derive(Clone,Debug)]
 struct FocusedTextInput {
     on_change: u64,
     on_submit: Option<u64>,
@@ -348,13 +437,21 @@ struct FocusedTextInput {
     session: text_input::EditSession,
     scroll_x: f32,
     visual_affinity: Option<usize>,
+    last_focus:u64,
+}
+#[cfg(feature="raylib")]
+struct RetainedDraft {
+    identity:draft_retention::Identity,
+    entry:FocusedTextInput,
+    bytes:usize,
 }
 
 /// Unknown explicit policies fail closed. Normal TextInput keeps phase-25
 /// behavior; this is NOT a complete password/secure-memory widget.
 #[cfg(all(feature="raylib",target_os="linux"))]
 fn native_surrounding_policy_allows(node:&UiNode)->bool{
-    if node.kind!="TextInput"{return false;}
+    if !input_policy::edit_mode(node).editable()
+        || input_policy::grapheme_limit(node).is_err(){return false;}
     for key in ["type","input_type"]{
         if prop_string(node,key).is_some_and(|value|
             !matches!(value,"text"|"search"|"email"|"number"|"url"|"tel")){
@@ -395,10 +492,79 @@ fn sync_native_ibus_context(
     sent && bus.mark_context_epoch(cb,fi.session.authority_epoch())
 }
 
+/// Use the safe Raylib clipboard API; the untrusted OS value is admitted
+/// into the native editor only after strict UTF-8, one-line and byte gates.
+/// Never bypass this crate's forbid(unsafe_code) boundary.
+#[cfg(all(feature="raylib",target_os="linux"))]
+fn read_native_clipboard_text(rl:&RaylibHandle)->Option<String>{
+    let value=rl.get_clipboard_text().ok()?;
+    input_policy::safe_clipboard_text(&value).then_some(value)
+}
+
+/// Real pixel hit test using exactly the same committed text/font as paint.
+/// Never select an IME preedit, placeholder or unresolved shaped ligature.
+#[cfg(feature="raylib")]
+fn input_pointer_hit(
+    rl:&RaylibHandle,
+    fonts:&HashMap<String,LoadedUnicodeFont>,
+    shaped:&HashMap<String,shaped_gpu::PreparedGlyphText>,
+    views:&HashMap<u64,text_viewport::Visual>,
+    node:&UiNode,plan:&layout::LayoutNode,fi:&FocusedTextInput,
+    screen_x:f32
+)->Option<(usize,Option<usize>)>{
+    if fi.session.composing() ||
+        fi.session.buffer.len()>text_input::MAX_PROJECTED_TEXT_BYTES ||
+        !screen_x.is_finite(){return None;}
+    let content=text_viewport::content_bounds(plan.bounds);
+    if content.width<=0.0 || content.intersect(plan.clip).is_empty(){return None;}
+    let scroll=views.get(&fi.on_change).map(|v|v.scroll).unwrap_or(fi.scroll_x);
+    let x=screen_x-content.x+scroll;
+    if !x.is_finite(){return None;}
+    if fi.session.buffer.is_empty(){return Some((0,None));}
+    if shaped_gpu::is_opted(node) {
+        let shape=loaded_shaped_input(node,&fi.session.buffer,shaped)?;
+        return bidi_editor::hit_test(shape,x).map(|stop|
+            (stop.grapheme,Some(stop.run)));
+    }
+    let size=prop_i32(node,"size").unwrap_or(18).max(10);
+    let font=selected_unicode_font(fonts,node,size,&fi.session.buffer);
+    text_viewport::grapheme_at_x(&fi.session.buffer,x,|prefix|{
+        if let Some(font)=font{font.measure_text(prefix,size as f32,0.0).x}
+        else{rl.measure_text(prefix,size).max(0) as f32}
+    }).map(|index|(index,None))
+}
+
+/// Picks from the already-qualified focus order: clipping, visibility,
+/// disabled controls, unique callback identity and value_revision validation
+/// are enforced BEFORE this opt-in focus decision.
+#[cfg(feature = "raylib")]
+fn initial_autofocus_target(
+    tree:&UiNode,planned:&layout::LayoutNode,
+    order:&[layout::HitTarget]
+)->Option<layout::HitTarget>{
+    order.iter().find(|candidate|match candidate{
+        layout::HitTarget::TextInput{on_change,..} =>
+            find_input_by_callback(tree,planned,*on_change)
+                .is_some_and(|(node,_)|prop_string(node,"autofocus")==Some("true")),
+        _=>false,
+    }).cloned()
+}
+
 #[cfg(feature = "raylib")]
 fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String, Option<u64>)>) {
+    if win.pointer_capture.is_some_and(|capture|
+        target.as_ref().is_none_or(|next|next.0!=capture.callback_id)) {
+        win.pointer_capture=None;
+    }
     if let (Some(active), Some((new_id, _, _, _))) = (&win.focused_input, &target) {
-        if active.on_change == *new_id { return; }
+        if active.on_change == *new_id {
+            // A new intentional click/focus of this editor counts as use.
+            win.retention_focus_seq=win.retention_focus_seq.saturating_add(1);
+            if let Some(editor)=win.focused_input.as_mut(){
+                editor.last_focus=win.retention_focus_seq;
+            }
+            return;
+        }
     }
     if let Some(mut previous) = win.focused_input.take() {
         // Blurring a field cancels the uncommitted composition. It may never
@@ -413,7 +579,10 @@ fn switch_input(win: &mut LuminaWindow, target: Option<(u64, Option<u64>, String
             session: text_input::EditSession::new(source_value.clone()),
             scroll_x: 0.0,
             visual_affinity: None,
+            last_focus:0,
         });
+        win.retention_focus_seq=win.retention_focus_seq.saturating_add(1);
+        entry.last_focus=win.retention_focus_seq;
         if entry.revision.observe(&source_value,revision)
             == text_revision::Decision::Rebase
             && (entry.session.buffer != source_value || revision.is_some()) {
@@ -466,6 +635,122 @@ fn input_value_revisions(tree:&UiNode,plan:&layout::LayoutNode,order:&[layout::H
     let mut invalid=std::collections::HashSet::new();
     collect(tree,plan,&valid_ids,&mut result,&mut invalid);
     (result,invalid)
+}
+
+/// Retain user-authored drafts only when a previously eligible, explicitly
+/// keyed field is actually absent from the next render tree. Hidden/disabled
+/// fields, malformed/duplicate keys and changed logical identity must never
+/// turn into an implicit cache of private content.
+#[cfg(feature="raylib")]
+fn reconcile_retained_drafts(win:&mut LuminaWindow,
+    catalog:&draft_retention::Catalog) {
+    // Host-wide route/session authority can change while all editors are
+    // unmounted (logout, account switch, workflow completion). Never retain
+    // bytes belonging to an old scope after this explicit host transition.
+    // A hidden/disabled/sensitive foreign TextInput with the same logical
+    // key also revokes the old cached session; do not wait for it to become
+    // eligible or visible before invalidating private draft ownership.
+    win.retained_drafts.retain(|id,saved|
+        catalog.scope_gate.allows(&saved.identity.scope)
+        && !catalog.conflicts_with(*id,&saved.identity));
+    win.retention_misses.retain(|id,miss|
+        catalog.scope_gate.allows(&miss.identity.scope)
+        && !catalog.conflicts_with(*id,&miss.identity)
+        && !(catalog.present.contains(id)&&!catalog.active.contains_key(id))
+        && catalog.active.get(id).is_none_or(|now|
+            draft_retention::lost_draft_matches(miss,now)));
+    let prior=std::mem::replace(&mut win.retention_active,catalog.active.clone());
+    for (id,old) in &prior {
+        if catalog.active.get(id).is_some_and(|now|now.same_field(old)){
+            continue;
+        }
+        let active=win.focused_input.as_ref().is_some_and(|fi|fi.on_change==*id);
+        let entry=if active {
+            win.input_sessions.remove(id);
+            win.focused_input.take()
+        } else {
+            win.input_sessions.remove(id)
+        };
+        win.last_text_views.remove(id);
+        // A callback identity cannot retain two independent drafts.
+        win.retained_drafts.remove(id);
+        if catalog.present.contains(id){continue;}
+        let Some(mut entry)=entry else{continue;};
+        // Abandon live IME preedit, but preserve the committed text, caret,
+        // selection and undo/redo in the bounded route cache.
+        entry.session.abandon_composition();
+        entry.visual_affinity=None; // Run indices belong to a particular layout.
+        let bytes=entry.session.retained_bytes()
+            .saturating_add(entry.revision.retained_bytes());
+        if entry.revision.version()!=Some(old.revision)
+            || !catalog.scope_gate.allows(&old.scope)
+            || catalog.conflicts_with(*id,old) {
+            continue;
+        }
+        if bytes>draft_retention::MAX_ENTRY_BYTES {
+            if entry.session.buffer!=entry.revision.echoed(){
+                win.retention_misses.insert(*id,draft_retention::LostDraft{
+                    identity:old.clone(),last_focus:entry.last_focus,
+                });
+            }
+            continue;
+        }
+        // Evaluate the complete candidate set AFTER all routes disappear;
+        // HashMap traversal order must not select arbitrary cache survivors.
+        // This transient collection is made from already-live edit sessions.
+        win.retained_drafts.insert(*id,RetainedDraft{
+            identity:old.clone(),entry,bytes,
+        });
+    }
+    for (id,now) in &catalog.active {
+        if prior.get(id).is_some_and(|old|old.same_field(now)){continue;}
+        // A different callback using the same logical key cannot inherit the
+        // old editor. The host must preserve callback ID to restore a draft.
+        win.retained_drafts.retain(|old_id,saved|
+            old_id==id || !saved.identity.same_field(now));
+        if win.focused_input.as_ref().is_some_and(|fi|fi.on_change==*id){
+            win.focused_input=None;
+        }
+        win.input_sessions.remove(id);
+        win.last_text_views.remove(id);
+        if let Some(saved)=win.retained_drafts.remove(id) {
+            if saved.identity.same_field(now) &&
+                now.revision>=saved.identity.revision {
+                // A successful restoration supersedes any older warning.
+                win.retention_misses.remove(id);
+                win.input_sessions.insert(*id,saved.entry);
+            }
+        }
+    }
+    // A once-unmounted callback later reused by an invalid/sensitive widget
+    // may never revive old, potentially private, text on a future screen.
+    win.retained_drafts.retain(|id,saved|
+        !catalog.present.contains(id)
+        && catalog.scope_gate.allows(&saved.identity.scope)
+        && !catalog.conflicts_with(*id,&saved.identity));
+    let selected={
+        let ranked:Vec<_>=win.retained_drafts.iter().map(|(id,saved)|
+            draft_retention::RetentionCandidate{
+                callback:*id,last_focus:saved.entry.last_focus,
+                bytes:saved.bytes,identity:&saved.identity,
+            }).collect();
+        draft_retention::select_retained(&ranked)
+    };
+    // Only capacity-evicted unsynced text produces an informational loss
+    // marker. Never store the actual discarded text, undo or echo payload
+    // here; Host revision replacement and session logout revoke the marker.
+    for (id,saved) in &win.retained_drafts {
+        if !selected.contains(id)
+            && saved.entry.session.buffer!=saved.entry.revision.echoed(){
+            win.retention_misses.insert(*id,draft_retention::LostDraft{
+                identity:saved.identity.clone(),
+                last_focus:saved.entry.last_focus,
+            });
+        }
+    }
+    win.retained_drafts.retain(|id,_|selected.contains(id));
+    let keep=draft_retention::select_lost_draft_notices(&win.retention_misses);
+    win.retention_misses.retain(|id,_|keep.contains(id));
 }
 
 /// Keep local edits when same revision host values echo older locally
@@ -530,7 +815,9 @@ fn ensure_fonts_loaded(
         focus:&Option<FocusedTextInput>,sessions:&HashMap<u64,FocusedTextInput>,
         result:&mut HashMap<String,(String,i32,Vec<String>)>) {
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
-        if (node.kind=="Text" || node.kind=="TextInput") && !shaped_gpu::is_opted(node) {
+        if (node.kind=="Text" || node.kind=="TextInput")
+            && (!shaped_gpu::is_opted(node) ||
+                (node.kind=="TextInput" && input_policy::private_display(node))) {
             if let Some(path)=prop_string(node,"font_path") {
                 let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text" {20}else{18}).max(10);
                 if let Some(key)=font_atlas::font_key(path,size) {
@@ -548,7 +835,12 @@ fn ensure_fonts_loaded(
                         // Fail closed on cache capacity instead of unbounded GPU atlases.
                     } else {
                         let req=result.entry(key).or_insert_with(||(path.to_owned(),size,Vec::new()));
-                        req.2.push(value.to_owned());
+                        // The font atlas must see ONLY the mask, never the
+                        // underlying password/OTP/sensitive glyphs.
+                        req.2.push(if node.kind=="TextInput"
+                            && input_policy::private_display(node){
+                                input_policy::masked_display(value)
+                            }else{value.to_owned()});
                         if node.kind=="TextInput" {
                             req.2.push(prop_string(node,"placeholder").unwrap_or("").to_owned());
                         }
@@ -602,7 +894,8 @@ fn collect_shaped_requests(tree:&UiNode,plan:&layout::LayoutNode,
         sessions:&HashMap<u64,FocusedTextInput>,
         out:&mut Vec<(String,String,Option<String>,i32,String,String)>){
         if plan.bounds.intersect(plan.clip).is_empty(){return;}
-        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput"){
+        if shaped_gpu::is_opted(node)&&(node.kind=="Text"||node.kind=="TextInput")
+            && !(node.kind=="TextInput" && input_policy::private_display(node)){
             let size=prop_i32(node,"size").unwrap_or(if node.kind=="Text"{20}else{18}).max(10);
             let display:String=if node.kind=="Text"{
                 prop_string(node,"text").or_else(||prop_string(node,"content"))
@@ -693,16 +986,23 @@ fn measure_input_visuals(
                     .or_else(||prop_string(node,"value").or_else(||prop_string(node,"text")))
                     .unwrap_or("");
                 let size=prop_i32(node,"size").unwrap_or(18).max(10);
-                let opt=shaped_gpu::is_opted(node);
-                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}else{value};
-                let prepared=shaped_gpu::entry_key(node,display,size).and_then(|k|shaped.get(&k));
-                let font=if opt{None}else{selected_unicode_font(fonts,node,size,value)};
+                let privacy=input_policy::private_display(node);
+                let masked=privacy.then(||input_policy::masked_display(value));
+                let visual_value=masked.as_deref().unwrap_or(value);
+                // The private field has NO shaped-GPU request/cache. Its
+                // visual metrics must use the exact same masked glyphs as paint.
+                let opt=shaped_gpu::is_opted(node)&&!privacy;
+                let display=if value.is_empty(){prop_string(node,"placeholder").unwrap_or("")}
+                    else{visual_value};
+                let prepared=if opt{shaped_gpu::entry_key(node,display,size)
+                    .and_then(|k|shaped.get(&k))}else{None};
+                let font=if opt{None}else{selected_unicode_font(fonts,node,size,display)};
                 let measure=|text:&str|->f32 {
                     if let Some(font)=font{font.measure_text(text,size as f32,0.0).x.max(0.0)}
                     else {rl.measure_text(text,size).max(0) as f32}
                 };
                 let width=prepared.map(|r|r.shaped.width)
-                    .unwrap_or(if opt {0.0}else{measure(value)});
+                    .unwrap_or(if opt {0.0}else{measure(visual_value)});
                 let caret_index=projection.as_ref().map(|p|p.caret)
                     .or_else(||entry.as_ref().map(|fi|fi.session.caret)).unwrap_or(0);
                 let caret_stop=if active&&opt {
@@ -713,7 +1013,7 @@ fn measure_input_visuals(
                 }else{None};
                 let caret=if active {
                     if opt{caret_stop.map(|p|p.x).unwrap_or(0.0)}
-                    else{measure(text_viewport::grapheme_prefix(value,caret_index))}
+                    else{measure(text_viewport::grapheme_prefix(visual_value,caret_index))}
                 }else{0.0};
                 let segments=if active&&opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
@@ -724,8 +1024,8 @@ fn measure_input_visuals(
                 let selection=if active&&!opt&&projection.is_none(){
                     entry.as_ref().and_then(|fi|fi.session.selection())
                         .map(|(a,b)|{
-                            let x=measure(text_viewport::grapheme_prefix(value,a));
-                            let y=measure(text_viewport::grapheme_prefix(value,b));
+                            let x=measure(text_viewport::grapheme_prefix(visual_value,a));
+                            let y=measure(text_viewport::grapheme_prefix(visual_value,b));
                             (x.min(y),x.max(y))
                         })
                 }else{None};
@@ -737,8 +1037,8 @@ fn measure_input_visuals(
                         prepared.and_then(|shape|bidi_editor::selection_fragments(
                             &shape.shaped,a,b))
                     }else {
-                        let x=measure(text_viewport::grapheme_prefix(value,a));
-                        let y=measure(text_viewport::grapheme_prefix(value,b));
+                        let x=measure(text_viewport::grapheme_prefix(visual_value,a));
+                        let y=measure(text_viewport::grapheme_prefix(visual_value,b));
                         Some(vec![(x.min(y),x.max(y))])
                     }
                 }).unwrap_or_default();
@@ -1253,7 +1553,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             }
 
             // Fallback: print once (no interactive loop).
-            print!("{}", format_ui_tree(tree));
+            print!("{}", redacted_headless_ui_tree(tree));
 
             if nexus.get::<UiRuntimeFeedback>().is_none() {
                 nexus.insert(UiRuntimeFeedback::default());
@@ -1301,7 +1601,18 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     sdf,
                     click_anim: None,
                     focused_input: None,
+                    pointer_capture:None,
+                    click_sequence:None,
+                    focused_button: None,
+                    attempted_forms: std::collections::HashSet::new(),
+                    blur_touched:HashMap::new(),
+                    cancelled_requests: HashMap::new(),
+                    autofocus_decided: false,
                     input_sessions: HashMap::new(),
+                    retention_active:HashMap::new(),
+                    retained_drafts:HashMap::new(),
+                    retention_misses:HashMap::new(),
+                    retention_focus_seq:0,
                     last_text_views: HashMap::new(),
                     textures: HashMap::new(),
                     fonts: HashMap::new(),
@@ -1365,6 +1676,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
 
             let mouse = win.rl.get_mouse_position();
             let clicked = win.rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
+            let mouse_held = win.rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT);
+            let mouse_released = win.rl.is_mouse_button_released(MouseButton::MOUSE_BUTTON_LEFT);
             let now = win.rl.get_time();
 
             // Keyboard sampling must happen before begin_drawing (borrow rules).
@@ -1372,6 +1685,8 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let mut delete = win.rl.is_key_pressed(KeyboardKey::KEY_DELETE);
             let mut left = win.rl.is_key_pressed(KeyboardKey::KEY_LEFT);
             let mut right = win.rl.is_key_pressed(KeyboardKey::KEY_RIGHT);
+            let radio_up = win.rl.is_key_pressed(KeyboardKey::KEY_UP);
+            let radio_down = win.rl.is_key_pressed(KeyboardKey::KEY_DOWN);
             let mut home = win.rl.is_key_pressed(KeyboardKey::KEY_HOME);
             let mut end = win.rl.is_key_pressed(KeyboardKey::KEY_END);
             let mut enter = win.rl.is_key_pressed(KeyboardKey::KEY_ENTER)
@@ -1382,9 +1697,38 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let select_all = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_A);
             let undo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Z);
             let redo = ctrl && win.rl.is_key_pressed(KeyboardKey::KEY_Y);
+            // Reserve Ctrl+word shortcuts for the local unshaped editor.
+            // Never reinterpret Alt/Super combinations or fake a physical
+            // visual word stop in the opt-in GSUB/UAX9 shaped path.
+            let word_shortcut=ctrl && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+            #[cfg(target_os="linux")]
+            let clipboard_shortcut=ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
+            #[cfg(target_os="linux")]
+            let (clip_copy,clip_cut,clip_paste)=(
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_C),
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_X),
+                clipboard_shortcut && win.rl.is_key_pressed(KeyboardKey::KEY_V),
+            );
             let extend_selection = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
             let tab = win.rl.is_key_pressed(KeyboardKey::KEY_TAB);
+            let space = win.rl.is_key_pressed(KeyboardKey::KEY_SPACE);
+            // Sample modifiers BEFORE begin_drawing borrows the Raylib handle.
+            // A keyboard Button action may not use Ctrl/Alt/Super shortcuts.
+            let plain_button_action=!ctrl
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT)
+                && !win.rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                && !win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER);
             let reverse_tab = win.rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || win.rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
 
@@ -1417,13 +1761,54 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let planned_layout = layout::arrange(tree, layout::Bounds::new(
                 0.0, 0.0, viewport.width, viewport.height,
             ));
+            let invalid_radio_groups=layout::invalid_radio_groups(tree,&planned_layout);
+            let cancel_pre=forms::cancel_plan(tree,&planned_layout,&win.cancelled_requests);
             let mut focus_order = layout::focus_order(tree, &planned_layout);
             let (revisions,invalid)=input_value_revisions(tree,&planned_layout,&focus_order);
             focus_order.retain(|entry|match entry {
                 layout::HitTarget::TextInput{on_change,..}=>!invalid.contains(on_change),
                 _=>false,
             });
+            let draft_catalog=draft_retention::catalog(tree,&focus_order);
+            reconcile_retained_drafts(win,&draft_catalog);
+            let keyboard_order=layout::keyboard_focus_order_with_blocked(
+                tree,&planned_layout,&focus_order,&cancel_pre.blocked);
             reconcile_input_sessions(win,&focus_order,&revisions);
+            // A re-render/Host update may revoke the capability without a
+            // new physical click; stale click cadence must not survive it.
+            if win.click_sequence.is_some_and(|gesture|{
+                win.focused_input.as_ref().is_none_or(|fi|
+                    fi.on_change!=gesture.callback_id ||
+                    fi.session.authority_epoch()!=gesture.epoch ||
+                    fi.session.rebase_generation()!=gesture.generation ||
+                    fi.session.composing()) ||
+                !focus_order.iter().any(|target|matches!(target,
+                    layout::HitTarget::TextInput{on_change,..}
+                    if *on_change==gesture.callback_id)) ||
+                find_input_by_callback(tree,&planned_layout,gesture.callback_id)
+                    .is_none_or(|(node,_)|
+                        input_policy::pointer_selection_enabled(node)!=Ok(true))
+            }) {win.click_sequence=None;}
+            // Capture AFTER Host tree reconciliation, before native user
+            // pointer/Tab/Escape. No touched errors on unmount/rebase alone.
+            let focus_before_user_action=win.focused_input.as_ref()
+                .map(|fi|fi.on_change);
+            // Revoke old-generation/removed bindings BEFORE admitting another
+            // touched field, so the strict 32-entry budget cannot be blocked
+            // by stale marks from an earlier Host render or route.
+            win.blur_touched.retain(|id,binding|{
+                focus_order.iter().any(|target|
+                    matches!(target,layout::HitTarget::TextInput{on_change,..}
+                        if *on_change==*id)) &&
+                find_input_by_callback(tree,&planned_layout,*id)
+                    .is_some_and(|(node,_)|
+                        forms::blur_binding(node)==Ok(Some(binding.clone())))
+            });
+            // No callback from a removed, clipped, disabled or ambiguous button.
+            if win.focused_button.is_some_and(|id|!keyboard_order.iter()
+                .any(|entry|matches!(entry,layout::HitTarget::Button(other) if *other==id))) {
+                win.focused_button=None;
+            }
             // The popup is overlaid outside the TextInput rectangle. Consume
             // its hit before ordinary layout hit testing would blur the IME.
             #[cfg(target_os="linux")]
@@ -1445,33 +1830,83 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             let candidate_click_consumed=candidate_row_clicked.is_some();
             #[cfg(not(target_os="linux"))]
             let candidate_click_consumed=false;
+            let composing_before_pointer=win.focused_input.as_ref()
+                .is_some_and(|fi|fi.session.composing());
+            // A fresh physical press revokes any earlier drag. Remember a
+            // *completed* nearby click only while its editor generation and
+            // physical pointer position remain authoritative.
+            let preceding_click=if clicked{
+                win.pointer_capture=None;
+                win.click_sequence.take()
+            }else{None};
             let click_cb = if clicked && !candidate_click_consumed {
-                match layout::hit_test(tree, &planned_layout, mouse.x, mouse.y) {
+                match layout::hit_test_with_blocked(tree, &planned_layout,
+                    mouse.x, mouse.y,&cancel_pre.blocked) {
                     Some(layout::HitTarget::Button(id)) => {
-                        switch_input(win, None);Some(id)
+                        switch_input(win,None);
+                        win.focused_button=keyboard_order.iter().find_map(|candidate|match candidate {
+                            layout::HitTarget::Button(other) if *other==id=>Some(id),
+                            _=>None,
+                        });
+                        Some(id)
                     }
                     Some(layout::HitTarget::TextInput {on_change,on_submit,value}) => {
+                        win.focused_button=None;
                         if focus_order.iter().any(|candidate|matches!(candidate,
                             layout::HitTarget::TextInput{on_change:id,..} if *id==on_change)) {
                             switch_input(win,Some((on_change,on_submit,value,
                                 revisions.get(&on_change).copied().flatten())));
-                            // Apply cursor placement in shaped, scrolled logical
-                            // coordinates using the previously displayed GPU
-                            // atlas; on missing/incomplete clusters, do not
-                            // manufacture a byte position.
-                            if let Some((n,pl))=find_input_by_callback(tree,&planned_layout,on_change) {
-                                if shaped_gpu::is_opted(n) {
-                                    let hit=win.focused_input.as_ref().and_then(|fi|{
-                                        if fi.session.composing(){return None;}
-                                        let shape=loaded_shaped_input(n,&fi.session.buffer,&win.shaped_textures)?;
-                                        let c=text_viewport::content_bounds(pl.bounds);
-                                        let scroll=win.last_text_views.get(&on_change)
-                                            .map(|v|v.scroll).unwrap_or(0.0);
-                                        bidi_editor::hit_test(shape,mouse.x-c.x+scroll)
-                                    });
-                                    if let (Some(stop),Some(fi))=(hit,win.focused_input.as_mut()) {
-                                        fi.session.set_visual_caret(stop.grapheme,false);
-                                        fi.visual_affinity=Some(stop.run);
+                            // The previous shaped single-click path is
+                            // preserved. Explicit pointer_selection additionally
+                            // enables font-measured unshaped clicks and drag.
+                            if let Some((node,pl))=
+                                find_input_by_callback(tree,&planned_layout,on_change) {
+                                let opted=input_policy::pointer_selection_enabled(node)==Ok(true);
+                                if opted || shaped_gpu::is_opted(node) {
+                                    let hit=win.focused_input.as_ref()
+                                        .filter(|fi|fi.on_change==on_change)
+                                        .and_then(|fi|input_pointer_hit(
+                                            &win.rl,&win.fonts,&win.shaped_textures,
+                                            &win.last_text_views,node,pl,fi,mouse.x));
+                                    if let (Some((index,run)),Some(fi))=
+                                        (hit,win.focused_input.as_mut()) {
+                                        if opted {
+                                            let gesture=if !extend_selection{
+                                                pointer_click::ClickSequence::begin(
+                                                    preceding_click,fi.on_change,
+                                                    fi.session.authority_epoch(),
+                                                    fi.session.rebase_generation(),
+                                                    mouse.x,mouse.y,now)
+                                            }else{None};
+                                            let clicks=gesture.map(|g|g.clicks).unwrap_or(1);
+                                            fi.session.set_visual_caret(index,extend_selection);
+                                            match clicks {
+                                                2=>{fi.session.select_word_at(index);},
+                                                3=>{fi.session.apply(
+                                                    text_input::SessionAction::SelectAll);},
+                                                _=>{},
+                                            }
+                                            fi.visual_affinity=run;
+                                            // Multi-click word/select-all must
+                                            // not be collapsed by next held frame.
+                                            if clicks==1 {
+                                                win.pointer_capture=Some(InputPointerCapture {
+                                                    callback_id:fi.on_change,
+                                                    authority_epoch:fi.session.authority_epoch(),
+                                                    rebase_generation:fi.session.rebase_generation(),
+                                                });
+                                            }
+                                            if let Some(mut g)=gesture {
+                                                g.epoch=fi.session.authority_epoch();
+                                                g.generation=fi.session.rebase_generation();
+                                                win.click_sequence=Some(g);
+                                            }
+                                        }else{
+                                            // Original non-opted shaped-GPU
+                                            // single click retains its behavior.
+                                            fi.session.set_visual_caret(index,false);
+                                            fi.visual_affinity=run;
+                                        }
                                     }
                                 }
                             }
@@ -1483,17 +1918,122 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                         None
                     }
-                    None => {switch_input(win,None);None}
+                    None => {
+                        win.focused_button=None;
+                        switch_input(win,None);None
+                    }
                 }
             } else {None};
+            // Tab visits eligible native Buttons as well as text fields.
+            // A live IBus composition still owns Tab until explicitly ended.
             if tab && !win.focused_input.as_ref().is_some_and(|fi|fi.session.composing()) {
-                let active=win.focused_input.as_ref().map(|fi|fi.on_change);
-                let target=layout::next_focus(&focus_order,active,reverse_tab);
-                match target {
-                    Some(layout::HitTarget::TextInput {on_change,on_submit,value}) =>
+                let active=win.focused_button.map(layout::FocusKey::Button)
+                    .or_else(||win.focused_input.as_ref()
+                        .map(|fi|layout::FocusKey::TextInput(fi.on_change)));
+                match layout::next_keyboard_focus(&keyboard_order,active,reverse_tab) {
+                    Some(layout::HitTarget::Button(id))=>{
+                        switch_input(win,None);
+                        win.focused_button=Some(id);
+                    },
+                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                        win.focused_button=None;
                         switch_input(win,Some((on_change,on_submit,value,
-                            revisions.get(&on_change).copied().flatten()))),
-                    _=>switch_input(win,None),
+                            revisions.get(&on_change).copied().flatten())));
+                    },
+                    None=>{
+                        win.focused_button=None;
+                        switch_input(win,None);
+                    },
+                }
+            }
+            // Keyboard focus traversal always ends a mouse multi-click
+            // sequence, even if it returns to the same callback quickly.
+            if tab || escape {win.click_sequence=None;}
+            // Pointer capture continues outside widget bounds while held.
+            // Only the same unique, currently eligible field and exact
+            // EditSession authority generation may extend the selection.
+            // No mouse motion creates Undo or an on_change callback.
+            if let Some(mut capture)=win.pointer_capture.take() {
+                if mouse_held || mouse_released {
+                    let hit=win.focused_input.as_ref()
+                        .filter(|fi|fi.on_change==capture.callback_id
+                            && fi.session.authority_epoch()==capture.authority_epoch
+                            && fi.session.rebase_generation()==capture.rebase_generation
+                            && !fi.session.composing())
+                        .and_then(|fi|{
+                            let eligible=focus_order.iter().any(|entry|matches!(
+                                entry,layout::HitTarget::TextInput{on_change,..}
+                                if *on_change==capture.callback_id));
+                            if !eligible{return None;}
+                            let (node,pl)=find_input_by_callback(
+                                tree,&planned_layout,capture.callback_id)?;
+                            if input_policy::pointer_selection_enabled(node)!=Ok(true){return None;}
+                            input_pointer_hit(&win.rl,&win.fonts,&win.shaped_textures,
+                                &win.last_text_views,node,pl,fi,mouse.x)
+                        });
+                    if let (Some((index,run)),Some(fi))=
+                        (hit,win.focused_input.as_mut()) {
+                        fi.session.set_visual_caret(index,true);
+                        fi.visual_affinity=run;
+                        capture.authority_epoch=fi.session.authority_epoch();
+                        if mouse_held && !mouse_released {
+                            win.pointer_capture=Some(capture);
+                        }
+                    }
+                }
+            }
+            // Physical movement beyond six pixels breaks the multi-click
+            // cadence, but preserves the existing single-press drag capture.
+            if let Some(sequence)=win.click_sequence.as_mut(){
+                if mouse_held||mouse_released {
+                    sequence.observe_motion(mouse.x,mouse.y);
+                }
+                if mouse_released {sequence.release(now);}
+            }
+            // The existing input/IME Escape branch below remains responsible
+            // for canceling preedit or blurring TextInput.
+            if escape {win.focused_button=None;}
+            // User-visible opt-in autofocus is ONE-SHOT per native window,
+            // never a repeated layout-driven focus request. A real pointer,
+            // Tab, Escape or earlier focused field has priority; the selected
+            // target was already checked for unique ID, clipping, disabled
+            // state and valid host value_revision by focus_order above.
+            if !win.autofocus_decided {
+                if clicked || tab || escape || win.focused_input.is_some() {
+                    win.autofocus_decided=true;
+                } else if let Some(layout::HitTarget::TextInput{on_change,on_submit,value})=
+                    initial_autofocus_target(tree,&planned_layout,&focus_order){
+                    switch_input(win,Some((on_change,on_submit,value,
+                        revisions.get(&on_change).copied().flatten())));
+                    win.autofocus_decided=true;
+                }
+            }
+            // Resolve the Host-authored native-only input edit policy after
+            // value reconciliation AND same-frame pointer, Tab, autofocus. Read-only is focusable
+            // for selection/navigation but can never emit local edits.
+            let (focused_edit_mode,grapheme_limit)=win.focused_input.as_ref()
+                .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                .map(|(node,_)|{
+                    let limit=input_policy::grapheme_limit(node);
+                    let mode=if limit.is_err(){input_policy::EditMode::Invalid}
+                        else{input_policy::edit_mode(node)};
+                    (mode,limit.ok().flatten())
+                })
+                .unwrap_or((input_policy::EditMode::Invalid,None));
+            #[cfg(target_os="linux")]
+            let clipboard_access=win.focused_input.as_ref()
+                .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                .and_then(|(node,_)|input_policy::clipboard_access(node).ok())
+                .unwrap_or(input_policy::ClipboardAccess::Disabled);
+            if let Some(fi)=win.focused_input.as_mut(){
+                // Set AFTER host revisions, pointer, Tab and autofocus, but
+                // BEFORE any direct edit, Undo/Redo, IME Commit or native D/C.
+                // The host's existing over-limit text is never truncated.
+                fi.session.set_max_graphemes(grapheme_limit);
+                if focused_edit_mode.locked(){
+                    // Transitioning to invalid policy during preedit also
+                    // cancels it before any queued commit is processed.
+                    fi.session.abandon_composition();
                 }
             }
             // Linux opt-in: forward sampled native Raylib keyboard semantics
@@ -1662,6 +2202,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // Never emit callbacks for preedit updates or cancellation.
             let mut composition_consumed=false;
             for event in pending_composition {
+                if focused_edit_mode.locked(){continue;}
                 let Some(fi)=win.focused_input.as_mut() else{continue;};
                 if event.target()!=fi.on_change{continue;}
                 use CompositionEvent::*;
@@ -1702,6 +2243,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             // are checked again AFTER reconciliation and other queued events.
             #[cfg(target_os="linux")]
             for replacement in native_replacements {
+                if focused_edit_mode.locked(){continue;}
                 let Some(fi)=win.focused_input.as_mut()else{continue;};
                 if fi.on_change!=replacement.callback_id{continue;}
                 if let Some(changed)=fi.session.replace_surrounding_if_snapshot(
@@ -1721,6 +2263,7 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                 }
             }
+            let mut enter_form_from_input:Option<String>=None;
             if let Some(fi)=&mut win.focused_input {
                 if fi.session.composing() || composition_consumed {
                     // The platform adapter owns navigation and typing while
@@ -1752,8 +2295,12 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     }
                     if left||right {
                         if !opted {
-                            if left {fi.session.apply(SessionAction::Move(EditCommand::Left,extend_selection));}
-                            if right {fi.session.apply(SessionAction::Move(EditCommand::Right,extend_selection));}
+                            if left {fi.session.apply(SessionAction::Move(
+                                if word_shortcut{EditCommand::WordLeft}else{EditCommand::Left},
+                                extend_selection));}
+                            if right {fi.session.apply(SessionAction::Move(
+                                if word_shortcut{EditCommand::WordRight}else{EditCommand::Right},
+                                extend_selection));}
                         }else if let Some(shape)=geometry {
                             if let Some(stop)=bidi_editor::navigate(shape,fi.session.caret,
                                 fi.visual_affinity,right,extend_selection,fi.session.selection()){
@@ -1763,12 +2310,49 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                         }
                     }
                     let mut changed=false;
-                    if undo {changed|=fi.session.apply(SessionAction::Undo);}
-                    if redo {changed|=fi.session.apply(SessionAction::Redo);}
-                    if backspace {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Backspace));}
-                    if delete {changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));}
-                    if !ctrl && !typed.is_empty() {
-                        changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                    // A clipboard access is possible only on an explicit Host
+                    // opt-in, real focused unique field, and a user Ctrl+C/X/V.
+                    // Never send private/unknown-type text to the OS clipboard.
+                    #[cfg(target_os="linux")]
+                    let copied=if (clip_copy || clip_cut) && clipboard_access.can_copy(){
+                        fi.session.selected_text()
+                            .filter(|value|input_policy::safe_clipboard_text(value))
+                            .is_some_and(|value|win.rl.set_clipboard_text(value).is_ok())
+                    }else{false};
+                    if focused_edit_mode.editable(){
+                        if undo {changed|=fi.session.apply(SessionAction::Undo);}
+                        if redo {changed|=fi.session.apply(SessionAction::Redo);}
+                        if backspace {changed|=fi.session.apply(SessionAction::Edit(
+                            if word_shortcut&&!opted{EditCommand::WordBackspace}
+                            else{EditCommand::Backspace}));}
+                        if delete {changed|=fi.session.apply(SessionAction::Edit(
+                            if word_shortcut&&!opted{EditCommand::WordDelete}
+                            else{EditCommand::Delete}));}
+                        if !ctrl && !typed.is_empty() {
+                            changed|=fi.session.apply(SessionAction::Edit(EditCommand::Insert(typed)));
+                        }
+                        #[cfg(target_os="linux")]
+                        if clip_cut && copied && clipboard_access.can_write(){
+                            // One committed selection deletion, one Undo,
+                            // one on_change, only after OS copy succeeded.
+                            changed|=fi.session.apply(SessionAction::Edit(EditCommand::Delete));
+                        }
+                        #[cfg(target_os="linux")]
+                        if clip_paste && clipboard_access.can_write(){
+                            if let Some(paste)=read_native_clipboard_text(&win.rl){
+                                // Reject the whole paste if the resulting
+                                // single-line value would exceed the existing
+                                // bounded editor projection profile.
+                                let selected_bytes=fi.session.selected_text()
+                                    .map_or(0,str::len);
+                                let result_bytes=fi.session.buffer.len()
+                                    .saturating_sub(selected_bytes).saturating_add(paste.len());
+                                if result_bytes<=text_input::MAX_PROJECTED_TEXT_BYTES{
+                                    changed|=fi.session.apply(SessionAction::Edit(
+                                        EditCommand::Insert(paste)));
+                                }
+                            }
+                        }
                     }
                     if changed {
                         fi.visual_affinity=None;
@@ -1777,19 +2361,75 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                             callback_id:fi.on_change,text:fi.session.buffer.clone(),submitted:false,
                         });
                     }
-                    if enter {
-                        if let Some(cb)=fi.on_submit {
-                            fb.text_input_events.push(UiTextInputEvent {
-                                callback_id:cb,text:fi.session.buffer.clone(),submitted:true,
-                            });
+                    if enter && focused_edit_mode.editable() {
+                        let policy=find_input_by_callback(
+                            tree,&planned_layout,fi.on_change)
+                            .map(|(node,_)|(forms::enter_submits_form(node),
+                                prop_string(node,"form")));
+                        match policy {
+                            Some((Ok(true),Some(form))) if plain_button_action=>{
+                                // Only the existing guarded Submit Button may
+                                // dispatch. Same-frame committed edits are
+                                // assessed below; an IME preedit cannot enter here.
+                                enter_form_from_input=Some(form.to_owned());
+                            },
+                            Some((Ok(false),_))=>{
+                                // Legacy field-level on_submit is unchanged
+                                // unless the Host explicitly opts into form Enter.
+                                if let Some(cb)=fi.on_submit {
+                                    fb.text_input_events.push(UiTextInputEvent {
+                                        callback_id:cb,text:fi.session.buffer.clone(),
+                                        submitted:true,
+                                    });
+                                }
+                            },
+                            // Bad/ambiguous opt-in never falls through to a
+                            // per-field submit callback.
+                            _=>{},
                         }
                     }
                 }
             }
             #[cfg(target_os="linux")]
-            if let (Some(bus),Some(fi))=
-                (win.native_ibus.as_mut(),win.focused_input.as_ref()){
-                let _=sync_native_ibus_context(bus,fi);
+            {
+                // Never send readonly OR sensitive values into a live IME
+                // context on the post-edit sync path; use the SAME gate as
+                // initial helper focus/key delivery.
+                let authorized=win.focused_input.as_ref()
+                    .and_then(|fi|find_input_by_callback(tree,&planned_layout,fi.on_change))
+                    .is_some_and(|(node,_)|native_surrounding_policy_allows(node));
+                if authorized {
+                    if let (Some(bus),Some(fi))=
+                        (win.native_ibus.as_mut(),win.focused_input.as_ref()){
+                        let _=sync_native_ibus_context(bus,fi);
+                    }
+                }
+            }
+            // Record a touched field only when a genuine pointer, Tab or
+            // Escape moved focus away. Never store a private edit buffer.
+            if (tab || (clicked && !candidate_click_consumed) || escape)
+                && focus_before_user_action != win.focused_input.as_ref().map(|f|f.on_change) {
+                if let Some(id)=focus_before_user_action {
+                    if let Some((node,_))=
+                        find_input_by_callback(tree,&planned_layout,id){
+                        if focus_order.iter().any(|target|
+                            matches!(target,layout::HitTarget::TextInput{on_change,..}
+                                if *on_change==id)){
+                            if let Ok(Some(binding))=forms::blur_binding(node){
+                                if win.blur_touched.len()<32 ||
+                                    win.blur_touched.contains_key(&id){
+                                    win.blur_touched.insert(id,binding);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // The first real user-authored edit dismisses the informational
+            // warning; focus/Tab alone never hides it. These callbacks are
+            // already trusted local committed edits, not IME preedit events.
+            for event in &fb.text_input_events{
+                if !event.submitted {win.retention_misses.remove(&event.callback_id);}
             }
             ensure_fonts_loaded(&mut win.rl,&win.thread,&mut win.fonts,tree,
                 &planned_layout,&win.focused_input,&win.input_sessions);
@@ -1828,6 +2468,136 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                 prepare_ibus_candidate_font(&mut win.rl,&win.thread,
                     &mut win.candidate_font,candidate_page.as_ref());
             }
+            // Radio arrow traversal changes focused Button and emits the
+            // target's existing callback, but never mutates host checked.
+            // Sample all key state BEFORE Raylib borrows its draw handle.
+            let radio_reverse=left || radio_up;
+            let radio_forward=right || radio_down;
+            let radio_action=if !clicked && !tab && !escape && !(enter||space)
+                && plain_button_action && win.focused_input.is_none()
+                && radio_reverse!=radio_forward {
+                win.focused_button.and_then(|id|layout::radio_arrow_target(
+                    tree,&planned_layout,&keyboard_order,id,radio_reverse))
+            }else{None};
+            if let Some(id)=radio_action{win.focused_button=Some(id);}
+            // Evaluate the current committed draft, not the (possibly stale)
+            // host value prop nor a provisional IBus composition projection.
+            let mut current_values:HashMap<u64,String>=win.input_sessions.iter()
+                .map(|(id,fi)|(*id,fi.session.buffer.clone())).collect();
+            if let Some(fi)=win.focused_input.as_ref(){
+                current_values.insert(fi.on_change,fi.session.buffer.clone());
+            }
+            let eligible_fields:std::collections::HashSet<u64>=focus_order.iter()
+                .filter_map(|item|match item{
+                    layout::HitTarget::TextInput{on_change,..}=>Some(*on_change),
+                    _=>None,
+                }).collect();
+            let keyboard_click=if !tab && !escape && plain_button_action && (enter || space)
+                && win.focused_input.is_none(){win.focused_button}else{None};
+            let enter_button=enter_form_from_input.as_deref()
+                .and_then(|form|forms::enter_submit_button(
+                    tree,&planned_layout,form));
+            let mut validated_click=click_cb.or(radio_action)
+                .or(keyboard_click).or(enter_button);
+            if let Some(id)=validated_click{
+                if let Some(decision)=cancel_pre.decisions.get(&id){
+                    match decision {
+                        forms::CancelDecision::Dispatch{form,revision}=>{
+                            if win.cancelled_requests.len()<32 ||
+                                win.cancelled_requests.contains_key(form){
+                                win.cancelled_requests.insert(form.clone(),*revision);
+                                // The old focus identity cannot be used to
+                                // reissue the same cancel on held Enter/Space.
+                                win.focused_button=None;
+                            }else{
+                                validated_click=None;
+                                win.focused_button=None;
+                            }
+                        },
+                        forms::CancelDecision::Reject=>{
+                            validated_click=None;
+                            win.focused_button=None;
+                        },
+                    }
+                }else{
+                match forms::submit_action(tree,&planned_layout,id){
+                    forms::SubmitAction::Normal=>{},
+                    forms::SubmitAction::Reject=>validated_click=None,
+                    forms::SubmitAction::Validate(form)=>{
+                        if composing_before_pointer{
+                            // A pointer blur may have abandoned native preedit
+                            // already; it must NOT commit the form opportunistically.
+                            validated_click=None;
+                        }else{
+                            let assessment=forms::assess(tree,&planned_layout,&form,
+                                &current_values,&eligible_fields);
+                            if assessment.valid(){
+                                win.attempted_forms.remove(&form);
+                            }else{
+                                validated_click=None;
+                                if win.attempted_forms.len()<32{
+                                    win.attempted_forms.insert(form);
+                                }
+                                // Radio and TextInput failures compete in
+                                // actual source Tab order, not numeric callback ID.
+                                match assessment.first_focus_target(&keyboard_order){
+                                    Some(layout::HitTarget::TextInput{on_change,on_submit,value})=>{
+                                        win.focused_button=None;
+                                        switch_input(win,Some((on_change,on_submit,value,
+                                            revisions.get(&on_change).copied().flatten())));
+                                        win.autofocus_decided=true;
+                                    },
+                                    Some(layout::HitTarget::Button(id))=>{
+                                        switch_input(win,None);
+                                        win.focused_button=Some(id);
+                                        win.autofocus_decided=true;
+                                    },
+                                    None=>{},
+                                }
+                            }
+                        }
+                    }
+                }
+                }
+            }
+            let cancel_draw=forms::cancel_plan(tree,&planned_layout,
+                &win.cancelled_requests);
+            let mut form_errors=forms::RenderErrors::default();
+            let attempted:Vec<_>=win.attempted_forms.iter().cloned().collect();
+            for form in attempted{
+                let assessment=forms::assess(tree,&planned_layout,&form,
+                    &current_values,&eligible_fields);
+                if assessment.valid(){
+                    win.attempted_forms.remove(&form);
+                }else{
+                    for (cb,reason) in assessment.errors{
+                        form_errors.text.insert(cb,reason);
+                    }
+                    for (cb,reason) in assessment.radio_errors{
+                        form_errors.radio.insert(cb,reason);
+                    }
+                }
+            }
+            // Merge only touched-field errors, without showing errors for
+            // untouched siblings. Existing Submit errors take precedence.
+            for (id,binding) in &win.blur_touched{
+                if let Some((node,_))=
+                    find_input_by_callback(tree,&planned_layout,*id){
+                    if forms::blur_binding(node)==Ok(Some(binding.clone())){
+                        let committed=current_values.get(id).map(String::as_str)
+                            .unwrap_or("");
+                        if let Some(reason)=forms::blur_error(node,committed){
+                            form_errors.text.entry(*id).or_insert(reason);
+                        }
+                    }
+                }
+            }
+            let draft_warnings:std::collections::HashSet<u64>=win.retention_misses
+                .iter().filter_map(|(id,notice)|{
+                    draft_catalog.active.get(id).filter(|now|
+                        draft_retention::lost_draft_matches(notice,now))
+                        .map(|_|*id)
+                }).collect();
             let (rl,thread,sdf)=(&mut win.rl,&win.thread,&mut win.sdf);
             let mut d = rl.begin_drawing(thread);
             // Allow app-level theming via `App(bg: ...)`.
@@ -1837,7 +2607,10 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
             if valid_frame {
                 render_node(
                     &mut d, tree, &planned_layout, now, sdf,
-                    win.click_anim, &win.focused_input, &win.textures, &win.input_sessions,
+                    win.click_anim, &win.focused_input, win.focused_button,
+                    &invalid_radio_groups, &form_errors, &cancel_draw, &draft_warnings,
+                    &win.textures,
+                    &win.input_sessions,
                     &text_views,&win.fonts,&win.shaped_textures,
                 );
                 #[cfg(target_os="linux")]
@@ -1846,9 +2619,11 @@ Rebuild the `aura` binary with `--features lumina-raylib` (or keep default featu
                     paint_ibus_candidates(&mut d,panel,page,win.candidate_font.as_ref());
                 }
             }
-            fb.clicked_callback_id = click_cb;
+            // Keyboard buttons share the exact same host callback channel
+            // as pointer clicks. No UiTextInputEvent, IME dispatch or repeat.
+            fb.clicked_callback_id=validated_click;
 
-            if let Some(id) = click_cb {
+            if let Some(id) = fb.clicked_callback_id {
                 win.click_anim = Some((id, now));
             } else {
                 // Clear once the animation has elapsed.
@@ -2023,6 +2798,11 @@ fn render_children(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2031,7 +2811,9 @@ fn render_children(
 ) {
     for (child, prepared) in node.children.iter().zip(&layout.children) {
         if let Some(prepared) = prepared {
-            render_node(d, child, prepared, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+            render_node(d, child, prepared, now, sdf, click_anim, focused_input,
+                focused_button, invalid_radio_groups, form_errors, cancel_plan,
+                draft_warnings, textures, input_sessions, text_views, fonts, shaped);
         }
     }
 }
@@ -2045,6 +2827,11 @@ fn render_node(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2057,7 +2844,9 @@ fn render_node(
     {
         let mut clipped = d.begin_scissor_mode(x, y, width, height);
         paint_node(&mut clipped, node, layout, now, sdf, click_anim,
-            focused_input, textures, input_sessions, text_views, fonts, shaped, false);
+            focused_input, focused_button, invalid_radio_groups,
+            form_errors, cancel_plan, draft_warnings,
+            textures, input_sessions, text_views, fonts, shaped, false);
     }
     if node.kind=="TextInput" {
         // TextInput content clip: glyphs/selection/caret stay inside padding.
@@ -2065,10 +2854,14 @@ fn render_node(
         if let Some((x,y,w,h))=inside.scissor() {
             let mut clipped=d.begin_scissor_mode(x,y,w,h);
             paint_node(&mut clipped,node,layout,now,sdf,click_anim,
-                focused_input,textures,input_sessions,text_views,fonts,shaped,true);
+                focused_input,focused_button,invalid_radio_groups,form_errors,
+                cancel_plan,draft_warnings,
+                textures,input_sessions,text_views,fonts,shaped,true);
         }
     }
-    render_children(d, node, layout, now, sdf, click_anim, focused_input, textures, input_sessions, text_views, fonts, shaped);
+    render_children(d, node, layout, now, sdf, click_anim, focused_input,
+        focused_button, invalid_radio_groups, form_errors, cancel_plan,
+        draft_warnings, textures, input_sessions, text_views, fonts, shaped);
 }
 
 #[cfg(feature = "raylib")]
@@ -2080,6 +2873,11 @@ fn paint_node<D: RaylibDraw>(
     sdf: &mut RoundedRectShader,
     click_anim: Option<(u64, f64)>,
     focused_input: &Option<FocusedTextInput>,
+    focused_button: Option<u64>,
+    invalid_radio_groups: &std::collections::HashSet<String>,
+    form_errors: &forms::RenderErrors,
+    cancel_plan: &forms::CancelPlan,
+    draft_warnings: &std::collections::HashSet<u64>,
     textures: &HashMap<String, Texture2D>,
     input_sessions: &HashMap<u64, FocusedTextInput>,
     text_views: &HashMap<u64,text_viewport::Visual>,
@@ -2210,11 +3008,25 @@ fn paint_node<D: RaylibDraw>(
             let bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")).or(Some("#0D1117")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")).or(Some("#E6EDF3")));
             let placeholder_c = parse_color(Some("#8B949E"));
-            let border = parse_color(prop_string(node, "border").or(Some("#30363D")));
+            let on_change = parse_callback_id(prop_string(node, "on_change"));
+            let edit_mode=if input_policy::grapheme_limit(node).is_err(){
+                input_policy::EditMode::Invalid
+            }else{input_policy::edit_mode(node)};
+            let field_error = on_change.and_then(|id|form_errors.text.get(&id)).copied();
+            let draft_lost = field_error.is_none()
+                && on_change.is_some_and(|id|draft_warnings.contains(&id));
+            let border = if field_error.is_some(){
+                Color::new(235,76,89,255)
+            }else if draft_lost{
+                Color::new(242,166,54,255)
+            }else if edit_mode==input_policy::EditMode::ReadOnly {
+                Color::new(98,158,226,255)
+            }else if edit_mode==input_policy::EditMode::Invalid {
+                Color::new(235,76,89,255)
+            }else{parse_color(prop_string(node, "border").or(Some("#30363D")))};
             let radius = prop_i32(node, "radius").unwrap_or(12).max(0) as f32;
 
             // The focus decision was already made by pure hit testing.
-            let on_change = parse_callback_id(prop_string(node, "on_change"));
             let is_focused = match (focused_input.as_ref(), on_change) {
                 (Some(fi), Some(cb)) => fi.on_change == cb,
                 _ => false,
@@ -2242,6 +3054,32 @@ fn paint_node<D: RaylibDraw>(
                 d.draw_rectangle_rec(rect, bg);
                 d.draw_rectangle_lines_ex(rect, 2.0, border);
             }
+            if let Some(reason)=field_error {
+                // Compact local hint plus border; never displays private text.
+                if rect.width>=130.0 && rect.height>=28.0 {
+                    let label=reason.label();
+                    let x=(rect.x+rect.width-(label.len() as f32*6.5)-8.0)
+                        .max(rect.x+10.0);
+                    d.draw_text(label,x as i32,(rect.y+3.0) as i32,
+                        11,Color::new(255,125,130,255));
+                }
+            } else if draft_lost && rect.width>=190.0 && rect.height>=36.0 {
+                // Explicitly describe capacity loss, not a network failure.
+                // No cached user text, key, form, scope or callback is drawn.
+                d.draw_text("Draft not retained",
+                    (rect.x+rect.width-123.0) as i32,(rect.y+3.0) as i32,
+                    10,Color::new(255,188,83,255));
+            } else if edit_mode.locked() && rect.width>=155.0
+                && rect.height>=36.0 {
+                let (label,colour)=if edit_mode==input_policy::EditMode::ReadOnly{
+                    ("Read only",Color::new(146,196,244,255))
+                }else{
+                    ("Invalid input mode",Color::new(255,125,130,255))
+                };
+                d.draw_text(label,
+                    (rect.x+rect.width-123.0) as i32,(rect.y+3.0) as i32,
+                    10,colour);
+            }
 
             return;
             }
@@ -2265,7 +3103,13 @@ fn paint_node<D: RaylibDraw>(
             };
 
             let placeholder = prop_string(node, "placeholder").unwrap_or("");
-            let display = if value.is_empty() { placeholder } else { value };
+            // Compute display-only masking from the same Host policy used by
+            // glyph atlas and viewport geometry. Keep the committed value
+            // untouched for the existing trusted Host edit event contract.
+            let privacy=input_policy::private_display(node);
+            let masked=privacy.then(||input_policy::masked_display(value));
+            let display = if value.is_empty() { placeholder }
+                else { masked.as_deref().unwrap_or(value) };
             let display_color = if value.is_empty() { placeholder_c } else { fg };
 
             let ts = prop_i32(node, "size").unwrap_or(18).max(10);
@@ -2283,8 +3127,11 @@ fn paint_node<D: RaylibDraw>(
                     }
                 }
             }
-            let shaped_present=shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k));
-            if shaped_gpu::is_opted(node) {
+            let shaped_allowed=shaped_gpu::is_opted(node)&&!privacy;
+            let shaped_present=if shaped_allowed {
+                shaped_gpu::entry_key(node,display,ts).and_then(|k|shaped.get(&k))
+            }else{None};
+            if shaped_allowed {
                 if let Some(r)=shaped_present{
                     shaped_gpu::paint(d,r,text_x,rect.y+pad_y,display_color);
                 }
@@ -2308,7 +3155,7 @@ fn paint_node<D: RaylibDraw>(
 
             // Exact default-font pixel measurements, not an average cell;
             // OS-native XIM/preedit delivery remains unqualified.
-            if is_focused && (!shaped_gpu::is_opted(node) || shaped_present.is_some()) {
+            if is_focused && (!shaped_allowed || shaped_present.is_some()) {
                 if let Some(v)=visual.filter(|v|v.caret_valid) {
                     let cx=v.caret_screen(content);
                     let cy0=rect.y+10.0;
@@ -2349,13 +3196,126 @@ fn paint_node<D: RaylibDraw>(
         }
         "Button" => {
             let rect = bounds;
-
+            let control = layout::button_control(node);
+            let submit_state=forms::submit_state(node);
+            let cancel_cb=parse_callback_id(prop_string(node,"on_click"));
+            let cancel_blocked=cancel_cb
+                .is_some_and(|id|cancel_plan.blocked.contains(&id))
+                || (prop_string(node,"form_cancel").is_some() && cancel_cb.is_none());
+            let cancellation_acknowledged=cancel_cb
+                .is_some_and(|id|cancel_plan.acknowledged.contains(&id));
+            let disabled = cancel_blocked ||
+                prop_string(node, "disabled") == Some("true")
+                || control == layout::ButtonControl::Invalid
+                || !submit_state.actionable()
+                || (matches!(control,layout::ButtonControl::Radio(_))
+                    && prop_string(node,"group")
+                        .is_some_and(|g|invalid_radio_groups.contains(g)));
             let base_bg = parse_color(prop_string(node, "bg").or_else(|| prop_string(node, "background")));
             let fg = parse_color(prop_string(node, "fg").or_else(|| prop_string(node, "color")));
             let radius = prop_i32(node, "radius").unwrap_or(0).max(0) as f32;
+            // Opt-in controlled form selectors reuse an Aura Button constructor
+            // and its existing callback. NEVER mutate checked on click: only
+            // the authoritative host render changes the indicator.
+            if matches!(control,layout::ButtonControl::Checkbox(_) |
+                layout::ButtonControl::Switch(_) | layout::ButtonControl::Radio(_)){
+                let accent=Color::new(32,177,124,255);
+                let accent=if disabled{Color::new(104,112,119,255)}else{accent};
+                let panel=if disabled{Color::new(58,62,68,255)}else{
+                    prop_string(node,"bg").or_else(||prop_string(node,"background"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::new(28,35,45,255))
+                };
+                let label_color=if disabled{Color::new(164,169,174,255)}else{
+                    prop_string(node,"fg").or_else(||prop_string(node,"color"))
+                        .map(|c|parse_color(Some(c)))
+                        .unwrap_or(Color::RAYWHITE)
+                };
+                d.draw_rectangle_rec(rect,panel);
+                d.draw_rectangle_lines_ex(rect,1.0,Color::new(92,102,114,255));
+                let cx=rect.x+14.0;
+                let cy=rect.y+rect.height/2.0;
+                let label_x=match control{
+                    layout::ButtonControl::Checkbox(checked)=>{
+                        let box_rect=Rectangle::new(cx,cy-11.0,22.0,22.0);
+                        let fill=if checked{accent}else{Color::new(42,50,63,255)};
+                        d.draw_rectangle_rec(box_rect,fill);
+                        d.draw_rectangle_lines_ex(box_rect,2.0,
+                            if checked{accent}else{Color::new(173,186,197,255)});
+                        if checked {
+                            // Two opaque strokes are rasterized under the
+                            // normal per-widget scissor; no glyph dependency.
+                            d.draw_line((cx+5.0) as i32,(cy) as i32,
+                                (cx+9.0) as i32,(cy+4.0) as i32,Color::RAYWHITE);
+                            d.draw_line((cx+9.0) as i32,(cy+4.0) as i32,
+                                (cx+18.0) as i32,(cy-6.0) as i32,Color::RAYWHITE);
+                        }
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Radio(checked)=>{
+                        // A radio has a circular selected dot, unlike a
+                        // checkbox; only the host may update this state.
+                        let x=cx+11.0;
+                        d.draw_circle(x as i32,cy as i32,11.0,
+                            if disabled{Color::new(88,94,104,255)}
+                            else{Color::new(173,186,197,255)});
+                        d.draw_circle(x as i32,cy as i32,8.0,
+                            Color::new(42,50,63,255));
+                        if checked{d.draw_circle(x as i32,cy as i32,5.0,accent);}
+                        cx+34.0
+                    },
+                    layout::ButtonControl::Switch(checked)=>{
+                        // A 44x22 pill track and independent 16px thumb.
+                        // The track fill stays stable until host checked changes.
+                        let x=cx;
+                        let track=if checked{accent}else{Color::new(66,75,87,255)};
+                        d.draw_rectangle_rec(Rectangle::new(x+11.0,cy-11.0,22.0,22.0),track);
+                        d.draw_circle((x+11.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+33.0) as i32,cy as i32,11.0,track);
+                        d.draw_circle((x+(if checked{33.0}else{11.0})) as i32,
+                            cy as i32,8.0,Color::RAYWHITE);
+                        cx+56.0
+                    },
+                    _=>cx+56.0,
+                };
+                let label=prop_string(node,"label").unwrap_or("");
+                let ts=18;
+                let label_y=rect.y+(rect.height-ts as f32)/2.0;
+                d.draw_text(label,label_x as i32,label_y as i32,ts,label_color);
+                if let Some(reason)=parse_callback_id(prop_string(node,"on_click"))
+                    .and_then(|id|form_errors.radio.get(&id)).copied(){
+                    // Visual, clipped and local; no screen-reader role implied.
+                    d.draw_rectangle_lines_ex(rect,2.0,Color::new(235,76,89,255));
+                    if rect.width>=190.0 && rect.height>=35.0{
+                        d.draw_text(reason.label(),(rect.x+rect.width-118.0) as i32,
+                            (rect.y+3.0) as i32,10,Color::new(255,125,130,255));
+                    }
+                }
+                // Native keyboard focus is a visual hint, NOT semantic OS a11y.
+                if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                    .is_some_and(|id|focused_button==Some(id))
+                    && rect.width>10.0 && rect.height>10.0{
+                    d.draw_rectangle_lines_ex(Rectangle::new(
+                        rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                        2.0,Color::SKYBLUE);
+                }
+                return;
+            }
+            // Disabled is an actual interaction state, not just a visual hint.
+            // Give users a visible state change without changing their theme props.
+            let base_bg = if disabled { lerp_color(base_bg, Color::GRAY, 0.50) } else { base_bg };
+            let fg = if disabled { lerp_color(fg, Color::GRAY, 0.50) } else { fg };
+            let stroke=if matches!(submit_state,forms::SubmitState::Error(_)){
+                Color::new(235,76,89,255)
+            }else if cancellation_acknowledged{
+                // Neutral informational colour: host-authored acknowledgement,
+                // not network cancellation verified by Lumina.
+                Color::new(91,163,220,255)
+            }else if disabled{Color::GRAY}else{Color::RAYWHITE};
 
-            // 200ms click tween: brighten the background briefly when clicked.
+            // 200ms click tween: never animate a disabled control.
             let mut bg = base_bg;
+            if !disabled {
             if let Some((id, start)) = click_anim {
                 if let Some(cb) = parse_callback_id(prop_string(node, "on_click")) {
                     if cb == id {
@@ -2365,6 +3325,7 @@ fn paint_node<D: RaylibDraw>(
                         bg = lerp_color(base_bg, Color::RAYWHITE, tt * 0.25);
                     }
                 }
+            }
             }
 
             // Rounded rect rendering: prefer rounded corners when radius > 0.
@@ -2380,7 +3341,7 @@ fn paint_node<D: RaylibDraw>(
                 sdf.shader.set_shader_value(sdf.loc_softness, softness_u);
                 sdf.shader.set_shader_value(sdf.loc_fill, color_to_vec4(bg));
                 sdf.shader
-                    .set_shader_value(sdf.loc_border, color_to_vec4(Color::RAYWHITE));
+                    .set_shader_value(sdf.loc_border, color_to_vec4(stroke));
                 sdf.shader.set_shader_value(sdf.loc_border_width, border_w_u);
 
                 let mut sd = d.begin_shader_mode(&mut sdf.shader);
@@ -2388,16 +3349,61 @@ fn paint_node<D: RaylibDraw>(
                 sd.draw_rectangle_rec(rect, Color::WHITE);
             } else {
                 d.draw_rectangle_rec(rect, bg);
-                d.draw_rectangle_lines_ex(rect, 2.0, Color::RAYWHITE);
+                d.draw_rectangle_lines_ex(rect, 2.0, stroke);
             }
 
-            let label = prop_string(node, "label").unwrap_or("Button");
+            let label=if cancel_cb.is_some_and(|id|cancel_plan.requested.contains(&id)){
+                "Cancel requested"
+            }else if matches!(submit_state,forms::SubmitState::Cancelled{..}){
+                if cancellation_acknowledged{"Cancelled"}else{"Unverified cancel"}
+            }else if matches!(submit_state,forms::SubmitState::Busy){
+                "Submitting..."
+            }else if matches!(submit_state,forms::SubmitState::Invalid){
+                "Invalid form state"
+            }else if prop_string(node,"form_cancel").is_some() && cancel_blocked{
+                "Cancel unavailable"
+            }else{prop_string(node,"label").unwrap_or("Button")};
             let ts = 20;
             // Simple centering with a rough width estimate.
             let est_w = (label.chars().count() as f32) * (ts as f32 * 0.6);
             let tx = rect.x + (rect.width - est_w) / 2.0;
-            let ty = rect.y + (rect.height - ts as f32) / 2.0;
-            d.draw_text(label, tx as i32, ty as i32, ts, fg);
+            let cancel_notice=match submit_state {
+                forms::SubmitState::Cancelled{notice,..}
+                    if cancellation_acknowledged=>notice,
+                _=>None,
+            };
+            let ty=if (matches!(submit_state,forms::SubmitState::Error(_))
+                || cancel_notice.is_some()) && rect.height>=46.0 {
+                rect.y+4.0
+            }else{rect.y+(rect.height-ts as f32)/2.0};
+            d.draw_text(label,tx as i32,ty as i32,ts,fg);
+            if let forms::SubmitState::Error(message)=submit_state{
+                // Only validated, bounded, host-authored status text. The
+                // scissor restricts pixels to this Button's visible bounds.
+                if rect.width>=130.0 && rect.height>=46.0{
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(255,125,130,255));
+                }
+            }
+            if let Some(message)=cancel_notice{
+                // Display only when a previously emitted request's generation
+                // matches the explicit host terminal acknowledgement.
+                if rect.width>=130.0 && rect.height>=46.0 {
+                    d.draw_text(message,(rect.x+8.0) as i32,
+                        (rect.y+rect.height-17.0) as i32,12,
+                        Color::new(125,195,239,255));
+                }
+            }
+            // Inset optical ring for native keyboard/pointer Button focus.
+            // This does not claim an OS accessibility focus tree.
+            if !disabled && parse_callback_id(prop_string(node,"on_click"))
+                .is_some_and(|id|focused_button==Some(id))
+                && rect.width>10.0 && rect.height>10.0 {
+                d.draw_rectangle_lines_ex(Rectangle::new(
+                    rect.x+4.0,rect.y+4.0,rect.width-8.0,rect.height-8.0),
+                    2.0,Color::SKYBLUE);
+            }
 
         }
         _ => {}

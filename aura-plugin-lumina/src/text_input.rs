@@ -7,7 +7,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EditCommand {
-    Left, Right, Home, End, Backspace, Delete, Insert(String),
+    Left, Right, WordLeft, WordRight, Home, End,
+    Backspace, Delete, WordBackspace, WordDelete, Insert(String),
 }
 
 pub(crate) fn grapheme_count(text: &str) -> usize {
@@ -32,12 +33,66 @@ fn grapheme_index_at_or_after_byte(text: &str, byte: usize) -> usize {
     grapheme_count(text)
 }
 
+/// A native double-click chooses the UAX29 word at the pixel hit caret.
+/// Word spans are mapped to the smallest *whole extended grapheme* range:
+/// a word boundary is never allowed to split emoji ZWJ, flags, or accents.
+/// Non-word emoji/punctuation selects one complete adjacent grapheme.
+fn clicked_word_span(text:&str,at:usize)->Option<(usize,usize)>{
+    if text.is_empty()||text.len()>MAX_PROJECTED_TEXT_BYTES{return None;}
+    let boundaries:Vec<usize>=text.grapheme_indices(true)
+        .map(|(byte,_)|byte).chain(std::iter::once(text.len())).collect();
+    let count=boundaries.len().saturating_sub(1);
+    let at=at.min(count);
+    let byte=boundaries[at];
+    let spans:Vec<(usize,usize)>=text.unicode_word_indices()
+        .map(|(start,word)|(start,start+word.len())).collect();
+    let chosen=spans.iter().copied()
+        .find(|(start,end)|*start<=byte && byte<*end)
+        .or_else(||spans.iter().copied().find(|(_,end)|*end==byte));
+    if let Some((start,end))=chosen{
+        // Floor start / ceil end in extended-grapheme coordinates.
+        let a=boundaries.partition_point(|b|*b<=start).saturating_sub(1);
+        let b=boundaries.partition_point(|b|*b<end);
+        return (a<b&&b<=count).then_some((a,b));
+    }
+    if count==0{None}else if at<count{Some((at,at+1))}
+    else{Some((at-1,at))}
+}
+
+/// Logical Ctrl+word movement uses Unicode UAX #29 word segmentation but
+/// returns only UAX #29 *grapheme* indices. Never split combining sequences,
+/// regional-indicator flags or emoji ZWJ clusters even when the segmenter
+/// reports a word start inside one of those clusters.
+/// Punctuation/whitespace between words are traversed with the word.
+fn word_starts_graphemes(text:&str)->Vec<usize>{
+    let boundaries:Vec<usize>=text.grapheme_indices(true)
+        .map(|(byte,_)|byte).chain(std::iter::once(text.len())).collect();
+    let mut starts:Vec<usize>=text.unicode_word_indices()
+        .map(|(byte,_)|boundaries.partition_point(|pos|*pos<=byte)
+            .saturating_sub(1)).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+fn word_left(text:&str,caret:usize)->usize{
+    let caret=caret.min(grapheme_count(text));
+    word_starts_graphemes(text).into_iter().filter(|i|*i<caret)
+        .next_back().unwrap_or(0)
+}
+fn word_right(text:&str,caret:usize)->usize{
+    let len=grapheme_count(text);
+    word_starts_graphemes(text).into_iter()
+        .find(|i|*i>caret.min(len)).unwrap_or(len)
+}
+
 pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditCommand) -> bool {
     let len = grapheme_count(buffer);
     *caret = (*caret).min(len);
     match cmd {
         EditCommand::Left => *caret = caret.saturating_sub(1),
         EditCommand::Right => *caret = caret.saturating_add(1).min(len),
+        EditCommand::WordLeft => *caret = word_left(buffer,*caret),
+        EditCommand::WordRight => *caret = word_right(buffer,*caret),
         EditCommand::Home => *caret = 0,
         EditCommand::End => *caret = len,
         EditCommand::Backspace if *caret > 0 => {
@@ -53,6 +108,25 @@ pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditComman
             buffer.replace_range(start..end, "");
             return true;
         }
+        EditCommand::WordBackspace if *caret > 0 => {
+            let previous=word_left(buffer,*caret);
+            if previous==*caret{return false;}
+            let a=byte_offset(buffer,previous);
+            let b=byte_offset(buffer,*caret);
+            if a==b{return false;}
+            buffer.replace_range(a..b,"");
+            *caret=previous;
+            return true;
+        }
+        EditCommand::WordDelete if *caret < len => {
+            let next=word_right(buffer,*caret);
+            if next==*caret{return false;}
+            let a=byte_offset(buffer,*caret);
+            let b=byte_offset(buffer,next);
+            if a==b{return false;}
+            buffer.replace_range(a..b,"");
+            return true;
+        }
         EditCommand::Insert(value) => {
             let filtered: String = value.chars().filter(|c| !c.is_control()).collect();
             if filtered.is_empty() { return false; }
@@ -62,7 +136,8 @@ pub(crate) fn apply_edit(buffer: &mut String, caret: &mut usize, cmd: EditComman
             *caret = grapheme_index_at_or_after_byte(buffer, boundary);
             return true;
         }
-        EditCommand::Backspace | EditCommand::Delete => {}
+        EditCommand::Backspace | EditCommand::Delete |
+        EditCommand::WordBackspace | EditCommand::WordDelete => {}
     }
     false
 }
@@ -83,6 +158,8 @@ pub(crate) struct EditSession {
     authority_epoch: u64,
     /// Changes only when host authority rebases (not local editing).
     rebase_generation: u64,
+    /// Optional Host-authored UAX29 capacity; never truncates existing values.
+    max_graphemes:Option<usize>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot { buffer: String, caret: usize, anchor: usize }
@@ -121,10 +198,47 @@ impl EditSession {
         let end=grapheme_count(&text);
         Self { buffer:text, caret:end, anchor:end, undo:Vec::new(), redo:Vec::new(),
             preedit:None, last_composition_sequence:0,
-            authority_epoch:0,rebase_generation:0 }
+            authority_epoch:0,rebase_generation:0,max_graphemes:None }
+    }
+    /// Applied on every focused native frame after Host revision reconciliation.
+    /// A newer Host revision remains authoritative even if it exceeds the cap.
+    pub(crate) fn set_max_graphemes(&mut self,max:Option<usize>){
+        self.max_graphemes=max;
+    }
+    /// A bounded editor never increases an over-limit Host value; deletion or
+    /// replacement that preserves/decreases its grapheme count stays usable.
+    /// Count the FULL Unicode result, not inserted UTF-8 bytes or the sum of
+    /// separately counted fragments (graphemes can merge across boundaries).
+    fn permits_grapheme_result(&self,before:&str,after:&str)->bool{
+        let Some(cap)=self.max_graphemes else{return true;};
+        let before_count=grapheme_count(before);
+        let after_count=grapheme_count(after);
+        after_count<=cap || (before_count>cap && after_count<=before_count)
+    }
+    /// Count all retained dynamic text, including Undo/Redo, before a route
+    /// can keep this session alive outside the visible widget tree.
+    pub(crate) fn retained_bytes(&self)->usize {
+        let dynamic=|items:&Vec<Snapshot>|items.iter()
+            .fold(0usize,|sum,s|sum.saturating_add(s.buffer.len()));
+        self.buffer.len()
+            .saturating_add(dynamic(&self.undo))
+            .saturating_add(dynamic(&self.redo))
+            .saturating_add(self.preedit.as_ref().map_or(0,|p|p.text.len()))
     }
     pub(crate) fn authority_epoch(&self)->u64{self.authority_epoch}
     pub(crate) fn rebase_generation(&self)->u64{self.rebase_generation}
+    /// Double-click selection is a navigation-only action: one authority
+    /// epoch transition, zero Undo entries, zero Host change callbacks.
+    /// This cannot read projected IME text or select beyond bounded buffer.
+    pub(crate) fn select_word_at(&mut self,grapheme:usize)->bool{
+        if self.composing(){return false;}
+        let Some((a,b))=clicked_word_span(&self.buffer,grapheme)else{return false;};
+        let old=(self.anchor,self.caret);
+        self.anchor=a;self.caret=b;
+        if old!=(a,b){self.advance_authority_epoch();}
+        old!=(a,b)
+    }
+
     /// Shaped/BiDi GPU hit-testing must pass through this method rather
     /// than assigning caret/anchor directly, so stale IME deletion tokens
     /// are invalidated even if the user navigates away and back.
@@ -220,6 +334,7 @@ impl EditSession {
         if next_size>MAX_PROJECTED_TEXT_BYTES{return None;}
         let mut next=self.buffer.clone();
         next.replace_range(a..b,replacement);
+        if !self.permits_grapheme_result(&self.buffer,&next){return None;}
         self.last_composition_sequence=sequence;
         if next==self.buffer{return Some(false);}
         let old=self.snapshot();
@@ -312,6 +427,15 @@ impl EditSession {
     pub(crate) fn selection(&self) -> Option<(usize,usize)> {
         (self.anchor!=self.caret).then(||(self.anchor.min(self.caret),self.anchor.max(self.caret)))
     }
+    /// Copy exactly whole UAX29 grapheme clusters; no projected IME preedit
+    /// or stale selection is ever exported into the OS clipboard.
+    pub(crate) fn selected_text(&self)->Option<&str>{
+        if self.composing(){return None;}
+        let (start,end)=self.selection()?;
+        let len=grapheme_count(&self.buffer);
+        if end>len{return None;}
+        self.buffer.get(byte_offset(&self.buffer,start)..byte_offset(&self.buffer,end))
+    }
     fn push(undo:&mut Vec<Snapshot>,snapshot:Snapshot) {
         if undo.len()==MAX_HISTORY {undo.remove(0);}
         undo.push(snapshot);
@@ -332,10 +456,10 @@ impl EditSession {
                 if !extend {
                     if let Some((start,end))=self.selection() {
                         match cmd {
-                            EditCommand::Left=>{self.caret=start;self.anchor=start;
+                            EditCommand::Left|EditCommand::WordLeft=>{self.caret=start;self.anchor=start;
                                 if before!=(self.caret,self.anchor){self.advance_authority_epoch();}
                                 return false;}
-                            EditCommand::Right=>{self.caret=end;self.anchor=end;
+                            EditCommand::Right|EditCommand::WordRight=>{self.caret=end;self.anchor=end;
                                 if before!=(self.caret,self.anchor){self.advance_authority_epoch();}
                                 return false;}
                             _=>{}
@@ -351,6 +475,10 @@ impl EditSession {
                 false
             }
             SessionAction::Undo => {
+                if self.undo.last().is_some_and(|previous|
+                    !self.permits_grapheme_result(&self.buffer,&previous.buffer)){
+                    return false; // Keep the undo stack intact for future changes.
+                }
                 if let Some(previous)=self.undo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.redo,now);
@@ -359,6 +487,10 @@ impl EditSession {
                 false
             }
             SessionAction::Redo => {
+                if self.redo.last().is_some_and(|next|
+                    !self.permits_grapheme_result(&self.buffer,&next.buffer)){
+                    return false; // Never consume an inadmissible redo snapshot.
+                }
                 if let Some(next)=self.redo.pop() {
                     let now=self.snapshot();
                     Self::push(&mut self.undo,now);
@@ -374,7 +506,9 @@ impl EditSession {
                 let mut changed=false;
                 if let Some((start,end))=self.selection() {
                     match cmd {
-                        EditCommand::Backspace|EditCommand::Delete|EditCommand::Insert(_) => {
+                        EditCommand::Backspace|EditCommand::Delete|
+                        EditCommand::WordBackspace|EditCommand::WordDelete|
+                        EditCommand::Insert(_) => {
                             let a=byte_offset(&self.buffer,start);
                             let z=byte_offset(&self.buffer,end);
                             self.buffer.replace_range(a..z,"");
@@ -386,10 +520,15 @@ impl EditSession {
                 }
                 // Do not delete an extra grapheme after replacing a selection.
                 changed |= match cmd {
-                    EditCommand::Backspace|EditCommand::Delete if changed => false,
+                    EditCommand::Backspace|EditCommand::Delete|
+                    EditCommand::WordBackspace|EditCommand::WordDelete if changed => false,
                     other => apply_edit(&mut self.buffer,&mut self.caret,other),
                 };
                 self.anchor=self.caret;
+                if changed && !self.permits_grapheme_result(&old.buffer,&self.buffer){
+                    self.restore(old);
+                    return false; // Full rollback: caret, selection, Undo, Redo.
+                }
                 if changed {
                     Self::push(&mut self.undo,old);
                     self.redo.clear();
@@ -405,6 +544,179 @@ impl EditSession {
 #[cfg(test)]
 mod tests {
 
+    #[test]
+    fn double_click_selects_unicode_words_without_splitting_graphemes(){
+        assert_eq!(clicked_word_span("alpha beta",2),Some((0,5)));
+        assert_eq!(clicked_word_span("alpha beta",8),Some((6,10)));
+        assert_eq!(clicked_word_span("שלום עולם",2),Some((0,4)));
+        assert_eq!(clicked_word_span("שלום עולם",7),Some((5,9)));
+        let emoji="🇮🇱👩‍💻";
+        assert_eq!(clicked_word_span(emoji,0),Some((0,1)));
+        assert_eq!(clicked_word_span(emoji,1),Some((1,2)));
+        assert_eq!(clicked_word_span("e\u{301}cole",2),Some((0,5)));
+        assert_eq!(clicked_word_span("",0),None);
+        assert_eq!(clicked_word_span(&"x".repeat(MAX_PROJECTED_TEXT_BYTES+1),3),None);
+    }
+    #[test]
+    fn native_word_selection_is_navigation_only_and_atomic_on_next_edit(){
+        let mut s=EditSession::new("אבג beta 👩‍💻".into());
+        assert!(s.select_word_at(5));
+        assert_eq!(s.selection(),Some((4,8)));
+        assert_eq!(s.selected_text(),Some("beta"));
+        assert_eq!(s.undo_len(),0);
+        assert!(!s.select_word_at(5));
+        assert_eq!(s.undo_len(),0);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("Z".into()))));
+        assert_eq!(s.buffer,"אבג Z 👩‍💻");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"אבג beta 👩‍💻");
+        let previous=s.authority_epoch();
+        s.rebase_authority("Host new".into());
+        assert!(s.authority_epoch()>previous);
+        assert!(s.select_word_at(2));
+        assert_eq!(s.selected_text(),Some("Host"));
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]
+    fn live_composition_refuses_double_click_selection_without_preedit_export(){
+        let mut s=EditSession::new("alpha beta".into());
+        assert!(s.start_composition(1));
+        assert!(!s.select_word_at(7));
+        assert_eq!(s.selection(),None);
+        assert_eq!(s.undo_len(),0);
+        s.abandon_composition();
+        assert!(s.select_word_at(7));
+        assert_eq!(s.selected_text(),Some("beta"));
+    }
+    #[test]
+    fn uax29_word_shortcuts_keep_emoji_and_hebrew_graphemes_whole(){
+        let sample="אבג 👩‍💻 עולם";
+        assert_eq!(grapheme_count(sample),10);
+        assert_eq!(word_left(sample,10),6);
+        assert_eq!(word_left(sample,6),0);
+        assert_eq!(word_right(sample,0),6);
+        assert_eq!(word_right(sample,6),10);
+        let mut s=EditSession::new(sample.into());
+        assert!(s.apply(SessionAction::Edit(EditCommand::WordBackspace)));
+        assert_eq!(s.buffer,"אבג 👩‍💻 ");
+        assert_eq!(s.caret,6);
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,sample);
+        assert!(s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"אבג 👩‍💻 ");
+        assert!(s.apply(SessionAction::Undo));
+        // Grapheme-aware word selection then one atomic replacement.
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,true)));
+        assert_eq!(s.selected_text(),Some("עולם"));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("Z".into()))));
+        assert_eq!(s.buffer,"אבג 👩‍💻 Z");
+    }
+    #[test]
+    fn word_navigation_selection_collapse_and_delete_use_one_undo(){
+        let mut s=EditSession::new("alpha beta gamma".into());
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,true)));
+        assert_eq!(s.selection(),Some((11,16)));
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,false)));
+        assert_eq!((s.caret,s.anchor),(11,11));
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordRight,false)));
+        assert_eq!((s.caret,s.anchor),(16,16));
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,false)));
+        assert_eq!(s.caret,11);
+        assert!(s.apply(SessionAction::Edit(EditCommand::WordDelete)));
+        assert_eq!(s.buffer,"alpha beta ");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"alpha beta gamma");
+        assert!(s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"alpha beta ");
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,false)));
+        assert_eq!(s.caret,6);
+        assert!(s.apply(SessionAction::Edit(EditCommand::WordBackspace)));
+        assert_eq!(s.buffer,"beta ");
+        assert_eq!(s.undo_len(),2);
+    }
+    #[test]
+    fn word_shortcuts_fail_closed_during_ime_and_rebase_clears_history(){
+        let mut s=EditSession::new("one two".into());
+        let before=s.authority_epoch();
+        assert!(s.start_composition(1));
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,true)));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::WordBackspace)));
+        assert_eq!(s.buffer,"one two");
+        assert_eq!(s.undo_len(),0);
+        s.abandon_composition();
+        assert!(!s.apply(SessionAction::Move(EditCommand::WordLeft,false)));
+        assert!(s.authority_epoch()>before);
+        assert_eq!(s.caret,4);
+        assert!(s.apply(SessionAction::Edit(EditCommand::WordBackspace)));
+        assert_eq!(s.buffer,"two");
+        s.rebase_authority("Host new".into());
+        assert_eq!(s.undo_len(),0);
+        assert_eq!(s.buffer,"Host new");
+        assert!(!s.apply(SessionAction::Undo));
+    }
+    #[test]
+    fn word_delete_respects_grapheme_limit_overcap_and_selection_atomicity(){
+        let mut s=EditSession::new("alpha beta".into());
+        s.set_max_graphemes(Some(3));
+        assert!(s.apply(SessionAction::Edit(EditCommand::WordBackspace)));
+        assert_eq!(s.buffer,"alpha ");
+        let previous=s.buffer.clone();
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("four".into()))));
+        assert_eq!(s.buffer,previous);
+        assert_eq!(s.undo_len(),1);
+        // Undo that would increase a still-over-cap Host value remains blocked.
+        assert!(!s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,previous);
+    }
+    #[test]
+    fn selected_text_exports_whole_clusters_and_cannot_export_live_preedit(){
+        let mut s=EditSession::new("א👩‍💻🇮🇱e\u{301}Z".into());
+        assert_eq!(s.selected_text(),None);
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert_eq!(s.selected_text(),Some("א👩‍💻🇮🇱e\u{301}Z"));
+        let old=s.buffer.clone();
+        assert!(s.apply(SessionAction::Edit(EditCommand::Delete)));
+        assert_eq!(s.buffer,"");
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,old);
+        assert!(s.start_composition(1));
+        assert_eq!(s.selected_text(),None);
+        s.abandon_composition();
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert_eq!(s.selected_text(),Some(old.as_str()));
+    }
+    #[test]
+    fn paste_uses_existing_atomic_undo_grapheme_cap_and_host_rebase(){
+        let mut s=EditSession::new("A".into());
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("👩‍💻🇮🇱".into()))));
+        assert_eq!((s.buffer.as_str(),s.undo_len()),("A",0));
+        assert!(!s.apply(SessionAction::SelectAll));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("👩‍💻🇮🇱".into()))));
+        assert_eq!(s.buffer,"👩‍💻🇮🇱");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"A");
+        s.rebase_authority("HOST".into());
+        assert_eq!(s.undo_len(),0);
+        assert_eq!(s.buffer,"HOST");
+    }
+    #[test]fn retained_size_accounts_for_committed_text_and_undo_redo(){
+        let mut s=EditSession::new("A".into());
+        assert_eq!(s.retained_bytes(),1);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("xy".into()))));
+        assert!(s.retained_bytes()>=4,
+            "live three-byte string plus previous one-byte snapshot");
+        assert!(s.apply(SessionAction::Undo));
+        assert!(s.retained_bytes()>=4,
+            "Redo also counts toward retained memory budget");
+        s.rebase_authority("host".into());
+        assert_eq!(s.retained_bytes(),4,
+            "host rebase must discard old undo/redo snapshots");
+    }
     #[test]fn real_engine_d_then_c_replacement_is_one_undo_not_two_edits(){
         let mut s=EditSession::new("ANCHORㄱ".into());
         let first=s.authority_epoch();
@@ -799,6 +1111,104 @@ mod tests {
         assert!(!e.start_composition(41));
         assert!(!e.commit_composition(42,"stale").is_some());
         assert!(e.start_composition(43));
+    }
+    #[test]fn max_graphemes_atomic_unicode_clusters_and_selection_replacement(){
+        let mut s=EditSession::new("a👩‍💻".into());
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("🇮🇱".into()))));
+        assert_eq!(s.buffer,"a👩‍💻");
+        assert_eq!((s.caret,s.anchor,s.undo_len()),(2,2,0));
+        s.apply(SessionAction::SelectAll);
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("e\u{301}🇮🇱".into()))));
+        assert_eq!(s.buffer,"e\u{301}🇮🇱");
+        assert_eq!(grapheme_count(&s.buffer),2);
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"a👩‍💻");
+    }
+    #[test]fn combining_mark_merging_at_cap_is_not_rejected_by_scalar_count(){
+        let mut s=EditSession::new("e".into());
+        s.set_max_graphemes(Some(1));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("\u{301}".into()))));
+        assert_eq!(s.buffer,"e\u{301}");
+        assert_eq!(grapheme_count(&s.buffer),1);
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert_eq!(s.buffer,"e\u{301}");
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"e");
+    }
+    #[test]fn host_oversized_value_is_not_truncated_but_cannot_grow(){
+        let mut s=EditSession::new("ABCD".into());
+        s.set_max_graphemes(Some(2));
+        assert_eq!(s.buffer,"ABCD","Host input stays byte-exact");
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("x".into()))));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"ABC");
+        assert!(!s.apply(SessionAction::Undo),
+            "undo would grow an already-over-limit buffer");
+        assert_eq!(s.buffer,"ABC");
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"AB");
+        assert!(!s.apply(SessionAction::Undo),
+            "undo cannot raise a compliant buffer over the cap");
+        s.rebase_authority("ServerOwned".into());
+        s.set_max_graphemes(Some(2));
+        assert_eq!(s.buffer,"ServerOwned");
+        assert_eq!(s.undo_len(),0);
+    }
+    #[test]fn redo_over_limit_is_blocked_without_consuming_redo(){
+        let mut s=EditSession::new("ab".into());
+        assert!(s.apply(SessionAction::Edit(EditCommand::Insert("c".into()))));
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"ab");
+        s.set_max_graphemes(Some(2));
+        assert!(!s.apply(SessionAction::Redo));
+        assert_eq!(s.buffer,"ab");
+        s.set_max_graphemes(Some(3));
+        assert!(s.apply(SessionAction::Redo),
+            "previous rejected redo must remain available");
+        assert_eq!(s.buffer,"abc");
+    }
+    #[test]fn ime_commit_enforces_cap_but_preedit_is_never_authoritative(){
+        let mut s=EditSession::new("a".into());
+        s.set_max_graphemes(Some(2));
+        assert!(s.start_composition(1));
+        assert!(s.update_composition(2,"👩‍💻🇮🇱",2));
+        assert_eq!(s.buffer,"a");
+        assert_eq!(s.commit_composition(3,"👩‍💻🇮🇱"),Some(false));
+        assert_eq!(s.buffer,"a");
+        assert_eq!(s.undo_len(),0);
+        assert!(s.start_composition(4));
+        assert!(s.update_composition(5,"👩‍💻",1));
+        assert_eq!(s.commit_composition(6,"👩‍💻"),Some(true));
+        assert_eq!(s.buffer,"a👩‍💻");
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"a");
+    }
+    #[test]fn ibus_atomic_surrounding_replacement_obeys_grapheme_capacity(){
+        let mut s=EditSession::new("abcd".into());
+        s.set_max_graphemes(Some(4));
+        let epoch=s.authority_epoch();
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"abcd",4,4,-1,1,"🙂🙂",1),None);
+        assert_eq!(s.buffer,"abcd");
+        assert_eq!(s.undo_len(),0);
+        assert_eq!(s.replace_surrounding_if_snapshot(
+            epoch,"abcd",4,4,-1,1,"🇮🇱",2),Some(true));
+        assert_eq!(s.buffer,"abc🇮🇱");
+        assert_eq!(grapheme_count(&s.buffer),4);
+        assert_eq!(s.undo_len(),1);
+        assert!(s.apply(SessionAction::Undo));
+        assert_eq!(s.buffer,"abcd");
+    }
+    #[test]fn zero_cap_disallows_growth_but_still_allows_deletion(){
+        let mut s=EditSession::new("A".into());
+        s.set_max_graphemes(Some(0));
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("z".into()))));
+        assert!(s.apply(SessionAction::Edit(EditCommand::Backspace)));
+        assert_eq!(s.buffer,"");
+        assert!(!s.apply(SessionAction::Edit(EditCommand::Insert("z".into()))));
     }
     #[test]fn ime_limits_invalid_cursor_and_controls_rejected_without_sequence_advance(){
         let mut e=EditSession::new(String::new());

@@ -89,10 +89,61 @@ pub(crate) fn plan(
     });
     Visual {scroll,caret,selection,selection_spans:Vec::new(),preedit_spans:Vec::new(),caret_valid:true}
 }
+/// Real font prefix widths to UAX29 grapheme stops for the *unshaped*
+/// single-line editor. Bounded O(log N) measurements during mouse drags.
+/// Shaped BiDi/GSUB text must instead use bidi_editor::hit_test.
+pub(crate) fn grapheme_at_x<F>(text:&str,x:f32,mut width:F)->Option<usize>
+where F:FnMut(&str)->f32 {
+    if !x.is_finite()||text.len()>8192{return None;}
+    let boundaries:Vec<usize>=text.grapheme_indices(true)
+        .map(|(byte,_)|byte).chain(std::iter::once(text.len())).collect();
+    let total=boundaries.len().checked_sub(1)?;
+    if x<=0.0||total==0{return Some(0);}
+    let full=width(text);
+    if !full.is_finite()||full<0.0{return None;}
+    if x>=full{return Some(total);}
+    let mut low=0usize;
+    let mut high=total;
+    while low<high {
+        let mid=low+(high-low)/2;
+        let w=width(&text[..boundaries[mid]]);
+        if !w.is_finite()||w<0.0{return None;}
+        if w<x{low=mid+1;}else{high=mid;}
+    }
+    let next=low.min(total);
+    let prev=next.saturating_sub(1);
+    let a=width(&text[..boundaries[prev]]);
+    let b=width(&text[..boundaries[next]]);
+    if !a.is_finite()||!b.is_finite()||a<0.0||b<a{return None;}
+    Some(if x-a<=b-x{prev}else{next})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn c()->Bounds{content_bounds(Bounds::new(20.0,30.0,100.0,40.0))}
+    #[test]
+    fn native_pointer_hit_uses_measured_grapheme_boundaries(){
+        let w=|value:&str|value.graphemes(true).map(|g|
+            if g=="W"{20.0}else if g=="👩‍💻"{30.0}else{5.0}).sum::<f32>();
+        let s="aW👩‍💻e\u{301}";
+        assert_eq!(grapheme_at_x(s,-10.0,w),Some(0));
+        assert_eq!(grapheme_at_x(s,4.0,w),Some(1));
+        assert_eq!(grapheme_at_x(s,8.0,w),Some(1));
+        assert_eq!(grapheme_at_x(s,22.0,w),Some(2));
+        assert_eq!(grapheme_at_x(s,42.0,w),Some(3));
+        assert_eq!(grapheme_at_x(s,9999.0,w),Some(4));
+        assert_eq!(grapheme_at_x("",4.0,|_|0.0),Some(0));
+    }
+    #[test]
+    fn native_pointer_hit_fails_closed_on_nan_and_unbounded_text(){
+        assert_eq!(grapheme_at_x("abc",2.0,|s|
+            if s.len()==2{f32::NAN}else{s.len() as f32}),None);
+        assert_eq!(grapheme_at_x("abc",f32::NAN,|_|5.0),None);
+        assert_eq!(grapheme_at_x(&"a".repeat(8193),5.0,|_|5.0),None);
+        assert_eq!(grapheme_at_x("👩‍💻",100.0,|s|
+            if s.is_empty(){0.0}else{25.0}),Some(1));
+    }
     #[test]fn content_clip_is_inside_widget(){assert_eq!(c(),Bounds::new(32.0,33.0,76.0,34.0));}
     #[test]fn preedit_underlines_clip_to_visible_content_and_leave_selection_unmodified(){
         let mut v=plan(76.0,200.0,98.0,None,0.0,true);

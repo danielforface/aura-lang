@@ -3,8 +3,25 @@
 #[test]
 fn event_dispatch_must_use_prepared_hit_test_before_paint() {
     let source = include_str!("../src/lib.rs");
-    assert!(source.contains("layout::hit_test("),
-        "RED: input callback selection is still performed while drawing widgets");
+    // The original pure hit_test remains supported for existing callers.
+    // Native production now uses the stricter hit_test_with_blocked variant,
+    // which shares the same geometry + clip contract and rejects cancel
+    // click-through. Check actual evaluation ORDER, not one function spelling.
+    let hit=source.find("layout::hit_test_with_blocked(")
+        .or_else(||source.find("layout::hit_test("))
+        .expect("native event dispatch must use a prepared pure layout hit test");
+    let paint=source.find("let mut d = rl.begin_drawing(thread);")
+        .expect("native paint pass must begin after pointer handling");
+    assert!(hit<paint,
+        "pointer hit testing must complete before drawing begins");
+    if source.contains("layout::hit_test_with_blocked("){
+        assert!(source.contains("&cancel_pre.blocked"),
+            "native hit-test must supply the cancellation occlusion set");
+        let layout=include_str!("../src/layout.rs");
+        assert!(layout.contains("pub(crate) fn hit_test_with_blocked(")
+            && layout.contains("PointerHit::Blocked"),
+            "blocked cancellation must remain occluding, never click-through");
+    }
     assert!(!source.contains("point_in_rect(mouse, rect)"),
         "per-widget paint must not dispatch input behind clipped or covered widgets");
     let layout = include_str!("../src/layout.rs");
