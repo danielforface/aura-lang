@@ -31,6 +31,8 @@ pub mod noisy_ensemble_json;
 pub mod noisy_conditioned_json;
 pub mod noisy_entanglement;
 pub mod noisy_entanglement_json;
+pub mod noisy_hamiltonian;
+pub mod noisy_hamiltonian_json;
 
 use std::mem::size_of;
 
