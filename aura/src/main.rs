@@ -2018,7 +2018,7 @@ fn build(
 
     match backend {
         "c" => {
-            let artifacts = aura_backend_c::emit_module(&module_ir, Some(&debug)).into_diagnostic()?;
+            let artifacts = aura_backend_c::emit_module_with_source_contract(&program, &module_ir, Some(&debug)).into_diagnostic()?;
             let runtime_h = out_dir.join("aura_runtime.h");
             let module_c = out_dir.join("module.c");
             fs::write(&runtime_h, artifacts.runtime_h).into_diagnostic()?;
@@ -2034,7 +2034,7 @@ fn build(
             })
         }
         "wasm" => {
-            let artifacts = aura_backend_c::emit_module(&module_ir, Some(&debug)).into_diagnostic()?;
+            let artifacts = aura_backend_c::emit_module_with_source_contract(&program, &module_ir, Some(&debug)).into_diagnostic()?;
             let runtime_h = out_dir.join("aura_runtime.h");
             let module_c = out_dir.join("module.c");
             fs::write(&runtime_h, artifacts.runtime_h).into_diagnostic()?;

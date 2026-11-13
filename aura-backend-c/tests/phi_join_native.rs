@@ -6,13 +6,20 @@ use aura_ir::{
     BasicBlock, BlockId, ExecutionHint, FunctionIR, Inst, InstKind,
     ModuleIR, Param, Terminator, Type, ValueId,
 };
-use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf, process::Command, sync::atomic::{AtomicU64, Ordering}, time::{SystemTime, UNIX_EPOCH}};
+
+// Atomic per-process sequence also protects against coarse/virtualized test
+// clocks returning identical nanosecond timestamps to parallel Rust tests.
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 struct Scratch { root: PathBuf }
 impl Scratch {
     fn new() -> Self {
         let tick = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("aura-phi-native-{}-{tick}", std::process::id()));
+        let id = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "aura-phi-native-{}-{tick}-{id}", std::process::id()
+        ));
         fs::create_dir_all(&root).unwrap();
         Self { root }
     }

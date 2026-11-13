@@ -65,7 +65,12 @@ pub fn run_avm(src: &str) -> Result<RunOutcome> {
 
     match avm.exec_entry_cell(&src_aug, "main") {
         Ok(out) => Ok(RunOutcome {
-            ok: out.verified,
+            // ExecOutcome::verified is a FORMAL PROOF result, not a process
+            // success status. Under no-Z3 execution it is intentionally
+            // false even when the source program ran to completion.
+            // The differential harness compares runtime observations;
+            // this Ok branch means execution succeeded, without proof.
+            ok: true,
             stdout: out.stdout,
             stderr: String::new(),
         }),

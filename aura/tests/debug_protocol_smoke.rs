@@ -58,12 +58,18 @@ fn debug_protocol_smoke_hello_and_perf_report() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // Debug events are transport diagnostics, never evidence of proof.
+    // The AVM explicitly reports verified=false when Z3 is disabled, and
+    // the public CLI must reject that run while still publishing events.
     assert!(
-        out.status.success(),
-        "aura failed: {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-        out.status,
-        stdout,
-        stderr
+        !out.status.success(),
+        "no-Z3 Aura incorrectly reported verified execution: {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+        out.status, stdout, stderr
+    );
+    assert!(
+        stderr.contains("avm: Z3 gate rejected execution: verification not run: Z3 gate disabled"),
+        "missing explicit no-Z3 fail-closed diagnostic: status {:?}\nstdout: {}\nstderr: {}",
+        out.status, stdout, stderr
     );
 
     let dbg = debug_lines(&stdout);
@@ -111,6 +117,46 @@ fn debug_protocol_smoke_hello_and_perf_report() {
         "expected parse error log in stderr; got:\n{stderr}"
     );
 
-    // And the program itself should still run (no panic/diagnostic).
-    assert!(!stdout.contains("Error:"), "unexpected error in stdout");
+    // The debug stream must remain parseable despite the expected gate failure.
+    assert!(!stdout.contains("Error:"), "unexpected error in debug event stdout");
+}
+
+
+#[test]
+fn no_z3_gate_rejects_execution_without_debug_protocol_as_well() {
+    let aura = env!("CARGO_BIN_EXE_aura");
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("aura crate must be in a workspace");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let program = std::env::temp_dir().join(format!(
+        "aura-no-z3-gate-{}-{nonce}.aura", std::process::id()
+    ));
+    std::fs::write(&program,
+        "cell main() ->:\n    val x: u32 = 1\n    val y: u32 = x + 2\n"
+    ).expect("write no-Z3 contract fixture");
+
+    let result = Command::new(aura)
+        .args(["run", program.to_str().expect("fixture path UTF-8"), "--mode", "avm"])
+        .env("AURA_AVM_NO_Z3", "1")
+        .env_remove("AURA_DEBUG_PROTOCOL")
+        .current_dir(repo_root)
+        .output();
+    let _ = std::fs::remove_file(&program);
+    let out = result.expect("start no-Z3 Aura without debug protocol");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // Ordinary CLI and debug transport must agree on verification authority:
+    // disabling Z3 is NEVER proof of verified execution.
+    assert!(!out.status.success(),
+        "ordinary AVM run must reject disabled-Z3 verification: {out:?}");
+    assert!(stderr.contains(
+        "avm: Z3 gate rejected execution: verification not run: Z3 gate disabled"
+    ), "ordinary run lost fail-closed gate diagnostic: {stderr}");
+    assert!(!stdout.contains("AURA_DEBUG_EVENT "),
+        "debug events appeared without enabling the debug protocol: {stdout}");
 }

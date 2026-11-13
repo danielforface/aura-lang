@@ -1,0 +1,826 @@
+//! Q03-001: actual public Aura no-Z3 command path, not just emit_module().
+#![cfg(not(feature = "z3"))]
+use std::{fs, path::{Path, PathBuf}, process::{Command, Output}, sync::atomic::{AtomicU64, Ordering}, time::{SystemTime, UNIX_EPOCH}};
+static NEXT_CLI_SCRATCH: AtomicU64 = AtomicU64::new(0);
+struct SourceFile { root: PathBuf, file: PathBuf }
+impl SourceFile {
+    fn new(text: &str) -> Self {
+        let tick = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let sequence = NEXT_CLI_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("aura-record-cli-{}-{tick}-{sequence}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.aura");
+        fs::write(&file, text).unwrap();
+        Self { root, file }
+    }
+    fn run(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_aura"))
+            .arg(args[0]).arg(&self.file).args(&args[1..])
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .output().expect("run real Aura no-Z3 CLI binary")
+    }
+}
+impl Drop for SourceFile {
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+}
+#[test]
+fn genuine_local_scalar_record_passes_check_and_c_artifact_build_without_z3() {
+    let fixture = SourceFile::new(r#"
+type Point = record {
+    x: u32,
+    y: u32,
+}
+cell main() ->:
+    val p: Point = Point { y: 13, x: 7 }
+    yield p.x
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "source record check failed; stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no Z3 check must not assert proof");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "source Record C build failed; stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_cli_accepts_record_field_assign_through_if_else_join() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell main() ->:
+    val mut p: Point = Point { x: 7, y: 13 }
+    if true:
+        p.x = 19
+    else:
+        p.x = 23
+    yield p.x
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura check must accept typed flat Record Phi source, stderr={}",
+        String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no Z3 enabled: check cannot claim proof");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public Aura C build must preserve Record Phi, stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_cli_accepts_cross_cell_nominal_record_return_and_argument() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell make_point(x: u32, y: u32) ->:
+    yield Point { y: y, x: x }
+cell project_x(p: Point) ->:
+    yield p.x
+cell main() ->:
+    val p: Point = make_point(7, 13)
+    yield project_x(p)
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public CLI check rejects Record parameter/return: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 public CLI must not claim formal proof of Record ABI");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public CLI C build rejects nominal Record function ABI: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_named_record_function_abi_check_and_build() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+cell make_point(x: u32, y: u32) ->:
+    yield Point { x: x, y: y }
+cell sum_point(p: Point, increment: u32) ->:
+    yield p.x + increment
+cell main() ->:
+    val p: Point = make_point(y: 13, x: 7)
+    yield sum_point(increment: 5, p: p)
+"#);
+    let check = fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura check rejects named Record ABI: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "a successful no-Z3 check must not claim formal verification");
+    let build = fixture.run(&["build", "--mode", "hybrid", "--backend", "c", "--profile", "dev"]);
+    assert!(build.status.success(),
+        "public Aura named Record C build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_nested_nominal_record_function_check_and_c_build() {
+    let fixture = SourceFile::new(r#"
+type Point = record { x: u32, y: u32 }
+type Outer = record { p: Point, tag: u32 }
+cell make_outer() ->:
+    yield Outer { p: Point { x: 7, y: 13 }, tag: 99 }
+cell read_x(o: Outer) ->:
+    yield o.p.x
+cell main() ->:
+    val mut o: Outer = make_outer()
+    o.p = Point { x: 41, y: 43 }
+    yield read_x(o)
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public CLI nested nominal Record check fails: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout), String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 nested Record check must disclose no formal verification");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public CLI nested nominal Record native C build fails: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_omitted_scalar_record_defaults_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+cell build_point() ->:
+    yield Point { x: 19 }
+cell main() ->:
+    val p: Point = build_point()
+    yield p.y
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura defaults check: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no Z3 verification must not be represented as a formal proof");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public Aura default-valued Record C build: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_check_rejects_invalid_unused_or_overridden_record_declarations() {
+    for (source, expected) in [
+        (
+            "type Unused = record { x: u32 = true, y: u32 }\ncell main() ->:\n    yield 7\n",
+            "type",
+        ),
+        (
+            "type Point = record { x: u32 = 1 + 2, y: u32 }\ncell main() ->:\n    val p: Point = Point { x: 7, y: 13 }\n    yield p.x\n",
+            "unqualified",
+        ),
+        (
+            "type Point = record { x: u32 = 7, x: u32 = 13 }\ncell main() ->:\n    yield 7\n",
+            "duplicate",
+        ),
+    ] {
+        let fixture = SourceFile::new(source);
+        let check = fixture.run(&["check"]);
+        let output = format!("{}\n{}", String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr));
+        assert!(!check.status.success(),
+            "public Aura check must reject invalid Record declaration: {output}");
+        assert!(output.contains(expected),
+            "public Aura check must preserve semantic diagnostic {expected:?}: {output}");
+    }
+}
+
+
+#[test]
+fn public_no_z3_aura_nested_nominal_defaults_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell make_outer() ->:
+    yield Outer {}
+cell main() ->:
+    val o: Outer = make_outer()
+    yield o.p.x
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public Aura nested defaults check failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"),
+        "no-Z3 check cannot claim formal verification");
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public Aura nested default Record build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_no_z3_aura_nested_field_assignment_check_and_build() {
+    let fixture=SourceFile::new(r#"
+type Point = record { x: u32 = 7, y: u32 = 13 }
+type Outer = record { p: Point = Point {}, tag: u32 = 99 }
+cell main() ->:
+    val mut o: Outer = Outer {}
+    o.p.x = 19
+    yield o.p.x
+"#);
+    let check=fixture.run(&["check"]);
+    assert!(check.status.success(),
+        "public nested assignment check failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&check.stdout),String::from_utf8_lossy(&check.stderr));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("formal verification NOT RUN"));
+    let build=fixture.run(&["build","--mode","hybrid","--backend","c","--profile","dev"]);
+    assert!(build.status.success(),
+        "public nested assignment native build failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&build.stdout),String::from_utf8_lossy(&build.stderr));
+}
+
+
+#[test]
+fn public_aura_check_rejects_record_integer_narrowing_before_native_build() {
+    for (source,label) in [
+        ("type Tiny = record { n: u8 = 300 }\ncell main() ->:\n    yield 7\n", "unused u8 default"),
+        ("type Tiny = record { n: i8 = 200 }\ncell main() ->:\n    yield 7\n", "unused i8 default"),
+        ("type Tiny = record { n: u8 }\ncell main() ->:\n    val t: Tiny = Tiny { n: 256 }\n    yield 7\n", "explicit u8 initializer"),
+        ("type Tiny = record { n: u8 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = 300\n    yield t.n\n", "mutable u8 field assignment"),
+    ] {
+        let fixture=SourceFile::new(source);
+        let check=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr));
+        assert!(!check.status.success(),
+            "{label}: public checker must reject narrowing before codegen: {diagnostic}");
+        assert!(diagnostic.contains("out of range"),
+            "{label}: preserve exact width diagnostic: {diagnostic}");
+    }
+}
+
+
+#[test]
+fn public_aura_check_rejects_duplicate_nominal_record_type_definitions() {
+    let source=concat!(
+        "type Point = record { x: u32 = 7 }\n",
+        "type Point = record { x: u32 = 13 }\n",
+        "cell main() ->:\n    yield 7\n"
+    );
+    let fixture=SourceFile::new(source);
+    let checked=fixture.run(&["check"]);
+    let output=format!("{}\n{}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr));
+    assert!(!checked.status.success(),
+        "public Aura check must reject duplicate Record declarations: {output}");
+    assert!(output.contains("duplicate") && output.contains("Point"),
+        "public diagnostic must explain nominal type collision: {output}");
+}
+
+#[test]
+fn public_aura_check_rejects_type_namespace_collisions_even_if_unused() {
+    for (label, declarations) in [
+        ("record_then_enum", "type Collision = record { x: u32 = 7 }\ntype Collision = enum { First }\n"),
+        ("enum_then_record", "type Collision = enum { First }\ntype Collision = record { x: u32 = 7 }\n"),
+        ("record_then_alias", "type Collision = record { x: u32 = 7 }\ntype Collision = u32\n"),
+        ("alias_then_record", "type Collision = u32\ntype Collision = record { x: u32 = 7 }\n"),
+        ("enum_then_alias", "type Collision = enum { First }\ntype Collision = u32\n"),
+        ("alias_then_enum", "type Collision = u32\ntype Collision = enum { First }\n"),
+        ("enum_then_enum", "type Collision = enum { First }\ntype Collision = enum { Second }\n"),
+        ("alias_then_alias", "type Collision = u32\ntype Collision = bool\n"),
+    ] {
+        let source = format!("{declarations}cell main() ->:\n    yield 7\n");
+        let fixture = SourceFile::new(&source);
+        let result = fixture.run(&["check"]);
+        let diagnostic = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: public Aura check accepted ambiguous type namespace: {diagnostic}");
+        assert!(diagnostic.contains("duplicate") && diagnostic.contains("Collision"),
+            "{label}: expected duplicate type diagnosis, got {diagnostic}");
+    }
+}
+
+#[test]
+fn public_checker_refuses_proven_local_narrowing_and_unsigned_negative_record() {
+    for (label, src) in [
+        ("u8 from local range",
+         "type Tiny = record { n: u8 }\ncell main() ->:\n    val n = 300\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("i8 from local range",
+         "type Tiny = record { n: i8 }\ncell main() ->:\n    val n = 128\n    val t: Tiny = Tiny { n: n }\n    yield 7\n"),
+        ("unsigned negative initializer",
+         "type Tiny = record { n: u32 }\ncell main() ->:\n    val t: Tiny = Tiny { n: -1 }\n    yield 7\n"),
+        ("unsigned negative mutation",
+         "type Tiny = record { n: u32 = 7 }\ncell main() ->:\n    val mut t: Tiny = Tiny {}\n    t.n = -1\n    yield 7\n"),
+    ] {
+        let fixture=SourceFile::new(src);
+        let result=fixture.run(&["check"]);
+        let text=format!("{}\n{}",String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: actual public check accepted unsafe Record value: {text}");
+        assert!(text.contains("out of range") || text.contains("negative"),
+            "{label}: expected numeric Record diagnostic: {text}");
+    }
+}
+
+#[test]
+fn public_aura_check_refuses_typed_integer_local_range_laundering() {
+    for (label, source) in [
+        ("typed literal u8", "type Tiny = record { n: u8 }\ncell main() ->:\n    val n: u8 = 300\n    yield Tiny { n: n }\n"),
+        ("typed source copy u8", "type Tiny = record { n: u8 }\ncell main() ->:\n    val raw = 300\n    val n: u8 = raw\n    yield Tiny { n: n }\n"),
+        ("typed literal i8", "type Signed = record { n: i8 }\ncell main() ->:\n    val n: i8 = 128\n    yield Signed { n: n }\n"),
+        ("mutable typed local", "type Tiny = record { n: u8 }\ncell main() ->:\n    val mut n: u8 = 7\n    n = 300\n    yield Tiny { n: n }\n"),
+    ] {
+        let fixture=SourceFile::new(source);
+        let res=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",String::from_utf8_lossy(&res.stdout),
+            String::from_utf8_lossy(&res.stderr));
+        assert!(!res.status.success(),
+            "{label}: real CLI accepted unsafe typed local narrowing: {diagnostic}");
+        assert!(diagnostic.contains("out of range"),
+            "{label}: expected numeric range failure: {diagnostic}");
+    }
+}
+
+#[test]
+fn public_cli_accepts_valid_typed_integer_local_record_check_and_c_build() {
+    let source=concat!(
+        "type Tiny = record { n: u8 }\n",
+        "cell main() ->:\n",
+        "    val raw = 255\n",
+        "    val n: u8 = raw\n",
+        "    val t: Tiny = Tiny { n: n }\n",
+        "    yield t.n\n"
+    );
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..]
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public CLI {:?} must preserve valid typed Record scalar value: {output}",args);
+    }
+}
+
+#[test]
+fn public_cli_refuses_unused_unknown_and_cyclic_monomorphic_aliases() {
+    for (label,declarations) in [
+        ("cyclic", "type First = Second\ntype Second = First\n"),
+        ("unknown", "type Bad = MissingTarget\n"),
+    ] {
+        let source=format!("{declarations}cell main() ->:\n    yield 7\n");
+        let fixture=SourceFile::new(&source);
+        let output=fixture.run(&["check"]);
+        let diagnostic=format!("{}\n{}",
+            String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+        assert!(!output.status.success(),
+            "{label}: public check accepted invalid unused TypeAlias: {diagnostic}");
+        assert!(diagnostic.contains("TypeAlias") &&
+            (diagnostic.contains("cyclic") || diagnostic.contains("unknown")),
+            "{label}: public diagnostic must describe alias error: {diagnostic}");
+    }
+}
+
+#[test]
+fn public_cli_accepts_forward_declared_integer_alias_record_source() {
+    let source="type Top = Middle\ntype Middle = u8\n\
+        type Tiny = record { n: Top = 255 }\n\
+        cell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n";
+    let fixture=SourceFile::new(source);
+    for args in [&["check"][..],&["build","--mode","hybrid","--backend","c","--profile","dev"][..]] {
+        let res=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+        assert!(res.status.success(),
+            "public Aura {:?} must resolve a valid forward mono alias: {output}",args);
+    }
+}
+
+#[test]
+fn public_check_rejects_invalid_unused_refined_integer_aliases() {
+    for (label,decl) in [
+        ("u8 width", "type Bad = u8[0..300]\n"),
+        ("bool base", "type Bad = bool[0..1]\n"),
+        ("nested width", "type Small = u8[10..20]\ntype Bad = Small[10..21]\n"),
+    ] {
+        let src=format!("{decl}cell main() ->:\n    yield 7\n");
+        let fixture=SourceFile::new(&src);
+        let result=fixture.run(&["check"]);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: real aura check accepted invalid unused refined alias: {output}");
+        assert!(output.contains("range") || output.contains("refin"),
+            "{label}: expected type-range diagnostic from public CLI: {output}");
+    }
+}
+
+#[test]
+fn public_cli_checks_refined_alias_local_values_not_only_declarations() {
+    for (label,value) in [("below",9),("above",21)] {
+        let src=format!(
+            "type Window = u8[10..20]\ncell main() ->:\n    val n: Window = {value}\n    yield n\n"
+        );
+        let fixture=SourceFile::new(&src);
+        let result=fixture.run(&["check"]);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+        assert!(!result.status.success(),
+            "{label}: public checker accepted out-of-range refined local: {output}");
+        assert!(output.contains("range") || output.contains("refin"),
+            "{label}: require precise range diagnostic: {output}");
+    }
+    let valid="type Window = u8[10..20]\ncell main() ->:\n    val n: Window = 20\n    yield n\n";
+    let fixture=SourceFile::new(valid);
+    let result=fixture.run(&["check"]);
+    assert!(result.status.success(),"legal refined local must pass public check: {}",
+        String::from_utf8_lossy(&result.stderr));
+}
+
+#[test]
+fn public_check_validates_refined_alias_record_defaults_and_writes() {
+    let invalid="type Window = u8[10..20]\ntype Tiny = record { n: Window = 21 }\ncell main() ->:\n    yield 7\n";
+    let fixture=SourceFile::new(invalid);
+    let rejected=fixture.run(&["check"]);
+    let message=format!("{}\n{}",
+        String::from_utf8_lossy(&rejected.stdout),
+        String::from_utf8_lossy(&rejected.stderr));
+    assert!(!rejected.status.success(),"public check accepted invalid refined default: {message}");
+    assert!(message.contains("range") || message.contains("refin"),
+        "expected explicit refinement diagnostic: {message}");
+    let valid="type Window = u8[10..20]\ntype Tiny = record { n: Window = 20 }\ncell main() ->:\n    val t: Tiny = Tiny {}\n    yield t.n\n";
+    let valid_fixture=SourceFile::new(valid);
+    let checked=valid_fixture.run(&["check"]);
+    assert!(checked.status.success(),
+        "valid refined Record default must check: {}",
+        String::from_utf8_lossy(&checked.stderr));
+}
+
+#[test]
+fn public_cli_refined_user_call_requires_proven_argument_for_check_and_native_build() {
+    for (label, source) in [
+        ("out-of-window literal", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    yield accept(21)
+"#),
+        ("unconstrained caller parameter", r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell proxy(n: u32) ->:
+    yield accept(n)
+"#),
+    ] {
+        let fixture=SourceFile::new(source);
+        for args in [
+            &["check"][..],
+            &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+        ] {
+            let res=fixture.run(args);
+            let output=format!("{}\n{}",
+                String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+            assert!(!res.status.success(),
+                "{label}: public Aura {:?} accepted unproven refined call: {output}",args);
+            assert!(output.contains("range") || output.contains("refin") ||
+                output.contains("prove"),
+                "{label}: require explicit refinement refusal: {output}");
+        }
+    }
+}
+
+#[test]
+fn public_cli_builds_valid_refined_user_call_with_exact_native_abi() {
+    let source=r#"
+type Window = u8[10..20]
+cell accept(n: Window) ->:
+    yield n
+cell main() ->:
+    yield accept(20)
+"#;
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let res=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&res.stdout),String::from_utf8_lossy(&res.stderr));
+        assert!(res.status.success(),
+            "public Aura {:?} must build proven refined call: {output}",args);
+    }
+}
+
+#[test]
+fn public_cli_accepts_high_u64_refined_inter_cell_abi_without_u32_truncation() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell echo_high(n: High) ->:
+    yield n
+cell bridge_high(n: High) ->:
+    yield echo_high(n)
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must preserve high u64 source guard without U32 truncation: {output}",
+            args);
+    }
+}
+
+#[test]
+fn public_cli_builds_high_u64_refined_phi_from_user_call_results() {
+    // The public source-bound C build must handle a join Phi whose two
+    // incoming U64 SSA values come from actual user-cell Calls, not from
+    // direct arguments or an IR-only fixture.
+    let source=r#"
+type High = u64[4294967296..4294967316]
+cell identity_high(n: High) ->:
+    yield n
+cell choose_calls(flag: bool, first: High, second: High) ->:
+    val mut chosen: High = first
+    if flag:
+        chosen = identity_high(second)
+    else:
+        chosen = identity_high(first)
+    yield chosen
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must accept source-qualified high-u64 Call Phi: {output}",
+            args);
+    }
+}
+
+#[test]
+fn public_cli_builds_high_u64_refined_nested_if_phi_with_chained_cell_calls() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell id_high(n: High) ->:
+    yield n
+cell mid_high(n: High) ->:
+    yield id_high(n)
+cell nested_high(a: bool, b: bool, first: High, second: High, third: High) ->:
+    val mut selected: High = first
+    if a:
+        if b:
+            selected = mid_high(second)
+        else:
+            selected = id_high(third)
+    else:
+        selected = mid_high(first)
+    yield selected
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "public Aura {:?} must preserve nested source-qualified high-u64 Phi: {output}",args);
+    }
+}
+
+#[test]
+fn public_cli_builds_real_early_return_source_without_phantom_phi_edges() {
+    let src=r#"
+type High = u64[4294967296..4294967316]
+cell id_high(n: High) ->:
+    yield n
+cell early_high(flag: bool, first: High, second: High) ->:
+    val hold: High = id_high(first)
+    if flag:
+        yield id_high(second)
+    yield hold
+cell both_return(flag: bool, a: u32, b: u32) ->:
+    if flag:
+        yield a
+    else:
+        yield b
+    yield a
+cell main() ->:
+    yield 7
+"#;
+    let fixture=SourceFile::new(src);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result=fixture.run(args);
+        let output=format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-191 public Aura {:?} must preserve early Return CFG and high-u64 ABI: {output}", args);
+        if args[0] == "check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 check must never claim formal proof: {output}");
+        }
+    }
+}
+
+#[test]
+fn public_cli_builds_match_and_while_early_return_source_without_phantom_phi_edges() {
+    let source = r#"
+cell early_match(n: u32, flag: bool, first: u32, second: u32) ->:
+    val mut chosen: u32 = first
+    match n:
+        0:
+            if flag:
+                yield first
+            else:
+                chosen = second
+        _:
+            chosen = first
+    yield chosen
+cell early_loop(flag: bool, n: u32) ->:
+    val mut chosen: u32 = n
+    while flag:
+        chosen = chosen + 1
+        yield chosen
+    yield chosen
+cell main() ->:
+    yield 7
+"#;
+    let fixture = SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result = fixture.run(args);
+        let output = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-192 public Aura {:?} must build real early Match/While source: {output}",args);
+        if args[0]=="check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 CLI cannot assert formal proof: {output}");
+        }
+    }
+}
+
+#[test]
+fn public_cli_builds_source_dominated_nested_branch_switch_and_loop_ssa() {
+    // The source-qualified public check/build path must continue accepting
+    // legal SSA from joins, dense switches, calls and loop backedges.
+    // This is compilation conformance, never an SMT proof claim.
+    let source = r#"
+cell identity(x: u32) ->:
+    yield x
+cell select(flag: bool, x: u32, y: u32) ->:
+    val mut chosen: u32 = x
+    if flag:
+        if x == y:
+            chosen = identity(x + 1)
+        else:
+            chosen = identity(x + 2)
+    else:
+        chosen = identity(y + 2)
+    yield chosen
+cell choose_case(n: u32, x: u32) ->:
+    match n:
+        0:
+            yield x + 1
+        1:
+            yield x
+        2:
+            yield x
+        3:
+            yield x
+        _:
+            yield x
+    yield x
+cell count_up(start: u32, limit: u32) ->:
+    val mut cursor: u32 = start
+    while cursor < limit:
+        cursor = cursor + 1
+    yield cursor
+cell main() ->:
+    yield select(true, 7, 13)
+"#;
+    let fixture = SourceFile::new(source);
+    for args in [
+        &["check"][..],
+        &["build","--mode","hybrid","--backend","c","--profile","dev"][..],
+    ] {
+        let result = fixture.run(args);
+        let output = format!("{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(),
+            "EV-193 public Aura {:?} must accept properly dominated SSA: {output}", args);
+        if args[0] == "check" {
+            assert!(output.contains("formal verification NOT RUN"),
+                "no-Z3 CLI must not claim formal verification: {output}");
+        }
+    }
+}
+
+// X-009 actual full-workspace regression (run #42986164793):
+// differential_harness falsely reported match_basic RED because AVM's
+// *verification* bit was used as the execution *success* bit. Keep the
+// no-Z3 proof status false, but compare actual source program outcomes.
+// This test runs in BOTH mandatory Q03 public CLI gates, whereas the
+// original differential_harness runs in X's complete Cargo workspace.
+#[path = "common/differential_util.rs"]
+mod differential_util;
+
+#[test]
+fn x009_real_match_basic_execution_parity_keeps_no_z3_unverified() {
+    const MATCH: &str = include_str!("corpus/match_basic.aura");
+    const PRINTLN: &str = include_str!("corpus/println_basic.aura");
+    const RANGE: &str = include_str!("corpus/range_check_u32.aura");
+
+    // Independent AVM execution evidence must retain the formal trust
+    // boundary even after repairing the differential harness's process
+    // success classification.
+    let source = aura_sdk::augment_source_with_default_std(MATCH)
+        .expect("existing Aura std import must augment");
+    let mut vm = aura_interpret::Avm::new(aura_interpret::AvmConfig {
+        enable_z3_gate: false,
+        ..Default::default()
+    });
+    let evidence = vm.exec_entry_cell(&source, "main")
+        .expect("real match_basic source runs in AVM");
+    assert!(!evidence.verified, "no Z3: execution is NOT a proof");
+    assert!(evidence.gate_error.as_deref().unwrap_or("").contains("not run"),
+        "missing Z3 verification must remain explicit");
+    assert_eq!(evidence.stdout, "two\n");
+
+    // X's same-source corpus exercises Match CFG, interpolation, and
+    // conditional numeric behavior, not a fabricated hand-built IR.
+    for (name, src, output) in [
+        ("match_basic", MATCH, "two\n"),
+        ("println_basic", PRINTLN, "x = 5\n"),
+        ("range_check_u32", RANGE, "ok\n"),
+    ] {
+        let reference = differential_util::run_avm(src)
+            .expect("source AVM runner returns a runtime observation");
+        assert!(reference.ok,
+            "{name}: valid no-Z3 AVM execution cannot become process failure: {reference:?}");
+        assert_eq!(reference.stdout, output, "{name}: real source AVM output");
+        assert_eq!(reference.stderr, "", "{name}: successful AVM stderr");
+
+        let scratch = SourceFile::new(src);
+        let native = differential_util::compile_and_run_c(
+            name, src, &scratch.root.join("differential")
+        ).expect("real C compile/run must return observation")
+            .expect("the Q03 native CLI gate installs Clang");
+        assert!(native.ok,
+            "{name}: native C must execute successfully: {native:?}");
+        assert_eq!(native.stdout, reference.stdout,
+            "{name}: same-source AVM/native C stdout mismatch");
+        assert_eq!(native.stderr, reference.stderr,
+            "{name}: same-source AVM/native C stderr mismatch");
+    }
+
+    // A genuine interpreter error is still an execution failure, not
+    // magically promoted to success by the changed Ok branch.
+    let broken = differential_util::run_avm("cell main( ->:\n")
+        .expect("AVM runner maps malformed source to a failure observation");
+    assert!(!broken.ok, "invalid source must remain a runtime failure");
+    assert!(broken.stdout.is_empty());
+    assert!(!broken.stderr.is_empty(), "failures keep useful diagnostics");
+}

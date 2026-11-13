@@ -104,6 +104,17 @@ pub enum BinOp {
 pub struct ModuleIR {
     pub functions: BTreeMap<String, FunctionIR>,
     pub externs: BTreeMap<String, ExternFnSig>,
+    /// Ordered nominal field layouts that survive source-to-IR lowering.
+    /// Absence of a layout is NOT permission to infer one from values.
+    pub record_layouts: BTreeMap<String, Vec<(String, Type)>>,
+    /// Checker-resolved source-level parameter refinement intervals.
+    /// These must not be inferred from or replaced by executable RangeCheck
+    /// instructions, which may be edited after lowering.
+    /// The C boundary verifies that each call-site guard is a subset.
+    pub refined_param_bounds: BTreeMap<String, Vec<Option<(u64, u64)>>>,
+    /// Source-checked refined yield intervals, independent of scalar return
+    /// ABI width and mutable executable return instructions.
+    pub refined_return_bounds: BTreeMap<String, (u64, u64)>,
 }
 
 impl ModuleIR {
@@ -111,6 +122,9 @@ impl ModuleIR {
         Self {
             functions: BTreeMap::new(),
             externs: BTreeMap::new(),
+            record_layouts: BTreeMap::new(),
+            refined_param_bounds: BTreeMap::new(),
+            refined_return_bounds: BTreeMap::new(),
         }
     }
 }

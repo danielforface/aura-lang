@@ -100,6 +100,17 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
     let mut lower = Lowerer {
         id: IdGen::default(),
         checker: &checker,
+        record_defaults: program.stmts.iter().filter_map(|stmt| {
+            if let Stmt::RecordDef(def) = stmt {
+                if def.params.is_empty() {
+                    return Some((def.name.node.clone(), def.fields.iter().filter_map(|field|
+                        field.default.as_ref().map(|expr|
+                            (field.name.node.clone(), expr.clone()))
+                    ).collect::<Vec<_>>()));
+                }
+            }
+            None
+        }).collect(),
         locals: HashMap::new(),
         blocks: Vec::new(),
         current: None,
@@ -107,8 +118,34 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
 
     for stmt in &program.stmts {
         match stmt {
+            Stmt::RecordDef(def) if def.params.is_empty() => {
+                // Preserve declaration order and exact scalar field types for
+                // C layout; unsupported/generic fields remain unqualified.
+                // Resolve concrete Record layout field types through the same
+                // qualified Checker registry used for declaration acceptance.
+                // Raw AST names can be monomorphic TypeAliases (including
+                // chains); lowering them directly as opaque nominal C fields
+                // makes checker/oracle/native disagree on the ABI.
+                // Unsupported types remain their exact non-scalar IR types,
+                // and the C emitter will continue to reject them fail-closed.
+                let fields = def.fields.iter().map(|field| {
+                    let ty = checker.resolve_type_ref(&field.ty)?;
+                    let ir = lower_sema_type_to_ir(&ty, field.ty.span)?;
+                    Ok((field.name.node.clone(), ir))
+                }).collect::<Result<Vec<_>, SemanticError>>()?;
+                module.record_layouts.insert(def.name.node.clone(), fields);
+            }
             Stmt::CellDef(cell) => {
                 let f = lower.lower_cell(cell)?;
+                // Keep the source's qualified interval independently of
+                // the executable IR RangeCheck that an optimizer can rewrite.
+                // The exact vec order matches the FunctionIR parameter ABI.
+                if let Some(bounds) = checker.function_refined_arg_ranges(&f.name) {
+                    module.refined_param_bounds.insert(f.name.clone(), bounds);
+                }
+                if let Some(bounds) = checker.function_refined_return_range(&f.name) {
+                    module.refined_return_bounds.insert(f.name.clone(), bounds);
+                }
                 module.functions.insert(f.name.clone(), f);
             }
             Stmt::FlowBlock(fb) => {
@@ -168,6 +205,9 @@ pub fn lower_program(program: &Program) -> Result<ModuleIR, SemanticError> {
 struct Lowerer<'c> {
     id: IdGen,
     checker: &'c Checker,
+    // Only concrete source Record declarations may synthesize omitted
+    // defaults. Generic / unsupported defaults never become fake SSA values.
+    record_defaults: HashMap<String, Vec<(String, Expr)>>,
     locals: HashMap<String, ValueId>,
 
     blocks: Vec<BasicBlock>,
@@ -187,10 +227,16 @@ impl<'c> Lowerer<'c> {
 
         let mut params = Vec::new();
         for p in &cell.params {
+            // Function parameters must share the exact Checker-resolved ABI
+            // with values, Record fields and return types. A raw source alias
+            // such as Window=u8[10..20] is U8 at the executable boundary,
+            // never Opaque("Window").
+            let checked_ty = self.checker.resolve_type_ref(&p.ty)?;
+            let abi_ty = lower_sema_type_to_ir(&checked_ty, p.ty.span)?;
             let v = self.id.fresh_value();
             params.push(Param {
                 name: p.name.node.clone(),
-                ty: lower_type(&p.ty),
+                ty: abi_ty,
                 span: p.span,
                 value: v,
             });
@@ -246,7 +292,16 @@ impl<'c> Lowerer<'c> {
 
     fn lower_block(&mut self, block_ast: &Block) -> Result<(), SemanticError> {
         for stmt in &block_ast.stmts {
+            // A nested if can terminate every reachable arm with an explicit
+            // yield. Do not append unreachable instructions or overwrite its
+            // Return with this enclosing block's implicit fallthrough.
+            if self.has_terminator() {
+                return Ok(());
+            }
             self.lower_stmt_in_place(stmt, block_ast.span)?;
+        }
+        if self.has_terminator() {
+            return Ok(());
         }
 
         let ret = if let Some(y) = &block_ast.yield_expr {
@@ -267,6 +322,7 @@ impl<'c> Lowerer<'c> {
                 Ok(())
             }
             Stmt::Assign(a) => self.lower_assign(a),
+            Stmt::FieldAssign(a) => self.lower_field_assign(a),
             Stmt::If(i) => self.lower_if(i),
             Stmt::Match(m) => self.lower_match(m),
             Stmt::While(w) => self.lower_while(w),
@@ -319,6 +375,64 @@ impl<'c> Lowerer<'c> {
         Ok(())
     }
 
+    fn lower_field_assign(&mut self, a: &aura_ast::FieldAssignStmt) -> Result<(), SemanticError> {
+        let Some(root) = self.locals.get(&a.target.node).copied() else {
+            return Err(SemanticError {
+                message: format!("lowering: unknown Record local '{}'", a.target.node),
+                span: a.target.span,
+            });
+        };
+        let path = std::iter::once(&a.field)
+            .chain(a.nested.iter())
+            .collect::<Vec<_>>();
+        let mut parent_chain: Vec<(ValueId, String)> = Vec::new();
+        let mut cursor = root;
+        // Lower each intermediate child with an explicit typed GetField.
+        // No in-place C/IR mutation and no aliasing of a prior Record copy.
+        for component in path.iter().take(path.len() - 1) {
+            let child = self.id.fresh_value();
+            self.push_inst(Inst {
+                span: component.span,
+                dest: Some(child),
+                kind: InstKind::GetField {
+                    base: cursor,
+                    field_name: component.node.clone(),
+                },
+            });
+            parent_chain.push((cursor, component.node.clone()));
+            cursor = child;
+        }
+        // RHS is lowered once. Rebuild the immutable child and every
+        // parent in reverse, then rebind the original mutable root.
+        let value = self.lower_expr(&a.expr)?;
+        let leaf = path.last().expect("field assignment has field");
+        let mut updated = self.id.fresh_value();
+        self.push_inst(Inst {
+            span: a.span,
+            dest: Some(updated),
+            kind: InstKind::SetField {
+                base: cursor,
+                field_name: leaf.node.clone(),
+                value,
+            },
+        });
+        for (parent, field_name) in parent_chain.into_iter().rev() {
+            let rebuilt = self.id.fresh_value();
+            self.push_inst(Inst {
+                span: a.span,
+                dest: Some(rebuilt),
+                kind: InstKind::SetField {
+                    base: parent,
+                    field_name,
+                    value: updated,
+                },
+            });
+            updated = rebuilt;
+        }
+        self.locals.insert(a.target.node.clone(), updated);
+        Ok(())
+    }
+
     fn lower_assign(&mut self, a: &AssignStmt) -> Result<(), SemanticError> {
         if !self.locals.contains_key(&a.target.node) {
             return Err(SemanticError {
@@ -348,9 +462,14 @@ impl<'c> Lowerer<'c> {
         // then
         self.push_block(then_bb, i.then_block.span, ExecutionHint::Sequential);
         self.lower_block(&i.then_block)?;
-        if !self.has_terminator() {
+        // An explicit yield produced Return(Some(_)); that arm cannot reach
+        // the join. A block's placeholder Return(None) is fallthrough.
+        let then_reaches_join = !self.has_terminator();
+        if then_reaches_join {
             self.set_terminator(Terminator::Br(join_bb));
         }
+        // Nested CFG: capture the actual exit block, not the arm entry.
+        let then_exit_bb = self.current_block_id().unwrap_or(then_bb);
         let then_locals = self.locals.clone();
 
         // else
@@ -359,16 +478,33 @@ impl<'c> Lowerer<'c> {
         if let Some(else_block) = &i.else_block {
             self.lower_block(else_block)?;
         }
-        if !self.has_terminator() {
+        let else_reaches_join = !self.has_terminator();
+        if else_reaches_join {
             self.set_terminator(Terminator::Br(join_bb));
         }
+        let else_exit_bb = self.current_block_id().unwrap_or(else_bb);
         let else_locals = self.locals.clone();
 
-        // join
+        // The Phi incoming set must equal the *live* join predecessors.
+        // If both arms return, no join block exists and the enclosing block
+        // must preserve the last Return instead of lowering dead statements.
+        if !then_reaches_join && !else_reaches_join {
+            return Ok(());
+        }
         self.locals = saved_locals;
         self.push_block(join_bb, i.span, ExecutionHint::Sequential);
-        self.merge_locals_with_phi(&then_locals, then_bb, &else_locals, else_bb, i.span);
-
+        match (then_reaches_join, else_reaches_join) {
+            (true, true) => self.merge_locals_with_phi(
+                &then_locals, then_exit_bb, &else_locals, else_exit_bb, i.span
+            ),
+            (true, false) => self.merge_locals_with_phi_multi(
+                &[(then_exit_bb, then_locals)], i.span
+            ),
+            (false, true) => self.merge_locals_with_phi_multi(
+                &[(else_exit_bb, else_locals)], i.span
+            ),
+            (false, false) => unreachable!("both terminating arms handled above"),
+        }
         Ok(())
     }
 
@@ -528,13 +664,22 @@ impl<'c> Lowerer<'c> {
             }
 
             self.lower_block(&arm.body)?;
+            // Only fallthrough arms are predecessors of the match join.
+            // A nested if can move the current block to its own join, so
+            // the arm's initial 'bb' is not necessarily its outgoing edge.
             if !self.has_terminator() {
                 self.set_terminator(Terminator::Br(join_bb));
+                let exit_bb = self.current_block_id().unwrap_or(bb);
+                arm_locals.push((exit_bb, self.locals.clone()));
             }
-            arm_locals.push((bb, self.locals.clone()));
         }
 
-        // join
+        // When every arm ended with an explicit yield/Return, there is no
+        // reachable join. Preserve the terminal block and let the enclosing
+        // lower_block avoid manufacturing unreachable instructions.
+        if arm_locals.is_empty() {
+            return Ok(());
+        }
         self.locals = saved_locals;
         self.push_block(join_bb, m.span, ExecutionHint::Sequential);
         self.merge_locals_with_phi_multi(&arm_locals, m.span);
@@ -772,19 +917,26 @@ impl<'c> Lowerer<'c> {
         self.push_block(body_bb, w.body.span, ExecutionHint::Sequential);
         self.locals = cond_locals.clone();
         self.lower_block(&w.body)?;
-        if !self.has_terminator() {
+        // An explicit Return from the body has no loop backedge.
+        // For nested control flow, the actual outgoing block can differ
+        // from the initial body_bb (as with EV-190's nested if joins).
+        let has_backedge = !self.has_terminator();
+        if has_backedge {
             self.set_terminator(Terminator::Br(cond_bb));
         }
         let backedge_bb = self.current_block_id().unwrap_or(body_bb);
         let body_locals = self.locals.clone();
 
-        // Patch phi incoming values from the body.
-        // Note: only names present at loop entry get phis; new names in the body don't escape.
+        // Patch each header Phi using the *real* CFG predecessors.
+        // A body that always returns contributes no backedge; retain only
+        // the entry/preheader value rather than a phantom incoming.
         for (inst_idx, name, pre_v) in phi_fixups {
             let body_v = body_locals.get(&name).copied().unwrap_or(pre_v);
             let inst = &mut self.blocks[cond_block_idx].insts[inst_idx];
             if let InstKind::Phi { incomings } = &mut inst.kind {
-                if incomings.len() >= 2 {
+                if !has_backedge {
+                    incomings.truncate(1);
+                } else if incomings.len() >= 2 {
                     incomings[1].0 = backedge_bb;
                     incomings[1].1 = body_v;
                 }
@@ -1089,10 +1241,7 @@ impl<'c> Lowerer<'c> {
                     }
                     _ => {
                         let name = expr_to_callee_name(callee);
-                        let mut v = Vec::with_capacity(args.len());
-                        for a in args {
-                            v.push(self.lower_expr(Self::call_arg_value(a))?);
-                        }
+                        let v = self.lower_call_args(&name, args, None, expr.span)?;
                         (name, v)
                     }
                 };
@@ -1105,6 +1254,25 @@ impl<'c> Lowerer<'c> {
                     "collections.vector_set" => "tensor.set".to_string(),
                     _ => callee_name,
                 };
+                // The source-level refined contract is an executable ABI
+                // boundary. Preserve it even for compile-time-proven literals:
+                // a later IR mutation must not launder a narrowed argument
+                // after the optimizer deletes its only refinement proof.
+                // RangeCheck (unlike RangeCheckU32) is retained by the
+                // current optimizer and validated as an effectful instruction.
+                if let Some(ranges) = self.checker.function_refined_arg_ranges(&callee_name) {
+                    for (arg, range) in lowered_args.iter().zip(ranges.iter()) {
+                        if let Some((lo, hi)) = range {
+                            self.push_inst(Inst {
+                                span: expr.span,
+                                dest: None,
+                                kind: InstKind::RangeCheck {
+                                    value: *arg, lo: *lo, hi: *hi
+                                },
+                            });
+                        }
+                    }
+                }
                 let v = self.id.fresh_value();
                 let is_void = self.checker.is_void_function(&callee_name);
                 self.push_inst(Inst {
@@ -1169,11 +1337,7 @@ impl<'c> Lowerer<'c> {
                             }
                             _ => {
                                 let name = expr_to_callee_name(callee);
-                                let mut v = Vec::with_capacity(args.len() + 1);
-                                v.push(left_v);
-                                for a in args {
-                                    v.push(self.lower_expr(Self::call_arg_value(a))?);
-                                }
+                                let v = self.lower_call_args(&name, args, Some(left_v), expr.span)?;
                                 (name, v)
                             }
                         };
@@ -1224,10 +1388,22 @@ impl<'c> Lowerer<'c> {
             }
 
             ExprKind::RecordLit { name, fields } => {
-                let mut lowered_fields = Vec::with_capacity(fields.len());
+                let defaults = self.record_defaults.get(&name.node).cloned()
+                    .unwrap_or_default();
+                // Explicit initializers execute once, in source order.
+                // Omitted qualified defaults follow in declaration order.
+                // SSA construction contains all fields; the Oracle and C
+                // backend must observe exactly the same runtime values.
+                let mut lowered_fields = Vec::with_capacity(fields.len() + defaults.len());
                 for (fname, fexpr) in fields {
                     let fval = self.lower_expr(fexpr)?;
                     lowered_fields.push((fname.node.clone(), fval));
+                }
+                for (field_name, default_expr) in defaults {
+                    if !fields.iter().any(|(name, _)| name.node == field_name) {
+                        let value = self.lower_expr(&default_expr)?;
+                        lowered_fields.push((field_name, value));
+                    }
                 }
                 let dest = self.id.fresh_value();
                 self.push_inst(Inst {
@@ -1241,6 +1417,94 @@ impl<'c> Lowerer<'c> {
                 Ok(dest)
             }
         }
+    }
+
+    fn lower_call_args(
+        &mut self,
+        callee: &str,
+        args: &[aura_ast::CallArg],
+        implicit_first: Option<ValueId>,
+        span: aura_ast::Span,
+    ) -> Result<Vec<ValueId>, SemanticError> {
+        // The Checker resolves named arguments against the *declaration*
+        // order, not the order written in the call. Preserve observable
+        // expression evaluation in source order, then permute only the
+        // resulting SSA IDs. Otherwise all-scalar named calls can silently
+        // swap values, including Record constructors returned across cells.
+        let formal_names = self.checker.function_param_names(callee);
+        let mut evaluated = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = self.lower_expr(Self::call_arg_value(arg))?;
+            evaluated.push((arg, value));
+        }
+        let Some(formals) = formal_names else {
+            if args.iter().any(|arg| matches!(arg, aura_ast::CallArg::Named { .. })) {
+                return Err(SemanticError {
+                    message: format!(
+                        "lowering: named argument call '{callee}' has no qualified function signature"
+                    ),
+                    span,
+                });
+            }
+            let mut ordered = Vec::with_capacity(evaluated.len() + usize::from(implicit_first.is_some()));
+            if let Some(value) = implicit_first { ordered.push(value); }
+            ordered.extend(evaluated.into_iter().map(|(_, value)| value));
+            return Ok(ordered);
+        };
+        let mut ordered: Vec<Option<ValueId>> = vec![None; formals.len()];
+        if let Some(first) = implicit_first {
+            if ordered.is_empty() {
+                return Err(SemanticError {
+                    message: format!("lowering: flow into zero-argument function '{callee}'"),
+                    span,
+                });
+            }
+            ordered[0] = Some(first);
+        }
+        let mut next_pos = 0usize;
+        for (arg, value) in evaluated {
+            let idx = match arg {
+                aura_ast::CallArg::Named { name, .. } =>
+                    formals.iter().position(|formal| formal == &name.node)
+                        .ok_or_else(|| SemanticError {
+                            message: format!(
+                                "lowering: unknown named argument '{}' in '{callee}'",
+                                name.node,
+                            ),
+                            span: name.span,
+                        })?,
+                aura_ast::CallArg::Positional(_) => {
+                    while next_pos < ordered.len() && ordered[next_pos].is_some() {
+                        next_pos += 1;
+                    }
+                    let index = next_pos;
+                    next_pos += 1;
+                    index
+                }
+            };
+            if idx >= ordered.len() {
+                return Err(SemanticError {
+                    message: format!("lowering: too many arguments in call '{callee}'"),
+                    span,
+                });
+            }
+            if ordered[idx].replace(value).is_some() {
+                return Err(SemanticError {
+                    message: format!(
+                        "lowering: duplicate argument '{}' in call '{callee}'",
+                        formals[idx],
+                    ),
+                    span,
+                });
+            }
+        }
+        if ordered.iter().any(Option::is_none) {
+            return Err(SemanticError {
+                message: format!("lowering: missing argument in call '{callee}'"),
+                span,
+            });
+        }
+        Ok(ordered.into_iter().map(|value| value.expect("all parameters assigned")).collect())
     }
 
 fn call_arg_value(arg: &aura_ast::CallArg) -> &Expr {
@@ -1390,6 +1654,10 @@ fn collect_assigned_names(block: &Block, out: &mut BTreeSet<String>) {
         match s {
             Stmt::Assign(AssignStmt { target, .. }) => {
                 out.insert(target.node.clone());
+            }
+            Stmt::FieldAssign(a) => {
+                // Field updates rebind the entire nominal Record SSA local.
+                out.insert(a.target.node.clone());
             }
             Stmt::Layout(LayoutBlock { body, .. }) => {
                 collect_assigned_names(body, out);
