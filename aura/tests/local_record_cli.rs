@@ -757,3 +757,70 @@ cell main() ->:
         }
     }
 }
+
+// X-009 actual full-workspace regression (run #42986164793):
+// differential_harness falsely reported match_basic RED because AVM's
+// *verification* bit was used as the execution *success* bit. Keep the
+// no-Z3 proof status false, but compare actual source program outcomes.
+// This test runs in BOTH mandatory Q03 public CLI gates, whereas the
+// original differential_harness runs in X's complete Cargo workspace.
+#[path = "common/differential_util.rs"]
+mod differential_util;
+
+#[test]
+fn x009_real_match_basic_execution_parity_keeps_no_z3_unverified() {
+    const MATCH: &str = include_str!("corpus/match_basic.aura");
+    const PRINTLN: &str = include_str!("corpus/println_basic.aura");
+    const RANGE: &str = include_str!("corpus/range_check_u32.aura");
+
+    // Independent AVM execution evidence must retain the formal trust
+    // boundary even after repairing the differential harness's process
+    // success classification.
+    let source = aura_sdk::augment_source_with_default_std(MATCH)
+        .expect("existing Aura std import must augment");
+    let mut vm = aura_interpret::Avm::new(aura_interpret::AvmConfig {
+        enable_z3_gate: false,
+        ..Default::default()
+    });
+    let evidence = vm.exec_entry_cell(&source, "main")
+        .expect("real match_basic source runs in AVM");
+    assert!(!evidence.verified, "no Z3: execution is NOT a proof");
+    assert!(evidence.gate_error.as_deref().unwrap_or("").contains("not run"),
+        "missing Z3 verification must remain explicit");
+    assert_eq!(evidence.stdout, "two\n");
+
+    // X's same-source corpus exercises Match CFG, interpolation, and
+    // conditional numeric behavior, not a fabricated hand-built IR.
+    for (name, src, output) in [
+        ("match_basic", MATCH, "two\n"),
+        ("println_basic", PRINTLN, "x = 5\n"),
+        ("range_check_u32", RANGE, "ok\n"),
+    ] {
+        let reference = differential_util::run_avm(src)
+            .expect("source AVM runner returns a runtime observation");
+        assert!(reference.ok,
+            "{name}: valid no-Z3 AVM execution cannot become process failure: {reference:?}");
+        assert_eq!(reference.stdout, output, "{name}: real source AVM output");
+        assert_eq!(reference.stderr, "", "{name}: successful AVM stderr");
+
+        let scratch = SourceFile::new(src);
+        let native = differential_util::compile_and_run_c(
+            name, src, &scratch.root.join("differential")
+        ).expect("real C compile/run must return observation")
+            .expect("the Q03 native CLI gate installs Clang");
+        assert!(native.ok,
+            "{name}: native C must execute successfully: {native:?}");
+        assert_eq!(native.stdout, reference.stdout,
+            "{name}: same-source AVM/native C stdout mismatch");
+        assert_eq!(native.stderr, reference.stderr,
+            "{name}: same-source AVM/native C stderr mismatch");
+    }
+
+    // A genuine interpreter error is still an execution failure, not
+    // magically promoted to success by the changed Ok branch.
+    let broken = differential_util::run_avm("cell main( ->:\n")
+        .expect("AVM runner maps malformed source to a failure observation");
+    assert!(!broken.ok, "invalid source must remain a runtime failure");
+    assert!(broken.stdout.is_empty());
+    assert!(!broken.stderr.is_empty(), "failures keep useful diagnostics");
+}
