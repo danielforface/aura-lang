@@ -95,7 +95,7 @@ jobs:
           if-no-files-found: error
 
   native-lumina-x11:
-    name: Native Aura language UI: real llvmpipe pixels, xdotool callbacks
+    name: 'Native Aura language UI: real llvmpipe pixels, xdotool callbacks'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
