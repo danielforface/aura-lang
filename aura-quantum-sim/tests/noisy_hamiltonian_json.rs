@@ -31,7 +31,7 @@ fn no_other_events(v:&Value){
     }
 }
 #[test]
-fn real_compiled_cli_mixed_noisy_H2_and_v1_result(){
+fn real_compiled_cli_mixed_noisy_h2_and_v1_result(){
     let p=invoke(&fixture(),&[]);
     assert_eq!(p.status.code(),Some(0),"{}",String::from_utf8_lossy(&p.stderr));
     assert!(p.stderr.is_empty());
@@ -83,7 +83,7 @@ fn deterministic_replay_and_strict_schema_isolation(){
         "invalid_json");
 }
 #[test]
-fn QPU_seed_shots_and_extra_provider_flags_fail_closed_no_success_stdout(){
+fn qpu_seed_shots_and_extra_provider_flags_fail_closed_no_success_stdout(){
     for (key,value) in [
         ("shots",json!(256)),("hardware",json!(true)),
         ("qpu_backend",json!("provider")),("seed",json!(10)),
