@@ -21,7 +21,7 @@ env:
 jobs:
   workspace:
     name: Rust workspace
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -42,6 +42,20 @@ jobs:
             cmake \
             ninja-build \
             pkg-config
+
+      - name: Assert supported Z3 build image and record native toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          if [[ "$ID" != "ubuntu" || "$VERSION_ID" != "24.04" ]]; then
+            echo "::error::Unexpected CI image: ${PRETTY_NAME:-unknown}; Z3 0.8.1 compatibility not established"
+            exit 1
+          fi
+          echo "AURA_CORE_CI_OS=$PRETTY_NAME"
+          echo "AURA_CORE_CI_CXX=$(g++ -dumpfullversion -dumpversion)"
+          echo "AURA_CORE_CI_CLANG=$(clang --version | sed -n '1p')"
+          echo "AURA_CORE_CI_CMAKE=$(cmake --version | sed -n '1p')"
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
