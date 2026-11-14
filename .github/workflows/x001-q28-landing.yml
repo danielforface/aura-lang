@@ -1,0 +1,83 @@
+name: X001 Isolated Quantum Integration Candidate
+on:
+  push:
+    branches:
+      - integration/x001-q28-isolated-candidate
+    paths:
+      - 'aura-quantum-sim/**'
+      - 'docs/qualification/integration/**'
+      - 'tools/integration/**'
+      - '.github/workflows/x001-q28-landing.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'aura-quantum-sim/**'
+      - 'docs/qualification/integration/**'
+      - 'tools/integration/**'
+      - '.github/workflows/x001-q28-landing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-rust-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Test independent production engines without Core/Lumina workspace
+        run: cargo test --manifest-path aura-quantum-sim/Cargo.toml --all-targets --verbose
+      - name: Clippy strict
+        run: cargo clippy --manifest-path aura-quantum-sim/Cargo.toml --all-targets -- -D warnings
+      - name: Run callable production paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example feed_forward
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example density_noise
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --example stabilizer_ghz
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-run < aura-quantum-sim/fixtures/bell_feedforward_v1.json > /tmp/pure.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-noisy-run < aura-quantum-sim/fixtures/noisy_tomography_v1.json > /tmp/noisy.json
+          cargo run --quiet --manifest-path aura-quantum-sim/Cargo.toml --bin aura-quantum-stabilizer-run < aura-quantum-sim/fixtures/stabilizer_bell_inspection_v1.json > /tmp/stabilizer.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open("/tmp/pure.json"))
+          n=json.load(open("/tmp/noisy.json"))
+          s=json.load(open("/tmp/stabilizer.json"))
+          assert p["schema"]=="aura.quantum.circuit-result/1" and p["qpu_hardware_jobs"]==0
+          assert n["schema"]=="aura.quantum.noisy-result/1" and n["qpu_hardware_jobs"]==0
+          assert s["schema"]=="aura.quantum.stabilizer-result/1" and s["basis_probabilities"]==[.5,0,0,.5]
+          print("X001_STANDALONE_CANDIDATE_REAL_CLI_PASS")
+          PY
+      - name: X002 external JSON process contract and analytic physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --quiet --manifest-path aura-quantum-sim/Cargo.toml --bins
+          python3 tools/integration/q28_cli_contract.py --bin-dir aura-quantum-sim/target/debug
+  independent-science:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned external oracle
+        run: python -m pip install --disable-pip-version-check --no-cache-dir 'qiskit==2.6.1' 'numpy==2.3.4'
+      - name: Independent pure/noisy/Clifford parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts/x001
+          cargo run --release --quiet --manifest-path aura-quantum-sim/Cargo.toml --example export_qiskit_vectors > ci-artifacts/x001/rust-vectors.csv
+          python aura-quantum-sim/tools/check_qiskit_parity.py ci-artifacts/x001/rust-vectors.csv ci-artifacts/x001/pure.json
+          cargo build --release --manifest-path aura-quantum-sim/Cargo.toml --bins
+          python aura-quantum-sim/tools/check_qiskit_noisy.py aura-quantum-sim/target/release/aura-quantum-noisy-run ci-artifacts/x001/noisy.json
+          python aura-quantum-sim/tools/check_qiskit_stabilizer.py aura-quantum-sim/target/release/aura-quantum-stabilizer-run ci-artifacts/x001/stabilizer.json
