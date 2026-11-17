@@ -1,0 +1,122 @@
+# AURA X-RAY XR-08 — genuine native Windows UI behavior authored in Aura.
+# This compiles independently through the same production Aura C backend.
+# Win32 adapter may ONLY paint rectangles/text and forward mouse/keys.
+# All hit tests, navigation, chart geometry and policy UI state below
+# are executable Aura functions, NOT copied by the host.
+# Preconditions: viewport 1100..4096 x 760..4096; policy 0..2;
+# sample_count 1..30; samples 1..count; max_score/value <= 1000000;
+# case count 0..512, page <= 63, row <=8.
+# No FFI Record/Slice/borrow; no raw data pointers enter Aura.
+
+cell xray08_ui_window_min_w():
+    yield 1100
+
+cell xray08_ui_window_min_h():
+    yield 760
+
+cell xray08_ui_tab_y():
+    yield 122
+
+cell xray08_ui_tab_x(tab: u32):
+    yield 36 + (tab * 157)
+
+cell xray08_ui_tab_hit(x: u32, y: u32):
+    val inside_x: u32 = (1 - (1 / ((x / 36) + 1))) * (1 / ((x / 507) + 1))
+    val inside_y: u32 = (1 - (1 / ((y / 122) + 1))) * (1 / ((y / 170) + 1))
+    val index: u32 = 1 + ((x - 36) / 157)
+    val valid: u32 = 1 / ((index / 4) + 1)
+    yield inside_x * inside_y * valid * index
+
+# direction=0: next, direction=1: previous.
+cell xray08_ui_cycle_policy(current: u32, direction: u32):
+    val next: u32 = current + 1 + direction
+    yield next - ((next / 3) * 3)
+
+cell xray08_ui_case_x():
+    yield 30
+
+cell xray08_ui_case_y():
+    yield 252
+
+cell xray08_ui_case_w():
+    yield 390
+
+cell xray08_ui_case_step():
+    yield 56
+
+cell xray08_ui_case_row_y(row: u32):
+    yield 252 + (row * 56)
+
+# Returns 1..8 for valid row, otherwise 0. Clicks outside the list
+# must NOT change selection. Host resolves this 1-based index in the
+# bounded, validated 512-case snapshot and never trusts the click alone.
+cell xray08_ui_case_hit(x: u32, y: u32):
+    val inside_x: u32 = (1 - (1 / ((x / 30) + 1))) * (1 / ((x / 420) + 1))
+    val inside_y: u32 = (1 - (1 / ((y / 252) + 1))) * (1 / ((y / 700) + 1))
+    val row: u32 = 1 + ((y - 252) / 56)
+    val valid: u32 = 1 / ((row / 9) + 1)
+    yield inside_x * inside_y * valid * row
+
+cell xray08_ui_case_index(page: u32, row: u32, count: u32):
+    val one_based: u32 = page * 8 + row
+    val within: u32 = 1 / ((one_based / (count + 1)) + 1)
+    val real_row: u32 = 1 - (1 / (row + 1))
+    yield one_based * within * real_row
+
+cell xray08_ui_case_page_for(index: u32):
+    yield index / 8
+
+# count>0. 0 next, 1 previous; wraps inside the current policy list.
+cell xray08_ui_cycle_case(index: u32, count: u32, direction: u32):
+    val stride: u32 = 1 + (direction * (count - 2))
+    val next: u32 = index + stride
+    yield next - ((next / count) * count)
+
+# count>0, no page beyond ceil(count/8).
+cell xray08_ui_page_next(page: u32, count: u32):
+    val pages: u32 = (count + 7) / 8
+    val next: u32 = page + 1
+    yield page + (1 / ((next / pages) + 1))
+
+cell xray08_ui_page_prev(page: u32):
+    yield page - (1 - (1 / (page + 1)))
+
+cell xray08_ui_chart_x():
+    yield 455
+
+cell xray08_ui_chart_width(view_width: u32):
+    yield view_width - 880
+
+cell xray08_ui_chart_sample_x(sample: u32, count: u32, view_width: u32):
+    val space: u32 = (view_width - 880) / (count + 1)
+    yield 455 + (sample * space)
+
+# All chart scale arithmetic belongs to Aura. Caller bounds values so
+# value*196 <= 196000000, with no overflow; max_score may be zero.
+cell xray08_ui_chart_height(value: u32, max_score: u32):
+    yield (value * 196) / (max_score + 1)
+
+# One-based sample from hit-testing the actual Aura-owned bar geometry.
+cell xray08_ui_chart_hit(x: u32, y: u32, view_width: u32, count: u32):
+    val space: u32 = (view_width - 880) / (count + 1)
+    val idx: u32 = (x - 455) / space
+    val inside_x: u32 = (1 - (1 / ((x / 455) + 1))) * (1 / ((x / (view_width - 425)) + 1))
+    val inside_y: u32 = (1 - (1 / ((y / 340) + 1))) * (1 / ((y / 608) + 1))
+    val valid: u32 = (1 - (1 / (idx + 1))) * (1 / ((idx / (count + 1)) + 1))
+    yield idx * inside_x * inside_y * valid
+
+cell xray08_ui_detail_x(view_width: u32):
+    yield view_width - 360
+
+cell xray08_ui_detail_w():
+    yield 328
+
+cell xray08_ui_evidence_tone(grade: u32, policy_support: u32):
+    yield grade + (policy_support * 4)
+
+# Code 0=calm, 1=watch, 2=high impact from complete Aura-scored vector.
+# This is visual prioritization, never a malware/leak/causality diagnosis.
+cell xray08_ui_score_tone(score: u32):
+    val watch: u32 = 1 - (1 / ((score / 12) + 1))
+    val high: u32 = 1 - (1 / ((score / 50) + 1))
+    yield watch + high

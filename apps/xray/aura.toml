@@ -1,0 +1,13 @@
+# X-RAY isolated Aura project manifest.
+# Prevent importing root aura.toml bridge headers (Raylib/ONNX).
+# The product's Win32 host is explicitly linked by its isolated CI.
+[project]
+name = "AuraXRay"
+edition = "2026"
+
+[bridge]
+headers = []
+
+[linking]
+lib_dirs = []
+libs = []
